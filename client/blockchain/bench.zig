@@ -45,22 +45,6 @@ fn make_result(name: []const u8, ops: usize, elapsed_ns: u64) BenchResult {
     };
 }
 
-fn init_chain_with_blocks(
-    n: usize,
-    allocator: std.mem.Allocator,
-    chain: *Chain,
-) ![]Block.Block {
-    chain.* = try Chain.init(allocator, null);
-    return build_blocks(n, allocator);
-}
-
-fn process_blocks(chain: *Chain, blocks: []Block.Block) !void {
-    for (blocks) |block| {
-        try chain.putBlock(block);
-        try chain.setCanonicalHead(block.hash);
-    }
-}
-
 fn build_blocks(n: usize, allocator: std.mem.Allocator) ![]Block.Block {
     const blocks = try allocator.alloc(Block.Block, n);
     if (n == 0) return blocks;
@@ -92,11 +76,14 @@ fn bench_block_processing(n: usize) !u64 {
         defer arena.deinit();
         const allocator = arena.allocator();
 
-        var chain: Chain = undefined;
-        const blocks = try init_chain_with_blocks(n, allocator, &chain);
+        var chain = try Chain.init(allocator, null);
         defer chain.deinit();
 
-        try process_blocks(&chain, blocks);
+        const blocks = try build_blocks(n, allocator);
+        for (blocks) |block| {
+            try chain.putBlock(block);
+            try chain.setCanonicalHead(block.hash);
+        }
     }
 
     // Timed
@@ -106,12 +93,16 @@ fn bench_block_processing(n: usize) !u64 {
         defer arena.deinit();
         const allocator = arena.allocator();
 
-        var chain: Chain = undefined;
-        const blocks = try init_chain_with_blocks(n, allocator, &chain);
+        var chain = try Chain.init(allocator, null);
         defer chain.deinit();
 
+        const blocks = try build_blocks(n, allocator);
+
         var timer = try std.time.Timer.start();
-        try process_blocks(&chain, blocks);
+        for (blocks) |block| {
+            try chain.putBlock(block);
+            try chain.setCanonicalHead(block.hash);
+        }
         total_ns += timer.read();
     }
     return total_ns / BENCH_ITERS;
