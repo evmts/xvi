@@ -29,8 +29,8 @@ pub fn validate_transaction(
 ) error{ InsufficientGas, NonceOverflow, InitCodeTooLarge, UnsupportedTransactionType }!u64 {
     const Tx = @TypeOf(tx);
     comptime {
-        // NOTE: Voltaire Zig primitives do not yet expose EIP-2930 transactions.
         if (Tx != tx_mod.LegacyTransaction and
+            Tx != tx_mod.Eip2930Transaction and
             Tx != tx_mod.Eip1559Transaction and
             Tx != tx_mod.Eip4844Transaction and
             Tx != tx_mod.Eip7702Transaction)
@@ -40,6 +40,7 @@ pub fn validate_transaction(
     }
 
     const required_fork: ?Hardfork = comptime blk: {
+        if (Tx == tx_mod.Eip2930Transaction) break :blk .BERLIN;
         if (Tx == tx_mod.Eip1559Transaction) break :blk .LONDON;
         if (Tx == tx_mod.Eip4844Transaction) break :blk .CANCUN;
         if (Tx == tx_mod.Eip7702Transaction) break :blk .PRAGUE;
@@ -50,32 +51,7 @@ pub fn validate_transaction(
     }
 
     const is_create = if (comptime Tx == tx_mod.Eip4844Transaction) false else tx.to == null;
-
-    var access_list_address_count: u64 = 0;
-    var access_list_storage_key_count: u64 = 0;
-    if (comptime Tx == tx_mod.Eip1559Transaction or
-        Tx == tx_mod.Eip4844Transaction or
-        Tx == tx_mod.Eip7702Transaction)
-    {
-        access_list_address_count = @intCast(tx.access_list.len);
-        for (tx.access_list) |entry| {
-            access_list_storage_key_count += @intCast(entry.storage_keys.len);
-        }
-    }
-
-    var authorization_count: u64 = 0;
-    if (comptime Tx == tx_mod.Eip7702Transaction) {
-        authorization_count = @intCast(tx.authorization_list.len);
-    }
-
-    const intrinsic = calculate_intrinsic_gas(.{
-        .data = tx.data,
-        .is_create = is_create,
-        .access_list_address_count = access_list_address_count,
-        .access_list_storage_key_count = access_list_storage_key_count,
-        .authorization_count = authorization_count,
-        .hardfork = hardfork,
-    });
+    const intrinsic = calculate_intrinsic_gas(tx, hardfork);
 
     const calldata_floor = intrinsic_gas.calculate_calldata_floor_gas(tx.data, hardfork);
     const required_gas = if (calldata_floor > intrinsic) calldata_floor else intrinsic;
@@ -155,16 +131,10 @@ test "validate_transaction — init code size limit (Shanghai+)" {
     const init_code = try allocator.alloc(u8, size);
     defer allocator.free(init_code);
 
-    const intrinsic = intrinsic_gas.calculate_intrinsic_gas(.{
-        .data = init_code,
-        .is_create = true,
-        .hardfork = .SHANGHAI,
-    });
-
-    const tx = tx_mod.LegacyTransaction{
+    var tx = tx_mod.LegacyTransaction{
         .nonce = 0,
         .gas_price = 0,
-        .gas_limit = intrinsic,
+        .gas_limit = 0,
         .to = null,
         .value = 0,
         .data = init_code,
@@ -172,6 +142,8 @@ test "validate_transaction — init code size limit (Shanghai+)" {
         .r = [_]u8{0} ** 32,
         .s = [_]u8{0} ** 32,
     };
+    const intrinsic = intrinsic_gas.calculate_intrinsic_gas(tx, .SHANGHAI);
+    tx.gas_limit = intrinsic;
 
     try std.testing.expectError(error.InitCodeTooLarge, validate_transaction(tx, .SHANGHAI));
 }
@@ -210,6 +182,39 @@ test "validate_transaction — eip1559 access list intrinsic gas" {
     try std.testing.expectEqual(@as(u64, expected_gas), intrinsic);
 }
 
+test "validate_transaction — eip2930 access list intrinsic gas" {
+    const Address = primitives.Address;
+
+    const key1 = [_]u8{0x0A} ** 32;
+    const key2 = [_]u8{0x0B} ** 32;
+    const keys = [_][32]u8{ key1, key2 };
+
+    const access_list = [_]tx_mod.AccessListItem{
+        .{ .address = Address{ .bytes = [_]u8{0x5A} ++ [_]u8{0} ** 19 }, .storage_keys = &keys },
+    };
+
+    const expected_gas = intrinsic_gas.TX_BASE_COST +
+        intrinsic_gas.TX_ACCESS_LIST_ADDRESS_COST +
+        (2 * intrinsic_gas.TX_ACCESS_LIST_STORAGE_KEY_COST);
+
+    const tx = tx_mod.Eip2930Transaction{
+        .chain_id = 1,
+        .nonce = 0,
+        .gas_price = 0,
+        .gas_limit = expected_gas,
+        .to = Address{ .bytes = [_]u8{0x5B} ++ [_]u8{0} ** 19 },
+        .value = 0,
+        .data = &[_]u8{},
+        .access_list = &access_list,
+        .y_parity = 0,
+        .r = [_]u8{0} ** 32,
+        .s = [_]u8{0} ** 32,
+    };
+
+    const intrinsic = try validate_transaction(tx, .BERLIN);
+    try std.testing.expectEqual(@as(u64, expected_gas), intrinsic);
+}
+
 test "validate_transaction — eip1559 rejected before London" {
     const Address = primitives.Address;
 
@@ -229,6 +234,26 @@ test "validate_transaction — eip1559 rejected before London" {
     };
 
     try std.testing.expectError(error.UnsupportedTransactionType, validate_transaction(tx, .BERLIN));
+}
+
+test "validate_transaction — eip2930 rejected before Berlin" {
+    const Address = primitives.Address;
+
+    const tx = tx_mod.Eip2930Transaction{
+        .chain_id = 1,
+        .nonce = 0,
+        .gas_price = 0,
+        .gas_limit = intrinsic_gas.TX_BASE_COST,
+        .to = Address{ .bytes = [_]u8{0x6A} ++ [_]u8{0} ** 19 },
+        .value = 0,
+        .data = &[_]u8{},
+        .access_list = &[_]tx_mod.AccessListItem{},
+        .y_parity = 0,
+        .r = [_]u8{0} ** 32,
+        .s = [_]u8{0} ** 32,
+    };
+
+    try std.testing.expectError(error.UnsupportedTransactionType, validate_transaction(tx, .ISTANBUL));
 }
 
 test "validate_transaction — eip4844 rejected before Cancun" {
@@ -320,15 +345,10 @@ test "validate_transaction — prague calldata floor enforced" {
     const Address = primitives.Address;
 
     const data = [_]u8{0x01}; // one non-zero byte => floor > intrinsic
-    const intrinsic = intrinsic_gas.calculate_intrinsic_gas(.{
-        .data = &data,
-        .hardfork = .PRAGUE,
-    });
-
-    const tx = tx_mod.LegacyTransaction{
+    var tx = tx_mod.LegacyTransaction{
         .nonce = 0,
         .gas_price = 0,
-        .gas_limit = intrinsic,
+        .gas_limit = 0,
         .to = Address{ .bytes = [_]u8{0xAA} ++ [_]u8{0} ** 19 },
         .value = 0,
         .data = &data,
@@ -336,6 +356,8 @@ test "validate_transaction — prague calldata floor enforced" {
         .r = [_]u8{0} ** 32,
         .s = [_]u8{0} ** 32,
     };
+    const intrinsic = intrinsic_gas.calculate_intrinsic_gas(tx, .PRAGUE);
+    tx.gas_limit = intrinsic;
 
     try std.testing.expectError(error.InsufficientGas, validate_transaction(tx, .PRAGUE));
 }
