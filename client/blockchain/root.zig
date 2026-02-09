@@ -6,8 +6,8 @@ const validator = @import("validator.zig");
 
 /// Chain management API rooted in Voltaire's `Blockchain` primitive.
 pub const Chain = chain.Chain;
-/// Header validation interface for block chain management.
-pub const HeaderValidator = validator.HeaderValidator;
+/// Validate PoS header constants (difficulty/nonce/ommers hash).
+pub const validatePosHeaderConstants = validator.validatePosHeaderConstants;
 
 test {
     @import("std").testing.refAllDecls(@This());

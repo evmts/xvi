@@ -1,169 +1,45 @@
-/// Header validation interface (vtable) for block chain management.
-///
-/// Mirrors Nethermind's `IHeaderValidator` surface with:
-/// - `validate` (header + parent + uncle flag)
-/// - `validate_orphaned` (header without parent)
+/// Block header validation helpers for post-merge (PoS) rules.
 const std = @import("std");
 const primitives = @import("primitives");
 const BlockHeader = primitives.BlockHeader;
+const Hash = primitives.Hash;
 
-/// Type-erased header validator interface for dependency injection.
-pub const HeaderValidator = struct {
-    /// Pointer to the concrete validator implementation.
-    ptr: *anyopaque,
-    /// Pointer to the static vtable for the concrete validator implementation.
-    vtable: *const VTable,
-
-    /// Error set for header validation failures.
-    pub const Error = error{
-        InvalidHeaderHash,
-        InvalidExtraData,
-        InvalidGenesisBlock,
-        InvalidParentHash,
-        InvalidAncestor,
-        InvalidTotalDifficulty,
-        InvalidSealParameters,
-        NegativeBlockNumber,
-        NegativeGasLimit,
-        NegativeGasUsed,
-        ExceededGasLimit,
-        InvalidGasLimit,
-        InvalidBlockNumber,
-        InvalidBaseFeePerGas,
-        InvalidTimestamp,
-        InvalidDifficulty,
-        InvalidNonce,
-        InvalidOmmersHash,
-        MissingBlobGasUsed,
-        MissingExcessBlobGas,
-        IncorrectExcessBlobGas,
-        NotAllowedBlobGasUsed,
-        NotAllowedExcessBlobGas,
-        MissingRequests,
-        RequestsNotEnabled,
-        InvalidRequestsHash,
-    };
-
-    /// Virtual function table for header validation operations.
-    pub const VTable = struct {
-        /// Validate a header against its parent.
-        validate: *const fn (
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-            parent: *const BlockHeader.BlockHeader,
-            is_uncle: bool,
-        ) Error!void,
-        /// Validate a header without a parent (orphaned).
-        validate_orphaned: *const fn (
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-        ) Error!void,
-    };
-
-    /// Validate a header against its parent.
-    pub fn validate(
-        self: HeaderValidator,
-        header: *const BlockHeader.BlockHeader,
-        parent: *const BlockHeader.BlockHeader,
-        is_uncle: bool,
-    ) Error!void {
-        return self.vtable.validate(self.ptr, header, parent, is_uncle);
+/// Validate PoS header constants: difficulty=0, nonce=0, ommers=empty list hash.
+pub fn validatePosHeaderConstants(header: *const BlockHeader.BlockHeader) !void {
+    if (header.difficulty != 0) return error.InvalidDifficulty;
+    if (!std.mem.allEqual(u8, header.nonce[0..], 0)) return error.InvalidNonce;
+    if (!Hash.equals(&header.ommers_hash, &BlockHeader.EMPTY_OMMERS_HASH)) {
+        return error.InvalidOmmersHash;
     }
-
-    /// Validate a header without a parent (orphaned).
-    pub fn validate_orphaned(
-        self: HeaderValidator,
-        header: *const BlockHeader.BlockHeader,
-    ) Error!void {
-        return self.vtable.validate_orphaned(self.ptr, header);
-    }
-};
-
-// =============================================================================
-// Tests
-// =============================================================================
-
-test "HeaderValidator dispatches validate" {
-    const Dummy = struct {
-        const Self = @This();
-        called: bool = false,
-        saw_uncle: bool = false,
-
-        fn validate(
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-            parent: *const BlockHeader.BlockHeader,
-            is_uncle: bool,
-        ) HeaderValidator.Error!void {
-            const self: *Self = @ptrCast(@alignCast(ptr));
-            self.called = true;
-            self.saw_uncle = is_uncle;
-            _ = header;
-            _ = parent;
-        }
-
-        fn validate_orphaned(
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-        ) HeaderValidator.Error!void {
-            const self: *Self = @ptrCast(@alignCast(ptr));
-            self.called = true;
-            _ = header;
-        }
-    };
-
-    var dummy = Dummy{};
-    const vtable = HeaderValidator.VTable{
-        .validate = Dummy.validate,
-        .validate_orphaned = Dummy.validate_orphaned,
-    };
-
-    const validator = HeaderValidator{ .ptr = &dummy, .vtable = &vtable };
-    var header = BlockHeader.init();
-    var parent = BlockHeader.init();
-
-    try validator.validate(&header, &parent, true);
-    try std.testing.expect(dummy.called);
-    try std.testing.expect(dummy.saw_uncle);
 }
 
-test "HeaderValidator dispatches validate_orphaned" {
-    const Dummy = struct {
-        const Self = @This();
-        orphaned_called: bool = false,
-
-        fn validate(
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-            parent: *const BlockHeader.BlockHeader,
-            is_uncle: bool,
-        ) HeaderValidator.Error!void {
-            const self: *Self = @ptrCast(@alignCast(ptr));
-            _ = header;
-            _ = parent;
-            _ = is_uncle;
-            self.orphaned_called = false;
-        }
-
-        fn validate_orphaned(
-            ptr: *anyopaque,
-            header: *const BlockHeader.BlockHeader,
-        ) HeaderValidator.Error!void {
-            const self: *Self = @ptrCast(@alignCast(ptr));
-            self.orphaned_called = true;
-            _ = header;
-        }
-    };
-
-    var dummy = Dummy{};
-    const vtable = HeaderValidator.VTable{
-        .validate = Dummy.validate,
-        .validate_orphaned = Dummy.validate_orphaned,
-    };
-
-    const validator = HeaderValidator{ .ptr = &dummy, .vtable = &vtable };
+test "validatePosHeaderConstants - accepts valid PoS constants" {
     var header = BlockHeader.init();
+    header.ommers_hash = BlockHeader.EMPTY_OMMERS_HASH;
 
-    try validator.validate_orphaned(&header);
-    try std.testing.expect(dummy.orphaned_called);
+    try validatePosHeaderConstants(&header);
+}
+
+test "validatePosHeaderConstants - rejects non-zero difficulty" {
+    var header = BlockHeader.init();
+    header.ommers_hash = BlockHeader.EMPTY_OMMERS_HASH;
+    header.difficulty = 1;
+
+    try std.testing.expectError(error.InvalidDifficulty, validatePosHeaderConstants(&header));
+}
+
+test "validatePosHeaderConstants - rejects non-zero nonce" {
+    var header = BlockHeader.init();
+    header.ommers_hash = BlockHeader.EMPTY_OMMERS_HASH;
+    header.nonce = [_]u8{0} ** BlockHeader.NONCE_SIZE;
+    header.nonce[BlockHeader.NONCE_SIZE - 1] = 1;
+
+    try std.testing.expectError(error.InvalidNonce, validatePosHeaderConstants(&header));
+}
+
+test "validatePosHeaderConstants - rejects non-empty ommers hash" {
+    var header = BlockHeader.init();
+    header.ommers_hash = Hash.ZERO;
+
+    try std.testing.expectError(error.InvalidOmmersHash, validatePosHeaderConstants(&header));
 }
