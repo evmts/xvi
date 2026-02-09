@@ -564,6 +564,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "evm", .module = evm_mod },
             .{ .name = "primitives", .module = primitives_mod },
+            .{ .name = "client_blockchain", .module = client_blockchain_mod },
         },
     });
 
