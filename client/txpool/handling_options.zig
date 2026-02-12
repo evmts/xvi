@@ -8,7 +8,8 @@ pub const TxHandlingOptions = struct {
     const Self = @This();
     pub const Error = error{InvalidTxHandlingOptions};
 
-    bits: u8,
+    pub const Int = u32;
+    bits: Int,
 
     pub const none = TxHandlingOptions{ .bits = 0 };
 
@@ -28,7 +29,7 @@ pub const TxHandlingOptions = struct {
             allow_replacing_signature.bits,
     };
 
-    pub fn from_bits(bits: u8) Error!Self {
+    pub fn from_bits(bits: Int) Error!Self {
         const options = Self{ .bits = bits };
         try options.validate();
         return options;
@@ -73,12 +74,12 @@ comptime {
 }
 
 test "TxHandlingOptions bit layout and composition mirror Nethermind" {
-    try std.testing.expectEqual(@as(u8, 0), TxHandlingOptions.none.bits);
-    try std.testing.expectEqual(@as(u8, 1), TxHandlingOptions.managed_nonce.bits);
-    try std.testing.expectEqual(@as(u8, 2), TxHandlingOptions.persistent_broadcast.bits);
-    try std.testing.expectEqual(@as(u8, 4), TxHandlingOptions.pre_eip155_signing.bits);
-    try std.testing.expectEqual(@as(u8, 8), TxHandlingOptions.allow_replacing_signature.bits);
-    try std.testing.expectEqual(@as(u8, 15), TxHandlingOptions.all.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 0), TxHandlingOptions.none.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 1), TxHandlingOptions.managed_nonce.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 2), TxHandlingOptions.persistent_broadcast.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 4), TxHandlingOptions.pre_eip155_signing.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 8), TxHandlingOptions.allow_replacing_signature.bits);
+    try std.testing.expectEqual(@as(TxHandlingOptions.Int, 15), TxHandlingOptions.all.bits);
 }
 
 test "TxHandlingOptions merge and has" {
