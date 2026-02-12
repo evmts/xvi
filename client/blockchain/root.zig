@@ -32,6 +32,8 @@ pub const get_parent_block_local = chain.get_parent_block_local;
 pub const parent_header_local = chain.parent_header_local;
 /// Canonical hash lookup by number (local-only read).
 pub const canonical_hash = chain.canonical_hash;
+/// Local-only BLOCKHASH-style lookup by block number.
+pub const block_hash_by_number_local = chain.block_hash_by_number_local;
 /// Generic comptime DI helpers for head reads.
 pub const head_hash_of = chain.head_hash_of;
 pub const head_block_of = chain.head_block_of;

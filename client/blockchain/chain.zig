@@ -252,6 +252,31 @@ pub fn ancestor_hash_local(
     return if (get_block_local(chain, current) != null) current else null;
 }
 
+/// Returns the `BLOCKHASH` value for `number` relative to `current_hash`.
+///
+/// Semantics (execution-specs / EVM-compatible):
+/// - `number` must be strictly lower than the current block number.
+/// - Only the previous 256 blocks are addressable (`depth` in `1..=256`).
+/// - Uses local storage only; never fetches from fork cache and never allocates.
+/// - Returns `null` when the current block is missing locally or ancestry is
+///   incomplete in local storage.
+pub fn block_hash_by_number_local(
+    chain: *Chain,
+    current_hash: Hash.Hash,
+    number: u64,
+) ?Hash.Hash {
+    const current = get_block_local(chain, current_hash) orelse return null;
+    const current_number = current.header.number;
+
+    // EVM BLOCKHASH does not include current or future blocks.
+    if (number >= current_number) return null;
+
+    const depth = current_number - number;
+    if (depth > 256) return null;
+
+    return ancestor_hash_local(chain, current_hash, depth);
+}
+
 /// Returns the ancestor block at  from  using local store only.
 ///
 /// Semantics:
@@ -1238,6 +1263,83 @@ test "Chain - ancestor_hash_local returns null when orphan parent missing" {
     try chain.putBlock(orphan);
 
     try std.testing.expect(ancestor_hash_local(&chain, orphan.hash, 1) == null);
+}
+
+test "Chain - block_hash_by_number_local returns null when current missing" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expect(block_hash_by_number_local(&chain, Hash.ZERO, 0) == null);
+}
+
+test "Chain - block_hash_by_number_local enforces current/future bounds" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    // Equal to current height: out of bounds.
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 1) == null);
+    // Future height: out of bounds.
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2) == null);
+}
+
+test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var hashes: [258]Hash.Hash = undefined;
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    hashes[0] = genesis.hash;
+
+    var parent_hash = genesis.hash;
+    var i: u64 = 1;
+    while (i < hashes.len) : (i += 1) {
+        var hdr = primitives.BlockHeader.init();
+        hdr.number = i;
+        hdr.parent_hash = parent_hash;
+        hdr.timestamp = i;
+        const blk = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+        try chain.putBlock(blk);
+        hashes[i] = blk.hash;
+        parent_hash = blk.hash;
+    }
+
+    const current = hashes[257];
+
+    // Depth 256 (max allowed) should still resolve.
+    const oldest = block_hash_by_number_local(&chain, current, 1) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &hashes[1], &oldest);
+
+    // Depth 257 is out of bounds.
+    try std.testing.expect(block_hash_by_number_local(&chain, current, 0) == null);
+}
+
+test "Chain - block_hash_by_number_local returns null when ancestry missing locally" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    // Orphan block with missing parent at #299.
+    var hdr = primitives.BlockHeader.init();
+    hdr.number = 300;
+    hdr.parent_hash = try Hash.fromHex("0x" ++ ("cc" ** 32));
+    const orphan = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(orphan);
+
+    try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 299) == null);
 }
 
 test "Chain - ancestor_block_local returns null when start missing" {
