@@ -95,6 +95,12 @@ pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErro
         if (ch == '"') break;
     }
     if (end >= request.len or request[end] != '"') return .parse_error;
+    // Ensure the parsed version string token is properly terminated.
+    // If the closing quote we found actually belongs to another token,
+    // the request is malformed JSON and must be classified as parse_error.
+    var term = end + 1;
+    while (term < request.len and std.ascii.isWhitespace(request[term])) : (term += 1) {}
+    if (term < request.len and request[term] != ',' and request[term] != '}') return .parse_error;
 
     if (std.mem.eql(u8, request[start..end], "2.0")) return null;
     return .jsonrpc_version_not_supported;
