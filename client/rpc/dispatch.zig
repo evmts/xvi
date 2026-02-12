@@ -7,6 +7,7 @@
 const std = @import("std");
 const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
+const server = @import("server.zig");
 const scan = @import("scan.zig");
 
 /// Returns the root namespace tag of a JSON-RPC method name.
@@ -117,6 +118,10 @@ pub const ParseNamespaceResult = union(enum) {
 /// `.error(.method_not_found)`. If the field is missing or malformed,
 /// returns `.error(.invalid_request)` per EIP-1474.
 pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
+    if (server.validate_request_jsonrpc_version(request)) |code| {
+        return .{ .err = code };
+    }
+
     // Top-level JSON type validation and batch guard
     var i_top: usize = 0;
     // Skip UTF-8 BOM if present
@@ -243,6 +248,37 @@ test "parseRequestNamespace returns invalid_request when method missing" {
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
         "  \"id\": 1,\n" ++
+        "  \"params\": []\n" ++
+        "}";
+
+    const res = parse_request_namespace(req);
+    switch (res) {
+        .namespace => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+    }
+}
+
+test "parseRequestNamespace validates jsonrpc version before method resolution" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"1.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"foo_bar\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+
+    const res = parse_request_namespace(req);
+    switch (res) {
+        .namespace => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, code),
+    }
+}
+
+test "parseRequestNamespace validates jsonrpc field before method handling" {
+    const req =
+        "{\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_blockNumber\",\n" ++
         "  \"params\": []\n" ++
         "}";
 
