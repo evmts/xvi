@@ -62,10 +62,19 @@ fn validate_pos_header_constants(header: *const BlockHeader.BlockHeader) Validat
     }
 }
 
-fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) bool {
+/// Returns true when `gas_limit` is within the allowed parent delta.
+///
+/// Rule: `parent.gas_limit ± parent.gas_limit / 1024` (inclusive).
+inline fn gas_limit_within_delta(gas_limit: u64, parent_gas_limit: u64) bool {
     const max_adjustment_delta = parent_gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
-    if (gas_limit > parent_gas_limit + max_adjustment_delta) return false;
-    if (gas_limit < parent_gas_limit - max_adjustment_delta) return false;
+    const max_gas_limit = parent_gas_limit + max_adjustment_delta;
+    if (gas_limit > max_gas_limit) return false;
+    const min_gas_limit = parent_gas_limit - max_adjustment_delta;
+    return gas_limit >= min_gas_limit;
+}
+
+fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) bool {
+    if (!gas_limit_within_delta(gas_limit, parent_gas_limit)) return false;
     if (gas_limit < GAS_LIMIT_MINIMUM) return false;
     return true;
 }
@@ -771,10 +780,7 @@ pub fn validate_gas_limit_delta(
     header: *const BlockHeader.BlockHeader,
     parent: *const BlockHeader.BlockHeader,
 ) ValidationError!void {
-    const max_adjustment_delta = parent.gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
-    if (header.gas_limit > parent.gas_limit + max_adjustment_delta)
-        return ValidationError.InvalidGasLimit;
-    if (header.gas_limit < parent.gas_limit - max_adjustment_delta)
+    if (!gas_limit_within_delta(header.gas_limit, parent.gas_limit))
         return ValidationError.InvalidGasLimit;
 }
 
