@@ -5,6 +5,9 @@ const std = @import("std");
 /// These options are carried by txpool submission flows to alter admission /
 /// broadcast behavior for local transactions.
 pub const TxHandlingOptions = struct {
+    const Self = @This();
+    pub const Error = error{InvalidTxHandlingOptions};
+
     bits: u8,
 
     pub const none = TxHandlingOptions{ .bits = 0 };
@@ -25,11 +28,32 @@ pub const TxHandlingOptions = struct {
             allow_replacing_signature.bits,
     };
 
-    pub fn merge(self: TxHandlingOptions, other: TxHandlingOptions) TxHandlingOptions {
-        return .{ .bits = self.bits | other.bits };
+    pub fn from_bits(bits: u8) Error!Self {
+        const options = Self{ .bits = bits };
+        try options.validate();
+        return options;
     }
 
-    pub fn has(self: TxHandlingOptions, other: TxHandlingOptions) bool {
+    pub fn sanitize(self: Self) Self {
+        return .{ .bits = self.bits & all.bits };
+    }
+
+    pub fn is_valid(self: Self) bool {
+        return self.bits == self.sanitize().bits;
+    }
+
+    pub fn validate(self: Self) Error!void {
+        if (!self.is_valid()) return error.InvalidTxHandlingOptions;
+    }
+
+    pub fn merge(self: Self, other: Self) Self {
+        const lhs = self.sanitize();
+        const rhs = other.sanitize();
+        return .{ .bits = lhs.bits | rhs.bits };
+    }
+
+    pub fn has(self: Self, other: Self) bool {
+        if (!self.is_valid() or !other.is_valid()) return false;
         return (self.bits & other.bits) == other.bits;
     }
 };
@@ -63,4 +87,19 @@ test "TxHandlingOptions merge and has" {
     try std.testing.expect(merged.has(TxHandlingOptions.persistent_broadcast));
     try std.testing.expect(!merged.has(TxHandlingOptions.pre_eip155_signing));
     try std.testing.expect(TxHandlingOptions.all.has(TxHandlingOptions.allow_replacing_signature));
+}
+
+test "TxHandlingOptions reject invalid flag domains and sanitize merges" {
+    const invalid = TxHandlingOptions{ .bits = 0xff };
+
+    try std.testing.expect(!invalid.is_valid());
+    try std.testing.expectEqual(TxHandlingOptions.all.bits, invalid.sanitize().bits);
+    try std.testing.expectError(error.InvalidTxHandlingOptions, TxHandlingOptions.from_bits(0xff));
+
+    // Invalid states are rejected by `has` to keep the domain closed.
+    try std.testing.expect(!invalid.has(TxHandlingOptions.managed_nonce));
+
+    // Merge sanitizes both sides, keeping only declared flags.
+    const merged = invalid.merge(TxHandlingOptions.none);
+    try std.testing.expectEqual(TxHandlingOptions.all.bits, merged.bits);
 }
