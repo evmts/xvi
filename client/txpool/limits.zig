@@ -9,6 +9,16 @@ const TxPool = @import("pool.zig").TxPool;
 const U256 = primitives.Denomination.U256;
 const GasLimit = primitives.Gas.GasLimit;
 const Address = primitives.Address;
+
+inline fn assert_supported_tx_type(comptime T: type, comptime fn_name: []const u8) void {
+    if (!(T == tx_mod.LegacyTransaction or
+        T == tx_mod.Eip1559Transaction or
+        T == tx_mod.Eip4844Transaction or
+        T == tx_mod.Eip7702Transaction))
+    {
+        @compileError("Unsupported transaction type for " ++ fn_name ++ ": " ++ @typeName(T));
+    }
+}
 // -----------------------------------------------------------------------------
 // Internal helpers (no allocations)
 // -----------------------------------------------------------------------------
@@ -68,13 +78,7 @@ fn next_nonce_in_order(current_nonce: u64, pending_sender_txs: u32) u64 {
 pub fn fits_gas_limit(tx: anytype, cfg: TxPoolConfig) error{TxGasLimitExceeded}!void {
     const T = @TypeOf(tx);
     comptime {
-        if (!(T == tx_mod.LegacyTransaction or
-            T == tx_mod.Eip1559Transaction or
-            T == tx_mod.Eip4844Transaction or
-            T == tx_mod.Eip7702Transaction))
-        {
-            @compileError("Unsupported transaction type for fits_gas_limit: " ++ @typeName(T));
-        }
+        assert_supported_tx_type(T, "fits_gas_limit");
     }
 
     const cap_opt = cfg.gas_limit;
@@ -306,13 +310,7 @@ pub fn fits_size_limits(
 ) error{ MaxTxSizeExceeded, MaxBlobTxSizeExceeded }!void {
     const T = @TypeOf(tx);
     comptime {
-        if (!(T == tx_mod.LegacyTransaction or
-            T == tx_mod.Eip1559Transaction or
-            T == tx_mod.Eip4844Transaction or
-            T == tx_mod.Eip7702Transaction))
-        {
-            @compileError("Unsupported transaction type for fits_size_limits: " ++ @typeName(T));
-        }
+        assert_supported_tx_type(T, "fits_size_limits");
     }
 
     var len: usize = 0;
@@ -470,13 +468,7 @@ pub fn enforce_min_priority_fee_for_blobs(
 ) error{ BlobPriorityFeeTooLow, InsufficientMaxFeePerBlobGas }!void {
     const T = @TypeOf(tx);
     comptime {
-        if (!(T == tx_mod.LegacyTransaction or
-            T == tx_mod.Eip1559Transaction or
-            T == tx_mod.Eip4844Transaction or
-            T == tx_mod.Eip7702Transaction))
-        {
-            @compileError("Unsupported transaction type for enforce_min_priority_fee_for_blobs: " ++ @typeName(T));
-        }
+        assert_supported_tx_type(T, "enforce_min_priority_fee_for_blobs");
     }
 
     // Only applies to blob transactions (EIP-4844, type-3)
