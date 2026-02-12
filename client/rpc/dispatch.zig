@@ -98,19 +98,8 @@ pub const ParseNamespaceResult = union(enum) {
 /// `.error(.method_not_found)`. If the field is missing or malformed,
 /// returns `.error(.invalid_request)` per EIP-1474.
 pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
-    const fields = scan.scan_request_fields(request) catch |err| switch (err) {
-        error.ParseError => return .{ .err = .parse_error },
-        error.InvalidRequest => return .{ .err = .invalid_request },
-    };
-
-    const jsonrpc_span = fields.jsonrpc orelse return .{ .err = .invalid_request };
-    const jsonrpc_token = request[jsonrpc_span.start..jsonrpc_span.end];
-    if (jsonrpc_token.len < 2 or jsonrpc_token[0] != '"' or jsonrpc_token[jsonrpc_token.len - 1] != '"') {
-        return .{ .err = .invalid_request };
-    }
-    if (!std.mem.eql(u8, jsonrpc_token[1 .. jsonrpc_token.len - 1], "2.0")) {
-        return .{ .err = .jsonrpc_version_not_supported };
-    }
+    const fields = scan.scan_request_fields(request) catch |err| return .{ .err = scan.scan_error_to_jsonrpc_error(err) };
+    if (scan.validate_jsonrpc_version_token(request, fields)) |code| return .{ .err = code };
 
     const method_span = fields.method orelse return .{ .err = .invalid_request };
     const method_token = request[method_span.start..method_span.end];

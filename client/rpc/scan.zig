@@ -3,21 +3,48 @@
 //! Shared by envelope and dispatch to avoid code duplication. These
 //! functions are allocation-free and operate on raw bytes.
 const std = @import("std");
+const errors = @import("error.zig");
 
+/// Scanner failures for top-level JSON-RPC request parsing.
 pub const ScanRequestError = error{
     ParseError,
     InvalidRequest,
 };
 
+/// Zero-copy start/end byte offsets for a parsed JSON value token.
 pub const ValueSpan = struct {
     start: usize,
     end: usize,
 };
 
+/// Captured top-level field spans from a validated request object.
 pub const RequestFieldSpans = struct {
     jsonrpc: ?ValueSpan = null,
     method: ?ValueSpan = null,
 };
+
+/// Maps scanner-level parse failures to EIP-1474 request-level error codes.
+pub fn scan_error_to_jsonrpc_error(err: ScanRequestError) errors.JsonRpcErrorCode {
+    return switch (err) {
+        error.ParseError => .parse_error,
+        error.InvalidRequest => .invalid_request,
+    };
+}
+
+/// Validates the extracted top-level `jsonrpc` token.
+///
+/// Returns `null` for a valid `"2.0"` token, otherwise an EIP-1474 error code.
+pub fn validate_jsonrpc_version_token(input: []const u8, fields: RequestFieldSpans) ?errors.JsonRpcErrorCode {
+    const jsonrpc_span = fields.jsonrpc orelse return .invalid_request;
+    const jsonrpc_token = input[jsonrpc_span.start..jsonrpc_span.end];
+    if (jsonrpc_token.len < 2 or jsonrpc_token[0] != '"' or jsonrpc_token[jsonrpc_token.len - 1] != '"') {
+        return .invalid_request;
+    }
+    if (!std.mem.eql(u8, jsonrpc_token[1 .. jsonrpc_token.len - 1], "2.0")) {
+        return .jsonrpc_version_not_supported;
+    }
+    return null;
+}
 
 /// Return the index at which the given JSON object key (including quotes)
 /// appears as a direct child of the top-level object. Returns null if the
@@ -317,4 +344,19 @@ test "scanRequestFields rejects malformed object" {
 test "scanRequestFields rejects invalid JSON with trailing tokens" {
     const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\" } garbage";
     try std.testing.expectError(error.ParseError, scan_request_fields(req));
+}
+
+test "scan_error_to_jsonrpc_error maps parser errors to eip-1474 codes" {
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, scan_error_to_jsonrpc_error(error.ParseError));
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, scan_error_to_jsonrpc_error(error.InvalidRequest));
+}
+
+test "validate_jsonrpc_version_token accepts only jsonrpc 2.0 string token" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\" }";
+    const fields = try scan_request_fields(req);
+    try std.testing.expect(validate_jsonrpc_version_token(req, fields) == null);
+
+    const bad_req = "{ \"jsonrpc\": 2.0, \"method\": \"eth_blockNumber\" }";
+    const bad_fields = try scan_request_fields(bad_req);
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_jsonrpc_version_token(bad_req, bad_fields).?);
 }

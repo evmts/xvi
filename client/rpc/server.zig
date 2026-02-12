@@ -54,56 +54,8 @@ pub const RpcServerConfig = struct {
 /// Returns `null` when the version is exactly `"2.0"`, otherwise returns
 /// an EIP-1474-compatible error code.
 pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErrorCode {
-    var i: usize = 0;
-    // Skip UTF-8 BOM if present.
-    if (request.len >= 3 and request[0] == 0xEF and request[1] == 0xBB and request[2] == 0xBF) {
-        i = 3;
-    }
-    while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
-    if (i >= request.len) return .parse_error;
-
-    const first = request[i];
-    if (first == '[') return .invalid_request;
-    if (first != '{') return .invalid_request;
-
-    const key = "\"jsonrpc\"";
-    const idx_opt = scan.find_top_level_key(request[i..], key);
-    if (idx_opt == null) return .invalid_request;
-
-    var j: usize = i + idx_opt.? + key.len;
-    while (j < request.len and std.ascii.isWhitespace(request[j])) : (j += 1) {}
-    if (j >= request.len or request[j] != ':') return .invalid_request;
-    j += 1;
-
-    while (j < request.len and std.ascii.isWhitespace(request[j])) : (j += 1) {}
-    if (j >= request.len) return .parse_error;
-    if (request[j] != '"') return .invalid_request;
-
-    const start = j + 1;
-    var end = start;
-    var esc = false;
-    while (end < request.len) : (end += 1) {
-        const ch = request[end];
-        if (esc) {
-            esc = false;
-            continue;
-        }
-        if (ch == '\\') {
-            esc = true;
-            continue;
-        }
-        if (ch == '"') break;
-    }
-    if (end >= request.len or request[end] != '"') return .parse_error;
-    // Ensure the parsed version string token is properly terminated.
-    // If the closing quote we found actually belongs to another token,
-    // the request is malformed JSON and must be classified as parse_error.
-    var term = end + 1;
-    while (term < request.len and std.ascii.isWhitespace(request[term])) : (term += 1) {}
-    if (term < request.len and request[term] != ',' and request[term] != '}') return .parse_error;
-
-    if (std.mem.eql(u8, request[start..end], "2.0")) return null;
-    return .jsonrpc_version_not_supported;
+    const fields = scan.scan_request_fields(request) catch |err| return scan.scan_error_to_jsonrpc_error(err);
+    return scan.validate_jsonrpc_version_token(request, fields);
 }
 
 // ============================================================================
