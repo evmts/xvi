@@ -50,35 +50,6 @@ pub fn resolve_namespace(method_name: []const u8) ?std.meta.Tag(jsonrpc.JsonRpcM
         }
     }
 
-    // Try Engine namespace
-    if (jsonrpc.engine.EngineMethod.fromMethodName(method_name)) |tag| {
-        _ = tag; // tag not used beyond confirming success
-        return .engine;
-    } else |err| switch (err) {
-        error.UnknownMethod => {
-            if (std.mem.eql(u8, method_name, "engine_getClientVersionV1")) return .engine;
-        }, // continue probing other namespaces
-        else => return null, // defensive: unexpected error -> no match
-    }
-
-    // Try Eth namespace
-    if (jsonrpc.eth.EthMethod.fromMethodName(method_name)) |tag| {
-        _ = tag;
-        return .eth;
-    } else |err| switch (err) {
-        error.UnknownMethod => {},
-        else => return null,
-    }
-
-    // Try Debug namespace
-    if (jsonrpc.debug.DebugMethod.fromMethodName(method_name)) |tag| {
-        _ = tag;
-        return .debug;
-    } else |err| switch (err) {
-        error.UnknownMethod => {},
-        else => return null,
-    }
-
     return null;
 }
 
