@@ -9,6 +9,16 @@ const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
 const scan = @import("scan.zig");
 
+fn is_engine_versioned_method_name(name: []const u8) bool {
+    if (!std.mem.startsWith(u8, name, "engine_")) return false;
+    if (name.len < 2) return false;
+
+    var i: usize = name.len;
+    while (i > 0 and std.ascii.isDigit(name[i - 1])) : (i -= 1) {}
+    if (i == name.len or i == 0) return false;
+    return name[i - 1] == 'V';
+}
+
 /// Returns the root namespace tag of a JSON-RPC method name.
 /// - `.engine` for Engine API
 /// - `.eth` for Ethereum API
@@ -26,17 +36,17 @@ pub fn resolve_namespace(method_name: []const u8) ?std.meta.Tag(jsonrpc.JsonRpcM
         }
     }
     if (std.mem.startsWith(u8, method_name, "engine_")) {
-        // Voltaire's EngineMethod union (upstream) currently omits
-        // engine_getClientVersionV1. Explicitly treat it as an engine
-        // namespace method so requests are routed to the Engine API.
-        if (std.mem.eql(u8, method_name, "engine_getClientVersionV1")) {
-            return .engine;
-        }
         if (jsonrpc.engine.EngineMethod.fromMethodName(method_name)) |tag| {
             _ = tag;
             return .engine;
         } else |err| switch (err) {
-            error.UnknownMethod => return null,
+            // Keep routing versioned engine_* methods to the Engine namespace
+            // even if the current Voltaire method registry is behind
+            // execution-apis additions.
+            error.UnknownMethod => {
+                if (is_engine_versioned_method_name(method_name)) return .engine;
+                return null;
+            },
             else => return null,
         }
     }
