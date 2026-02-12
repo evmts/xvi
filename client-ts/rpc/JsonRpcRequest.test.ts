@@ -33,7 +33,7 @@ describe("JsonRpcRequest", () => {
       });
 
       assert.deepStrictEqual(request.params, { address: "0xdeadbeef" });
-      assert.isUndefined(request.id);
+      assert.strictEqual(request.id, undefined);
     }).pipe(Effect.provide(JsonRpcRequestDecoderLive)),
   );
 
@@ -47,9 +47,9 @@ describe("JsonRpcRequest", () => {
         }).pipe(Effect.provide(JsonRpcRequestDecoderLive)),
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof InvalidJsonRpcRequestError);
+        assert.strictEqual(outcome.left instanceof InvalidJsonRpcRequestError, true);
       }
     }),
   );
@@ -64,9 +64,9 @@ describe("JsonRpcRequest", () => {
         }).pipe(Effect.provide(JsonRpcRequestDecoderLive)),
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof InvalidJsonRpcRequestError);
+        assert.strictEqual(outcome.left instanceof InvalidJsonRpcRequestError, true);
       }
     }),
   );

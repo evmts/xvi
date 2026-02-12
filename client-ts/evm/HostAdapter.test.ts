@@ -125,9 +125,9 @@ describe("HostAdapter", () => {
         const slot = makeSlot(6);
         const value = makeStorageValue(9);
         const result = yield* Effect.either(setStorage(addr, slot, value));
-        assert.isTrue(Either.isLeft(result));
+        assert.strictEqual(Either.isLeft(result), true);
         if (Either.isLeft(result)) {
-          assert.isTrue(result.left instanceof MissingAccountError);
+          assert.strictEqual(result.left instanceof MissingAccountError, true);
         }
       }),
     ),

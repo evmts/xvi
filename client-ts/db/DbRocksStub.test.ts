@@ -47,8 +47,8 @@ describe("DbRocksStub", () => {
         Effect.gen(function* () {
           const error = yield* Effect.flip(effect);
           assert.strictEqual(error._tag, "DbError");
-          assert.isTrue(
-            error.message.includes(`does not implement ${operation}`),
+          assert.strictEqual(
+            error.message.includes(`does not implement ${operation}`), true
           );
         });
 

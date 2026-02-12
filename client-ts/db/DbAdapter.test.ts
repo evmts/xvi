@@ -267,19 +267,19 @@ describe("DbAdapter", () => {
         const program = Effect.gen(function* () {
           const db = yield* Db;
 
-          assert.isFalse(yield* db.has(key));
+          assert.strictEqual(yield* db.has(key), false);
 
           yield* db.put(key, value);
-          assert.isTrue(yield* db.has(key));
+          assert.strictEqual(yield* db.has(key), true);
 
           const read = yield* db.get(key);
-          assert.isTrue(Option.isSome(read));
+          assert.strictEqual(Option.isSome(read), true);
           assert.deepStrictEqual(Option.getOrNull(read), value);
 
           const many = yield* db.getMany([key, bytes(0xff)]);
           assert.strictEqual(many.length, 2);
-          assert.isTrue(Option.isSome(many[0]!.value));
-          assert.isTrue(Option.isNone(many[1]!.value));
+          assert.strictEqual(Option.isSome(many[0]!.value), true);
+          assert.strictEqual(Option.isNone(many[1]!.value), true);
 
           const all = yield* db.getAll();
           assert.strictEqual(all.length, 1);
@@ -294,7 +294,7 @@ describe("DbAdapter", () => {
           assert.strictEqual(metric.totalWrites, 1);
 
           yield* db.clear();
-          assert.isFalse(yield* db.has(key));
+          assert.strictEqual(yield* db.has(key), false);
         });
 
         yield* program.pipe(Effect.provide(provideDb(service)));
@@ -327,7 +327,7 @@ describe("DbAdapter", () => {
             const db = yield* Db;
 
             const snapshot = yield* db.createSnapshot();
-            assert.isFalse(yield* snapshot.has(key));
+            assert.strictEqual(yield* snapshot.has(key), false);
 
             const batch = yield* db.startWriteBatch();
             yield* batch.put(key, value);

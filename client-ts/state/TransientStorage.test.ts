@@ -174,9 +174,9 @@ describe("TransientStorage", () => {
         );
 
         const outcome = yield* Effect.either(restoreSnapshot(snapshot));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof UnknownTransientSnapshotError);
+          assert.strictEqual(outcome.left instanceof UnknownTransientSnapshotError, true);
         }
       }),
     ),
@@ -186,9 +186,9 @@ describe("TransientStorage", () => {
     provideTransientStorage(
       Effect.gen(function* () {
         const outcome = yield* Effect.either(restoreSnapshot(5));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof UnknownTransientSnapshotError);
+          assert.strictEqual(outcome.left instanceof UnknownTransientSnapshotError, true);
         }
       }),
     ),
@@ -198,9 +198,9 @@ describe("TransientStorage", () => {
     provideTransientStorage(
       Effect.gen(function* () {
         const outcome = yield* Effect.either(commitSnapshot(12));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof UnknownTransientSnapshotError);
+          assert.strictEqual(outcome.left instanceof UnknownTransientSnapshotError, true);
         }
       }),
     ),

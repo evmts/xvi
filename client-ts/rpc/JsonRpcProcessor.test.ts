@@ -48,7 +48,7 @@ describe("JsonRpcProcessor", () => {
           id: 1,
         });
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -69,7 +69,7 @@ describe("JsonRpcProcessor", () => {
           '{"jsonrpc":"2.0","method":"net_version","id":5}',
         );
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -88,7 +88,7 @@ describe("JsonRpcProcessor", () => {
           '{"jsonrpc":"2.0","method":"web3_clientVersion",',
         );
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -110,7 +110,7 @@ describe("JsonRpcProcessor", () => {
         Effect.gen(function* () {
           const response = yield* processJsonRpcPayload(42);
 
-          assert.isTrue(Option.isSome(response));
+          assert.strictEqual(Option.isSome(response), true);
           if (Option.isSome(response)) {
             assert.deepStrictEqual(response.value, {
               jsonrpc: "2.0",
@@ -134,7 +134,7 @@ describe("JsonRpcProcessor", () => {
           id: 9,
         });
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -166,7 +166,7 @@ describe("JsonRpcProcessor", () => {
       }).pipe(Effect.provide(layer));
 
       const callCount = yield* Ref.get(called);
-      assert.isTrue(Option.isNone(response));
+      assert.strictEqual(Option.isNone(response), true);
       assert.strictEqual(callCount, 1);
     }),
   );
@@ -190,7 +190,7 @@ describe("JsonRpcProcessor", () => {
           },
         ]);
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, [
             {
@@ -241,7 +241,7 @@ describe("JsonRpcProcessor", () => {
 
         const callCount = yield* Ref.get(called);
         assert.strictEqual(callCount, 2);
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, [
             {
@@ -278,7 +278,7 @@ describe("JsonRpcProcessor", () => {
 
       const callCount = yield* Ref.get(called);
       assert.strictEqual(callCount, 2);
-      assert.isTrue(Option.isNone(response));
+      assert.strictEqual(Option.isNone(response), true);
     }),
   );
 
@@ -287,7 +287,7 @@ describe("JsonRpcProcessor", () => {
       Effect.gen(function* () {
         const response = yield* processJsonRpcPayload([]);
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -316,7 +316,7 @@ describe("JsonRpcProcessor", () => {
           },
         ]);
 
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, [
             {
@@ -351,7 +351,7 @@ describe("JsonRpcProcessor", () => {
             id: 11,
           });
 
-          assert.isTrue(Option.isSome(response));
+          assert.strictEqual(Option.isSome(response), true);
           if (Option.isSome(response)) {
             assert.deepStrictEqual(response.value, {
               jsonrpc: "2.0",
@@ -382,7 +382,7 @@ describe("JsonRpcProcessor", () => {
             }),
           );
 
-          assert.isTrue(Either.isLeft(result));
+          assert.strictEqual(Either.isLeft(result), true);
           if (Either.isLeft(result)) {
             assert.strictEqual(result.left._tag, "InvalidJsonRpcResponseError");
           }

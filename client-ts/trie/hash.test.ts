@@ -43,12 +43,12 @@ describe("trie hashing", () => {
       const expected = yield* encodeRlp([compact, value]);
       const encoded = yield* encodeRlp(result.value);
 
-      assert.isTrue(encoded.length < 32);
-      assert.isTrue(
+      assert.strictEqual(encoded.length < 32, true);
+      assert.strictEqual(
         Bytes.equals(
           bytesFromUint8Array(encoded),
           bytesFromUint8Array(expected),
-        ),
+        ), true
       );
     }).pipe(Effect.provide(TrieHashTest)),
   );
@@ -69,8 +69,8 @@ describe("trie hashing", () => {
       const encoded = yield* encodeRlp([compact, value]);
       const expected = yield* keccak256(encoded);
 
-      assert.isTrue(encoded.length >= 32);
-      assert.isTrue(yield* hashEquals(result.value, expected));
+      assert.strictEqual(encoded.length >= 32, true);
+      assert.strictEqual(yield* hashEquals(result.value, expected), true);
     }).pipe(Effect.provide(TrieHashTest)),
   );
 
@@ -83,9 +83,9 @@ describe("trie hashing", () => {
       };
 
       const result = yield* Effect.either(encodeInternalNode(node));
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof TrieHashError);
+        assert.strictEqual(result.left instanceof TrieHashError, true);
       }
     }).pipe(Effect.provide(TrieHashTest)),
   );

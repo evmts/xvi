@@ -23,7 +23,7 @@ describe("Account helpers", () => {
       const account = makeAccount();
       assert.strictEqual(account.nonce, 0n);
       assert.strictEqual(account.balance, 0n);
-      assert.isTrue(isTotallyEmpty(account));
+      assert.strictEqual(isTotallyEmpty(account), true);
     }),
   );
 
@@ -47,48 +47,48 @@ describe("Account helpers", () => {
 
   it.effect("treats EMPTY_ACCOUNT as empty, totally empty, and not alive", () =>
     Effect.gen(function* () {
-      assert.isTrue(isEmpty(EMPTY_ACCOUNT));
-      assert.isTrue(isTotallyEmpty(EMPTY_ACCOUNT));
-      assert.isFalse(isAccountAlive(EMPTY_ACCOUNT));
-      assert.isFalse(hasCodeOrNonce(EMPTY_ACCOUNT));
+      assert.strictEqual(isEmpty(EMPTY_ACCOUNT), true);
+      assert.strictEqual(isTotallyEmpty(EMPTY_ACCOUNT), true);
+      assert.strictEqual(isAccountAlive(EMPTY_ACCOUNT), false);
+      assert.strictEqual(hasCodeOrNonce(EMPTY_ACCOUNT), false);
     }),
   );
 
   it.effect("detects non-empty accounts as alive", () =>
     Effect.gen(function* () {
       const account = makeAccount({ nonce: 1n });
-      assert.isTrue(isAccountAlive(account));
+      assert.strictEqual(isAccountAlive(account), true);
     }),
   );
 
   it.effect("treats storage root as irrelevant for emptiness", () =>
     Effect.gen(function* () {
       const account = makeAccount({ storageRoot: customBytes32(0xab) });
-      assert.isTrue(isEmpty(account));
-      assert.isFalse(isTotallyEmpty(account));
+      assert.strictEqual(isEmpty(account), true);
+      assert.strictEqual(isTotallyEmpty(account), false);
     }),
   );
 
   it.effect("detects code hash for hasCodeOrNonce", () =>
     Effect.gen(function* () {
       const account = makeAccount({ codeHash: customBytes32(0xcd) });
-      assert.isTrue(hasCodeOrNonce(account));
+      assert.strictEqual(hasCodeOrNonce(account), true);
     }),
   );
 
   it.effect("detects contracts by code hash", () =>
     Effect.gen(function* () {
-      assert.isFalse(isContract(EMPTY_ACCOUNT));
+      assert.strictEqual(isContract(EMPTY_ACCOUNT), false);
       const account = makeAccount({ codeHash: customBytes32(0xaa) });
-      assert.isTrue(isContract(account));
+      assert.strictEqual(isContract(account), true);
     }),
   );
 
   it.effect("ignores balance-only for hasCodeOrNonce", () =>
     Effect.gen(function* () {
       const account = makeAccount({ balance: 1_000_000n });
-      assert.isFalse(hasCodeOrNonce(account));
-      assert.isFalse(isEmpty(account));
+      assert.strictEqual(hasCodeOrNonce(account), false);
+      assert.strictEqual(isEmpty(account), false);
     }),
   );
 });

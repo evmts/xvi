@@ -27,8 +27,8 @@ describe("NullDb", () => {
       const key = toBytes("0x01");
 
       const value = yield* get(key);
-      assert.isTrue(Option.isNone(value));
-      assert.isFalse(yield* has(key));
+      assert.strictEqual(Option.isNone(value), true);
+      assert.strictEqual(yield* has(key), false);
       assert.deepStrictEqual(yield* getAll(), []);
       assert.deepStrictEqual(yield* getAllKeys(), []);
       assert.deepStrictEqual(yield* getAllValues(), []);
@@ -43,8 +43,8 @@ describe("NullDb", () => {
         Effect.gen(function* () {
           const snapshot = yield* createSnapshot();
           const value = yield* snapshot.get(key);
-          assert.isTrue(Option.isNone(value));
-          assert.isFalse(yield* snapshot.has(key));
+          assert.strictEqual(Option.isNone(value), true);
+          assert.strictEqual(yield* snapshot.has(key), false);
         }),
       );
     }).pipe(Effect.provide(DbNullTest())),

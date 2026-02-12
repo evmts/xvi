@@ -22,7 +22,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const bytes = toBytes("0x12ab");
       const result = yield* bytesToNibbleList(bytes);
-      assert.deepEqual(Array.from(result), [0x1, 0x2, 0xa, 0xb]);
+      assert.deepStrictEqual(Array.from(result), [0x1, 0x2, 0xa, 0xb]);
     }),
   );
 
@@ -30,7 +30,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const bytes = bytesFromUint8Array(new Uint8Array(0));
       const result = yield* bytesToNibbleList(bytes);
-      assert.deepEqual(Array.from(result), []);
+      assert.deepStrictEqual(Array.from(result), []);
     }),
   );
 
@@ -38,7 +38,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array([0x1, 0x2, 0x3, 0x4]));
       const result = yield* nibbleListToCompact(nibbles, false);
-      assert.isTrue(Bytes.equals(result, toBytes("0x001234")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x001234")), true);
     }),
   );
 
@@ -46,7 +46,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array([0x1, 0x2, 0x3]));
       const result = yield* nibbleListToCompact(nibbles, true);
-      assert.isTrue(Bytes.equals(result, toBytes("0x3123")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x3123")), true);
     }),
   );
 
@@ -54,7 +54,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array([0x1, 0x2, 0x3, 0x4]));
       const result = yield* nibbleListToCompact(nibbles, true);
-      assert.isTrue(Bytes.equals(result, toBytes("0x201234")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x201234")), true);
     }),
   );
 
@@ -62,7 +62,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array([0x1]));
       const result = yield* nibbleListToCompact(nibbles, false);
-      assert.isTrue(Bytes.equals(result, toBytes("0x11")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x11")), true);
     }),
   );
 
@@ -70,7 +70,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array(0));
       const result = yield* nibbleListToCompact(nibbles, false);
-      assert.isTrue(Bytes.equals(result, toBytes("0x00")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x00")), true);
     }),
   );
 
@@ -78,7 +78,7 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array(0));
       const result = yield* nibbleListToCompact(nibbles, true);
-      assert.isTrue(Bytes.equals(result, toBytes("0x20")));
+      assert.strictEqual(Bytes.equals(result, toBytes("0x20")), true);
     }),
   );
 
@@ -86,9 +86,9 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const nibbles = bytesFromUint8Array(new Uint8Array([0x10]));
       const result = yield* Effect.either(nibbleListToCompact(nibbles, false));
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof NibbleEncodingError);
+        assert.strictEqual(result.left instanceof NibbleEncodingError, true);
       }
     }),
   );
@@ -97,9 +97,9 @@ describe("trie encoding", () => {
     Effect.gen(function* () {
       const compact = bytesFromUint8Array(new Uint8Array([0x80]));
       const result = yield* Effect.either(compactToNibbleList(compact));
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof NibbleEncodingError);
+        assert.strictEqual(result.left instanceof NibbleEncodingError, true);
       }
     }),
   );

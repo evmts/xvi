@@ -68,7 +68,7 @@ describe("JsonRpcResponse", () => {
           message: "Invalid request",
           data: { reason: "bad payload" },
         });
-        assert.isNull(encoded.id);
+        assert.strictEqual(encoded.id, null);
       }),
     ),
   );
@@ -84,9 +84,9 @@ describe("JsonRpcResponse", () => {
 
         const outcome = yield* Effect.either(encodeJsonRpcResponse(invalid));
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidJsonRpcResponseError);
+          assert.strictEqual(outcome.left instanceof InvalidJsonRpcResponseError, true);
         }
       }),
     ),
@@ -103,9 +103,9 @@ describe("JsonRpcResponse", () => {
 
         const outcome = yield* Effect.either(encodeJsonRpcResponse(invalid));
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidJsonRpcResponseError);
+          assert.strictEqual(outcome.left instanceof InvalidJsonRpcResponseError, true);
         }
       }),
     ),
@@ -125,9 +125,9 @@ describe("JsonRpcResponse", () => {
 
         const outcome = yield* Effect.either(encodeJsonRpcResponse(invalid));
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidJsonRpcResponseError);
+          assert.strictEqual(outcome.left instanceof InvalidJsonRpcResponseError, true);
         }
       }),
     ),

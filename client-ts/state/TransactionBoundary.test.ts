@@ -192,9 +192,9 @@ describe("TransactionBoundary", () => {
     provideIntegration(
       Effect.gen(function* () {
         const result = yield* Effect.either(commitTransaction());
-        assert.isTrue(Either.isLeft(result));
+        assert.strictEqual(Either.isLeft(result), true);
         if (Either.isLeft(result)) {
-          assert.isTrue(result.left instanceof NoActiveTransactionError);
+          assert.strictEqual(result.left instanceof NoActiveTransactionError, true);
         }
       }),
     ),
@@ -206,9 +206,9 @@ describe("TransactionBoundary", () => {
       provideIntegration(
         Effect.gen(function* () {
           const result = yield* Effect.either(rollbackTransaction());
-          assert.isTrue(Either.isLeft(result));
+          assert.strictEqual(Either.isLeft(result), true);
           if (Either.isLeft(result)) {
-            assert.isTrue(result.left instanceof NoActiveTransactionError);
+            assert.strictEqual(result.left instanceof NoActiveTransactionError, true);
           }
         }),
       ),

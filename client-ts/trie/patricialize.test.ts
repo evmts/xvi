@@ -39,7 +39,7 @@ describe("trie patricialize", () => {
   it.effect("patricialize returns null for empty maps", () =>
     Effect.gen(function* () {
       const result = yield* patricialize(new Map(), 0);
-      assert.isNull(result);
+      assert.strictEqual(result, null);
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -55,8 +55,8 @@ describe("trie patricialize", () => {
         return;
       }
 
-      assert.isTrue(Bytes.equals(node.restOfKey, key));
-      assert.isTrue(Bytes.equals(node.value, value));
+      assert.strictEqual(Bytes.equals(node.restOfKey, key), true);
+      assert.strictEqual(Bytes.equals(node.value, value), true);
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -75,7 +75,7 @@ describe("trie patricialize", () => {
         return;
       }
 
-      assert.isTrue(Bytes.equals(node.keySegment, nibbles(0x1, 0x2)));
+      assert.strictEqual(Bytes.equals(node.keySegment, nibbles(0x1, 0x2)), true);
       assert.notStrictEqual(node.subnode._tag, "empty");
     }).pipe(Effect.provide(TestLayer)),
   );
@@ -98,7 +98,7 @@ describe("trie patricialize", () => {
       }
 
       assert.strictEqual(node.subnodes.length, 16);
-      assert.isTrue(Bytes.equals(node.value, toBytes("0xaa")));
+      assert.strictEqual(Bytes.equals(node.value, toBytes("0xaa")), true);
       assert.notStrictEqual(node.subnodes[1]?._tag, "empty");
       assert.notStrictEqual(node.subnodes[2]?._tag, "empty");
     }).pipe(Effect.provide(TestLayer)),
@@ -110,9 +110,9 @@ describe("trie patricialize", () => {
       const input = new Map<BytesType, BytesType>([[key, toBytes("0x01")]]);
 
       const result = yield* Effect.either(patricialize(input, 0));
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof PatricializeError);
+        assert.strictEqual(result.left instanceof PatricializeError, true);
       }
     }).pipe(Effect.provide(TestLayer)),
   );

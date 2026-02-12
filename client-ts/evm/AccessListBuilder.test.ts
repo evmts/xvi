@@ -111,7 +111,7 @@ describe("AccessListBuilder.buildAccessList", () => {
         if (!first) {
           throw new Error("missing coinbase address");
         }
-        assert.isTrue(Address.equals(first, coinbase));
+        assert.strictEqual(Address.equals(first, coinbase), true);
         assert.strictEqual(result.storageKeys.length, 0);
       }),
     ),
@@ -149,24 +149,24 @@ describe("AccessListBuilder.buildAccessList", () => {
 
         const addressHexes = result.addresses.map(Hex.fromBytes);
         assert.strictEqual(result.addresses.length, 3);
-        assert.isTrue(addressHexes.includes(Hex.fromBytes(coinbase)));
-        assert.isTrue(addressHexes.includes(Hex.fromBytes(addr1)));
-        assert.isTrue(addressHexes.includes(Hex.fromBytes(addr2)));
+        assert.strictEqual(addressHexes.includes(Hex.fromBytes(coinbase)), true);
+        assert.strictEqual(addressHexes.includes(Hex.fromBytes(addr1)), true);
+        assert.strictEqual(addressHexes.includes(Hex.fromBytes(addr2)), true);
 
         const storageKeyIds = result.storageKeys.map(
           (entry) =>
             `${Hex.fromBytes(entry.address)}:${Hex.fromBytes(entry.slot)}`,
         );
         assert.strictEqual(storageKeyIds.length, 2);
-        assert.isTrue(
+        assert.strictEqual(
           storageKeyIds.includes(
             `${Hex.fromBytes(addr1)}:${Hex.fromBytes(slot1)}`,
-          ),
+          ), true
         );
-        assert.isTrue(
+        assert.strictEqual(
           storageKeyIds.includes(
             `${Hex.fromBytes(addr1)}:${Hex.fromBytes(slot2)}`,
-          ),
+          ), true
         );
       }),
     ),
@@ -179,10 +179,10 @@ describe("AccessListBuilder.buildAccessList", () => {
         const tx = makeAccessListTx([]);
         const outcome = yield* Effect.either(buildAccessList(tx, coinbase));
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof UnsupportedAccessListFeatureError,
+          assert.strictEqual(
+            outcome.left instanceof UnsupportedAccessListFeatureError, true
           );
         }
       }),

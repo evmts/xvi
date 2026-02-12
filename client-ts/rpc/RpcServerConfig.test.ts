@@ -42,9 +42,9 @@ describe("RpcServerConfig", () => {
           ),
         ),
       );
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof InvalidRpcServerConfigError);
+        assert.strictEqual(outcome.left instanceof InvalidRpcServerConfigError, true);
       }
     }),
   );

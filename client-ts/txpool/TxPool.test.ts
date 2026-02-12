@@ -224,10 +224,10 @@ describe("TxPool", () => {
         assert.strictEqual(added._tag, "Added");
 
         const outcome = yield* Effect.either(addTransaction(incoming));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof TxPoolReplacementNotAllowedError,
+          assert.strictEqual(
+            outcome.left instanceof TxPoolReplacementNotAllowedError, true
           );
         }
 
@@ -312,9 +312,9 @@ describe("TxPool", () => {
       assert.strictEqual(first._tag, "Added");
 
       const second = yield* Effect.either(addTransaction(underpricedBlobFee));
-      assert.isTrue(Either.isLeft(second));
+      assert.strictEqual(Either.isLeft(second), true);
       if (Either.isLeft(second)) {
-        assert.isTrue(second.left instanceof TxPoolReplacementNotAllowedError);
+        assert.strictEqual(second.left instanceof TxPoolReplacementNotAllowedError, true);
       }
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
@@ -335,9 +335,9 @@ describe("TxPool", () => {
       const second = yield* Effect.either(
         addTransaction(fewerBlobsReplacement),
       );
-      assert.isTrue(Either.isLeft(second));
+      assert.strictEqual(Either.isLeft(second), true);
       if (Either.isLeft(second)) {
-        assert.isTrue(second.left instanceof TxPoolReplacementNotAllowedError);
+        assert.strictEqual(second.left instanceof TxPoolReplacementNotAllowedError, true);
       }
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
@@ -346,9 +346,9 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const tx = makeSignedEip1559Tx(0n);
       const validated = yield* validateTransaction(tx);
-      assert.isFalse(validated.isBlob);
+      assert.strictEqual(validated.isBlob, false);
       const expectedSender = Transaction.getSender(tx);
-      assert.isTrue(Address.equals(validated.sender, expectedSender));
+      assert.strictEqual(Address.equals(validated.sender, expectedSender), true);
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
 
@@ -359,7 +359,7 @@ describe("TxPool", () => {
       assert.strictEqual(result._tag, "Added");
 
       const removed = yield* removeTransaction(result.hash);
-      assert.isTrue(removed);
+      assert.strictEqual(removed, true);
 
       const count = yield* getPendingCount();
       assert.strictEqual(count, 0);
@@ -370,7 +370,7 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const missingHash = Transaction.hash(makeSignedEip1559Tx(999n));
       const removed = yield* removeTransaction(missingHash);
-      assert.isFalse(removed);
+      assert.strictEqual(removed, false);
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
 
@@ -382,9 +382,9 @@ describe("TxPool", () => {
       yield* addTransaction(tx1);
       const outcome = yield* Effect.either(addTransaction(tx2));
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolFullError);
+        assert.strictEqual(outcome.left instanceof TxPoolFullError, true);
       }
     }).pipe(
       Effect.provide(
@@ -404,9 +404,9 @@ describe("TxPool", () => {
       yield* addTransaction(tx1);
       const outcome = yield* Effect.either(addTransaction(tx2));
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolSenderLimitExceededError);
+        assert.strictEqual(outcome.left instanceof TxPoolSenderLimitExceededError, true);
       }
     }).pipe(
       Effect.provide(
@@ -426,10 +426,10 @@ describe("TxPool", () => {
       yield* addTransaction(tx1);
       const outcome = yield* Effect.either(addTransaction(tx2));
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(
-          outcome.left instanceof TxPoolBlobSenderLimitExceededError,
+        assert.strictEqual(
+          outcome.left instanceof TxPoolBlobSenderLimitExceededError, true
         );
       }
     }).pipe(
@@ -448,9 +448,9 @@ describe("TxPool", () => {
       Effect.gen(function* () {
         const tx = makeSignedEip1559Tx(0n, 1n, 2n, 120_000n);
         const outcome = yield* Effect.either(addTransaction(tx));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TxPoolGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof TxPoolGasLimitExceededError, true);
         }
       }).pipe(
         Effect.provide(
@@ -474,9 +474,9 @@ describe("TxPool", () => {
       Effect.gen(function* () {
         const tx = makeSignedEip1559Tx(0n, 1n, 2n, 120_000n);
         const outcome = yield* Effect.either(addTransaction(tx));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TxPoolGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof TxPoolGasLimitExceededError, true);
         }
       }).pipe(
         Effect.provide(
@@ -498,9 +498,9 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const blobTx = makeSignedEip4844Tx(0n);
       const outcome = yield* Effect.either(addTransaction(blobTx));
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolBlobSupportDisabledError);
+        assert.strictEqual(outcome.left instanceof TxPoolBlobSupportDisabledError, true);
       }
     }).pipe(
       Effect.provide(
@@ -516,9 +516,9 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const blobTx = makeSignedEip4844Tx(0n, 1n);
       const outcome = yield* Effect.either(addTransaction(blobTx));
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolPriorityFeeTooLowError);
+        assert.strictEqual(outcome.left instanceof TxPoolPriorityFeeTooLowError, true);
       }
     }).pipe(
       Effect.provide(
@@ -534,9 +534,9 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const tx = makeSignedEip1559Tx(0n);
       const outcome = yield* Effect.either(addTransaction(tx));
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolMaxTxSizeExceededError);
+        assert.strictEqual(outcome.left instanceof TxPoolMaxTxSizeExceededError, true);
       }
     }).pipe(
       Effect.provide(
@@ -552,9 +552,9 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const tx = makeSignedEip4844Tx(0n);
       const outcome = yield* Effect.either(addTransaction(tx));
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolMaxBlobTxSizeExceededError);
+        assert.strictEqual(outcome.left instanceof TxPoolMaxBlobTxSizeExceededError, true);
       }
     }).pipe(
       Effect.provide(
@@ -572,9 +572,9 @@ describe("TxPool", () => {
       Effect.gen(function* () {
         const blobTx = makeSignedEip4844Tx(0n, 1n, 2n, 9n);
         const outcome = yield* Effect.either(addTransaction(blobTx));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TxPoolBlobFeeCapTooLowError);
+          assert.strictEqual(outcome.left instanceof TxPoolBlobFeeCapTooLowError, true);
         }
       }).pipe(
         Effect.provide(
@@ -612,14 +612,14 @@ describe("TxPool", () => {
   it.effect("derives blob support from configuration", () =>
     Effect.gen(function* () {
       const enabled = yield* supportsBlobs();
-      assert.isTrue(enabled);
+      assert.strictEqual(enabled, true);
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
 
   it.effect("returns false when blob support is disabled", () =>
     Effect.gen(function* () {
       const enabled = yield* supportsBlobs();
-      assert.isFalse(enabled);
+      assert.strictEqual(enabled, false);
     }).pipe(
       Effect.provide(
         makeTxPoolLayer({
@@ -633,14 +633,14 @@ describe("TxPool", () => {
   it.effect("derives accept-tx-when-not-synced from configuration", () =>
     Effect.gen(function* () {
       const allowed = yield* acceptTxWhenNotSynced();
-      assert.isFalse(allowed);
+      assert.strictEqual(allowed, false);
     }).pipe(Effect.provide(makeTxPoolLayer(TxPoolConfigDefaults))),
   );
 
   it.effect("returns true when accept-tx-when-not-synced is enabled", () =>
     Effect.gen(function* () {
       const allowed = yield* acceptTxWhenNotSynced();
-      assert.isTrue(allowed);
+      assert.strictEqual(allowed, true);
     }).pipe(
       Effect.provide(
         makeTxPoolLayer({
@@ -660,9 +660,9 @@ describe("TxPool", () => {
           ),
         ),
       );
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof InvalidTxPoolConfigError);
+        assert.strictEqual(outcome.left instanceof InvalidTxPoolConfigError, true);
       }
     }),
   );

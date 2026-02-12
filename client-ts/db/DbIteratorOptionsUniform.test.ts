@@ -34,16 +34,16 @@ describe("IteratorOptions uniform acceptance", () => {
 
       const s = yield* dbSeek(toBytes("0x0000"), opts);
       const e = expectSome(s);
-      assert.isTrue(Bytes.equals(e.key as any, k1));
+      assert.strictEqual(Bytes.equals(e.key as any, k1), true);
 
       const n = yield* dbNext(k1, opts);
       const en = expectSome(n);
-      assert.isTrue(Bytes.equals(en.key as any, k2));
+      assert.strictEqual(Bytes.equals(en.key as any, k2), true);
 
       const entries = yield* dbRange(opts);
       assert.strictEqual(entries.length, 2);
-      assert.isTrue(Bytes.equals(entries[0]!.key, k1 as any));
-      assert.isTrue(Bytes.equals(entries[1]!.key, k2 as any));
+      assert.strictEqual(Bytes.equals(entries[0]!.key, k1 as any), true);
+      assert.strictEqual(Bytes.equals(entries[1]!.key, k2 as any), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -67,16 +67,16 @@ describe("IteratorOptions uniform acceptance", () => {
       const s = yield* ro.seek(prefix, opts);
       const e = expectSome(s);
       // seek at prefix should return the prefix key itself if present; here only k1/k2 exist
-      assert.isTrue(Bytes.equals(e.key as any, k1));
+      assert.strictEqual(Bytes.equals(e.key as any, k1), true);
 
       const n = yield* ro.next(k1, opts);
       const en = expectSome(n);
-      assert.isTrue(Bytes.equals(en.key as any, k2));
+      assert.strictEqual(Bytes.equals(en.key as any, k2), true);
 
       const entries = yield* ro.range(opts);
       assert.strictEqual(entries.length, 2);
-      assert.isTrue(Bytes.equals(entries[0]!.key, k1 as any));
-      assert.isTrue(Bytes.equals(entries[1]!.key, k2 as any));
+      assert.strictEqual(Bytes.equals(entries[0]!.key, k1 as any), true);
+      assert.strictEqual(Bytes.equals(entries[1]!.key, k2 as any), true);
     }).pipe(Effect.provide(roLayer)),
   );
 });

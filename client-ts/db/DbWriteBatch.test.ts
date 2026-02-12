@@ -20,7 +20,7 @@ describe("Db writeBatch", () => {
       yield* writeBatch(ops);
 
       const result = yield* get(key);
-      assert.isTrue(Option.isNone(result));
+      assert.strictEqual(Option.isNone(result), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -39,7 +39,7 @@ describe("Db writeBatch", () => {
 
       const result = yield* get(key);
       const stored = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(stored, second));
+      assert.strictEqual(Bytes.equals(stored, second), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 });

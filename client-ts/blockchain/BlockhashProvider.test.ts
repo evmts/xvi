@@ -53,7 +53,7 @@ describe("BlockhashProvider", () => {
           current.header,
           blockNumberFromBigInt(1n),
         );
-        assert.isTrue(Option.isSome(hash));
+        assert.strictEqual(Option.isSome(hash), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(hash)),
           Hex.fromBytes(block1.hash),
@@ -75,13 +75,13 @@ describe("BlockhashProvider", () => {
           current.header,
           blockNumberFromBigInt(300n),
         );
-        assert.isTrue(Option.isNone(future));
+        assert.strictEqual(Option.isNone(future), true);
 
         const tooOld = yield* getBlockhash(
           current.header,
           blockNumberFromBigInt(0n),
         );
-        assert.isTrue(Option.isNone(tooOld));
+        assert.strictEqual(Option.isNone(tooOld), true);
       }),
     ),
   );
@@ -118,7 +118,7 @@ describe("BlockhashProvider", () => {
           current.header,
           blockNumberFromBigInt(1n),
         );
-        assert.isTrue(Option.isSome(hash));
+        assert.strictEqual(Option.isSome(hash), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(hash)),
           Hex.fromBytes(block1.hash),
@@ -268,7 +268,7 @@ describe("BlockhashProvider", () => {
           blockB3.header,
           blockNumberFromBigInt(1n),
         );
-        assert.isTrue(Option.isSome(hash));
+        assert.strictEqual(Option.isSome(hash), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(hash)),
           Hex.fromBytes(blockB1.hash),
@@ -309,7 +309,7 @@ describe("BlockhashProvider", () => {
           current.header,
           blockNumberFromBigInt(1n),
         );
-        assert.isTrue(Option.isSome(hash));
+        assert.strictEqual(Option.isSome(hash), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(hash)),
           Hex.fromBytes(block1.hash),

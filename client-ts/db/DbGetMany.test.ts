@@ -22,14 +22,14 @@ describe("Db getMany", () => {
       const first = entries[0]!;
       const second = entries[1]!;
       const third = entries[2]!;
-      assert.isTrue(Bytes.equals(first.key, keyA));
-      assert.isTrue(Option.isSome(first.value));
-      assert.isTrue(Bytes.equals(Option.getOrThrow(first.value), valueA));
-      assert.isTrue(Bytes.equals(second.key, keyB));
-      assert.isTrue(Option.isNone(second.value));
-      assert.isTrue(Bytes.equals(third.key, keyC));
-      assert.isTrue(Option.isSome(third.value));
-      assert.isTrue(Bytes.equals(Option.getOrThrow(third.value), valueC));
+      assert.strictEqual(Bytes.equals(first.key, keyA), true);
+      assert.strictEqual(Option.isSome(first.value), true);
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(first.value), valueA), true);
+      assert.strictEqual(Bytes.equals(second.key, keyB), true);
+      assert.strictEqual(Option.isNone(second.value), true);
+      assert.strictEqual(Bytes.equals(third.key, keyC), true);
+      assert.strictEqual(Option.isSome(third.value), true);
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(third.value), valueC), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -42,10 +42,10 @@ describe("Db getMany", () => {
       assert.strictEqual(entries.length, 2);
       const first = entries[0]!;
       const second = entries[1]!;
-      assert.isTrue(Bytes.equals(first.key, keyA));
-      assert.isTrue(Option.isNone(first.value));
-      assert.isTrue(Bytes.equals(second.key, keyB));
-      assert.isTrue(Option.isNone(second.value));
+      assert.strictEqual(Bytes.equals(first.key, keyA), true);
+      assert.strictEqual(Option.isNone(first.value), true);
+      assert.strictEqual(Bytes.equals(second.key, keyB), true);
+      assert.strictEqual(Option.isNone(second.value), true);
     }).pipe(Effect.provide(DbNullTest())),
   );
 });

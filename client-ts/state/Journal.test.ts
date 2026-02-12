@@ -128,7 +128,7 @@ describe("Journal", () => {
 
         assert.strictEqual(first.tag, ChangeTag.Create);
         assert.strictEqual(second.tag, ChangeTag.JustCache);
-        assert.isTrue(Address.equals(second.key, addrB));
+        assert.strictEqual(Address.equals(second.key, addrB), true);
         assert.strictEqual(second.value?.nonce, 5n);
 
         assert.strictEqual(reverted.length, 2);
@@ -152,11 +152,11 @@ describe("Journal", () => {
         );
 
         const outcome = yield* Effect.either(restore(5));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
 
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
-          assert.isTrue(error instanceof InvalidSnapshotError);
+          assert.strictEqual(error instanceof InvalidSnapshotError, true);
         }
       }),
     ),
@@ -171,11 +171,11 @@ describe("Journal", () => {
         );
 
         const outcome = yield* Effect.either(commit(5));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
 
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
-          assert.isTrue(error instanceof InvalidSnapshotError);
+          assert.strictEqual(error instanceof InvalidSnapshotError, true);
         }
       }),
     ),

@@ -186,7 +186,7 @@ describe("trie fixture harness", () => {
 
         const compact = bytesFromHex(`0x${fixture.out}`);
         const decoded = yield* compactToNibbleList(compact);
-        assert.isTrue(Bytes.equals(decoded.nibbles, sequence), name);
+        assert.strictEqual(Bytes.equals(decoded.nibbles, sequence), name, true);
         assert.strictEqual(decoded.isLeaf, fixture.term, name);
       }
     }),

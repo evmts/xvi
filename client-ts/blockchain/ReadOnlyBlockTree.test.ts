@@ -54,16 +54,16 @@ describe("ReadOnlyBlockTree", () => {
       yield* putBlock(genesis);
 
       const existing = yield* getBlock(genesis.hash);
-      assert.isTrue(Option.isSome(existing));
+      assert.strictEqual(Option.isSome(existing), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(existing).hash),
         Hex.fromBytes(genesis.hash),
       );
-      assert.isTrue(yield* hasBlock(genesis.hash));
+      assert.strictEqual(yield* hasBlock(genesis.hash), true);
 
       const missingHash = blockHashFromByte(0xaa);
-      assert.isFalse(yield* hasBlock(missingHash));
-      assert.isTrue(Option.isNone(yield* getBlock(missingHash)));
+      assert.strictEqual(yield* hasBlock(missingHash), false);
+      assert.strictEqual(Option.isNone(yield* getBlock(missingHash)), true);
     }).pipe(Effect.provide(ReadOnlyBlockTreeTest)),
   );
 
@@ -78,14 +78,14 @@ describe("ReadOnlyBlockTree", () => {
         yield* setCanonicalHead(block2.hash);
 
         const byNumber = yield* getBlockByNumber(block2.header.number);
-        assert.isTrue(Option.isSome(byNumber));
+        assert.strictEqual(Option.isSome(byNumber), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(byNumber).hash),
           Hex.fromBytes(block2.hash),
         );
 
         const canonicalHash = yield* getCanonicalHash(block2.header.number);
-        assert.isTrue(Option.isSome(canonicalHash));
+        assert.strictEqual(Option.isSome(canonicalHash), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(canonicalHash)),
           Hex.fromBytes(block2.hash),
@@ -104,7 +104,7 @@ describe("ReadOnlyBlockTree", () => {
         yield* setCanonicalHead(block2.hash);
 
         const head = yield* getHeadBlockNumber();
-        assert.isTrue(Option.isSome(head));
+        assert.strictEqual(Option.isSome(head), true);
         assert.strictEqual(Option.getOrThrow(head) as bigint, 2n);
         assert.strictEqual(yield* canonicalChainLength(), 3);
       }).pipe(Effect.provide(ReadOnlyBlockTreeTest)),
@@ -119,9 +119,9 @@ describe("ReadOnlyBlockTree", () => {
       yield* putBlock(side);
       yield* setCanonicalHead(block2.hash);
 
-      assert.isFalse(yield* isOrphan(genesis.hash));
-      assert.isFalse(yield* isOrphan(block2.hash));
-      assert.isTrue(yield* isOrphan(side.hash));
+      assert.strictEqual(yield* isOrphan(genesis.hash), false);
+      assert.strictEqual(yield* isOrphan(block2.hash), false);
+      assert.strictEqual(yield* isOrphan(side.hash), true);
     }).pipe(Effect.provide(ReadOnlyBlockTreeTest)),
   );
 

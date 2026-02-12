@@ -24,7 +24,7 @@ describe("KeyNibbler", () => {
       const expected = yield* bytesToNibbleList(key);
 
       const actual = yield* toNibbles(key, false);
-      assert.isTrue(Bytes.equals(actual, expected));
+      assert.strictEqual(Bytes.equals(actual, expected), true);
     }).pipe(Effect.provide(provide())),
   );
 
@@ -35,7 +35,7 @@ describe("KeyNibbler", () => {
       const expected = yield* bytesToNibbleList(hashed);
 
       const actual = yield* toNibbles(key, true);
-      assert.isTrue(Bytes.equals(actual, expected));
+      assert.strictEqual(Bytes.equals(actual, expected), true);
     }).pipe(Effect.provide(provide())),
   );
 });

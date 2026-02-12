@@ -49,10 +49,10 @@ describe("EngineClientVersion", () => {
           makeClientVersion({ code: "LHH" }),
         ).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
-          assert.isTrue(error instanceof InvalidClientVersionV1Error);
+          assert.strictEqual(error instanceof InvalidClientVersionV1Error, true);
           assert.strictEqual(error.source, "request");
           assert.strictEqual(error.reason, "InvalidCode");
           assert.strictEqual(error.value, "LHH");
@@ -106,10 +106,10 @@ describe("EngineClientVersion", () => {
         Effect.either,
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
         const error = outcome.left;
-        assert.isTrue(error instanceof InvalidClientVersionV1Error);
+        assert.strictEqual(error instanceof InvalidClientVersionV1Error, true);
         assert.strictEqual(error.source, "response");
         assert.strictEqual(error.reason, "EmptyResponse");
       }
@@ -129,10 +129,10 @@ describe("EngineClientVersion", () => {
         Effect.either,
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
         const error = outcome.left;
-        assert.isTrue(error instanceof InvalidClientVersionV1Error);
+        assert.strictEqual(error instanceof InvalidClientVersionV1Error, true);
         assert.strictEqual(error.source, "response");
         assert.strictEqual(error.reason, "InvalidCommitLength");
         assert.strictEqual(error.index, 0);
@@ -153,10 +153,10 @@ describe("EngineClientVersion", () => {
         Effect.either,
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
         const error = outcome.left;
-        assert.isTrue(error instanceof InvalidClientVersionV1Error);
+        assert.strictEqual(error instanceof InvalidClientVersionV1Error, true);
         assert.strictEqual(error.source, "response");
         assert.strictEqual(error.reason, "EmptyVersion");
         assert.strictEqual(error.index, 0);
@@ -175,10 +175,10 @@ describe("EngineClientVersion", () => {
           Effect.either,
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
-          assert.isTrue(error instanceof InvalidClientVersionV1Error);
+          assert.strictEqual(error instanceof InvalidClientVersionV1Error, true);
           assert.strictEqual(error.source, "response");
           assert.strictEqual(error.reason, "InvalidResponseCardinality");
         }

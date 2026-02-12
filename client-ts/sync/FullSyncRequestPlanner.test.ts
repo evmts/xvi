@@ -111,8 +111,8 @@ describe("FullSyncRequestPlanner", () => {
           });
 
           assert.strictEqual(requests.length, 2);
-          assert.isUndefined(requests[0]?.requestId);
-          assert.isUndefined(requests[1]?.requestId);
+          assert.strictEqual(requests[0]?.requestId, undefined);
+          assert.strictEqual(requests[1]?.requestId, undefined);
           assert.deepStrictEqual(requests[0], {
             requestId: undefined,
             startBlockNumber: 10n,
@@ -191,9 +191,9 @@ describe("FullSyncRequestPlanner", () => {
           });
 
           assert.strictEqual(requests.length, 3);
-          assert.isUndefined(requests[0]?.requestId);
-          assert.isUndefined(requests[1]?.requestId);
-          assert.isUndefined(requests[2]?.requestId);
+          assert.strictEqual(requests[0]?.requestId, undefined);
+          assert.strictEqual(requests[1]?.requestId, undefined);
+          assert.strictEqual(requests[2]?.requestId, undefined);
           assert.strictEqual(requests[0]?.blockHashes.length, 256);
           assert.strictEqual(requests[1]?.blockHashes.length, 256);
           assert.strictEqual(requests[2]?.blockHashes.length, 88);

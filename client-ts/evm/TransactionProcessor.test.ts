@@ -269,9 +269,9 @@ describe("TransactionProcessor.calculateEffectiveGasPrice", () => {
         const outcome = yield* Effect.either(
           calculateEffectiveGasPrice(tx, 10n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof GasPriceBelowBaseFeeError);
+          assert.strictEqual(outcome.left instanceof GasPriceBelowBaseFeeError, true);
         }
       }),
     ),
@@ -284,10 +284,10 @@ describe("TransactionProcessor.calculateEffectiveGasPrice", () => {
         const outcome = yield* Effect.either(
           calculateEffectiveGasPrice(tx, 1n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof PriorityFeeGreaterThanMaxFeeError,
+          assert.strictEqual(
+            outcome.left instanceof PriorityFeeGreaterThanMaxFeeError, true
           );
         }
       }),
@@ -301,9 +301,9 @@ describe("TransactionProcessor.calculateEffectiveGasPrice", () => {
         const outcome = yield* Effect.either(
           calculateEffectiveGasPrice(tx, 10n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InsufficientMaxFeePerGasError);
+          assert.strictEqual(outcome.left instanceof InsufficientMaxFeePerGasError, true);
         }
       }),
     ),
@@ -354,9 +354,9 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 0n, 1n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InsufficientSenderBalanceError);
+          assert.strictEqual(outcome.left instanceof InsufficientSenderBalanceError, true);
         }
       }),
     ),
@@ -369,9 +369,9 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 1n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof NoBlobDataError);
+          assert.strictEqual(outcome.left instanceof NoBlobDataError, true);
         }
       }),
     ),
@@ -385,10 +385,10 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 1n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof TransactionTypeContractCreationError,
+          assert.strictEqual(
+            outcome.left instanceof TransactionTypeContractCreationError, true
           );
         }
       }),
@@ -404,9 +404,9 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
           const outcome = yield* Effect.either(
             checkMaxGasFeeAndBalance(tx, 1n, 2n, 10_000_000n),
           );
-          assert.isTrue(Either.isLeft(outcome));
+          assert.strictEqual(Either.isLeft(outcome), true);
           if (Either.isLeft(outcome)) {
-            assert.isTrue(outcome.left instanceof NoBlobDataError);
+            assert.strictEqual(outcome.left instanceof NoBlobDataError, true);
           }
         }),
       ),
@@ -422,10 +422,10 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
           const outcome = yield* Effect.either(
             checkMaxGasFeeAndBalance(tx, 1n, 2n, 10_000_000n),
           );
-          assert.isTrue(Either.isLeft(outcome));
+          assert.strictEqual(Either.isLeft(outcome), true);
           if (Either.isLeft(outcome)) {
-            assert.isTrue(
-              outcome.left instanceof InvalidBlobVersionedHashError,
+            assert.strictEqual(
+              outcome.left instanceof InvalidBlobVersionedHashError, true
             );
           }
         }),
@@ -440,9 +440,9 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 1n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidBlobVersionedHashError);
+          assert.strictEqual(outcome.left instanceof InvalidBlobVersionedHashError, true);
         }
       }),
     ),
@@ -456,10 +456,10 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 2n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof InsufficientMaxFeePerBlobGasError,
+          assert.strictEqual(
+            outcome.left instanceof InsufficientMaxFeePerBlobGasError, true
           );
         }
       }),
@@ -487,10 +487,10 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 0n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof TransactionTypeContractCreationError,
+          assert.strictEqual(
+            outcome.left instanceof TransactionTypeContractCreationError, true
           );
         }
       }),
@@ -504,9 +504,9 @@ describe("TransactionProcessor.checkMaxGasFeeAndBalance", () => {
         const outcome = yield* Effect.either(
           checkMaxGasFeeAndBalance(tx, 1n, 0n, 10_000_000n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof EmptyAuthorizationListError);
+          assert.strictEqual(outcome.left instanceof EmptyAuthorizationListError, true);
         }
       }),
     ),
@@ -589,9 +589,9 @@ describe("TransactionProcessor.buyGasAndIncrementNonce", () => {
         const outcome = yield* Effect.either(
           buyGasAndIncrementNonce(tx, sender, 5n, 0n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TransactionNonceTooLowError);
+          assert.strictEqual(outcome.left instanceof TransactionNonceTooLowError, true);
         }
       }),
     ),
@@ -616,9 +616,9 @@ describe("TransactionProcessor.buyGasAndIncrementNonce", () => {
         const outcome = yield* Effect.either(
           buyGasAndIncrementNonce(tx, sender, 5n, 0n),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TransactionNonceTooHighError);
+          assert.strictEqual(outcome.left instanceof TransactionNonceTooHighError, true);
         }
       }),
     ),
@@ -709,9 +709,9 @@ describe("TransactionProcessor.processTransaction", () => {
             0n,
           ),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof BlockGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof BlockGasLimitExceededError, true);
         }
 
         const account = yield* getAccountOptional(sender);
@@ -788,9 +788,9 @@ describe("TransactionProcessor.checkInclusionAvailabilityAndSenderCode", () => {
           ),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof BlockGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof BlockGasLimitExceededError, true);
         }
       }),
     ),
@@ -814,9 +814,9 @@ describe("TransactionProcessor.checkInclusionAvailabilityAndSenderCode", () => {
           ),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof BlockBlobGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof BlockBlobGasLimitExceededError, true);
         }
       }),
     ),
@@ -840,9 +840,9 @@ describe("TransactionProcessor.checkInclusionAvailabilityAndSenderCode", () => {
           ),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidSenderAccountCodeError);
+          assert.strictEqual(outcome.left instanceof InvalidSenderAccountCodeError, true);
         }
       }),
     ),
@@ -1143,9 +1143,9 @@ describe("TransactionProcessor.finalizeTransactionExecution", () => {
             ),
           );
 
-          assert.isTrue(Either.isLeft(outcome));
+          assert.strictEqual(Either.isLeft(outcome), true);
           if (Either.isLeft(outcome)) {
-            assert.isTrue(outcome.left instanceof GasLeftExceedsGasLimitError);
+            assert.strictEqual(outcome.left instanceof GasLeftExceedsGasLimitError, true);
           }
 
           const deletedAccount = yield* getAccountOptional(toDelete);
@@ -1167,9 +1167,9 @@ describe("TransactionProcessor execution boundaries", () => {
           runInCallFrameBoundary(Effect.succeed("ok")),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof NoActiveTransactionError);
+          assert.strictEqual(outcome.left instanceof NoActiveTransactionError, true);
         }
       }),
     ),
@@ -1235,9 +1235,9 @@ describe("TransactionProcessor execution boundaries", () => {
           ),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof ExecutionFailedError);
+          assert.strictEqual(outcome.left instanceof ExecutionFailedError, true);
         }
         assert.strictEqual(yield* transactionDepth(), 0);
 
@@ -1323,9 +1323,9 @@ describe("TransactionProcessor execution boundaries", () => {
               ),
             );
 
-            assert.isTrue(Either.isLeft(callResult));
+            assert.strictEqual(Either.isLeft(callResult), true);
             if (Either.isLeft(callResult)) {
-              assert.isTrue(callResult.left instanceof ExecutionFailedError);
+              assert.strictEqual(callResult.left instanceof ExecutionFailedError, true);
             }
 
             assert.strictEqual(yield* transactionDepth(), 1);

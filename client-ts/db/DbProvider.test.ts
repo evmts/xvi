@@ -94,8 +94,8 @@ describe("DbProvider", () => {
       const stateResult = yield* state.get(key);
       const codeResult = yield* code.get(key);
 
-      assert.isTrue(Option.isSome(stateResult));
-      assert.isTrue(Option.isNone(codeResult));
+      assert.strictEqual(Option.isSome(stateResult), true);
+      assert.strictEqual(Option.isNone(codeResult), true);
     }).pipe(Effect.provide(DbProviderMemoryTest)),
   );
 
@@ -112,8 +112,8 @@ describe("DbProvider", () => {
       const defaultResult = yield* defaultDb.get(key);
       const txResult = yield* transactionsDb.get(key);
 
-      assert.isTrue(Option.isSome(defaultResult));
-      assert.isTrue(Option.isNone(txResult));
+      assert.strictEqual(Option.isSome(defaultResult), true);
+      assert.strictEqual(Option.isNone(txResult), true);
     }).pipe(Effect.provide(DbProviderMemoryTest)),
   );
 
@@ -130,8 +130,8 @@ describe("DbProvider", () => {
       const fullResult = yield* fullDb.get(key);
       const lightResult = yield* lightDb.get(key);
 
-      assert.isTrue(Option.isSome(fullResult));
-      assert.isTrue(Option.isNone(lightResult));
+      assert.strictEqual(Option.isSome(fullResult), true);
+      assert.strictEqual(Option.isNone(lightResult), true);
     }).pipe(Effect.provide(DbProviderMemoryTest)),
   );
 
@@ -145,7 +145,7 @@ describe("DbProvider", () => {
         assert.strictEqual(state.name, DbNames.state);
         const error = yield* Effect.flip(state.get(key));
         assert.strictEqual(error._tag, "DbError");
-        assert.isTrue(error.message.includes("does not implement get"));
+        assert.strictEqual(error.message.includes("does not implement get"), true);
       }).pipe(Effect.provide(DbProviderRocksStubTest)),
   );
 });

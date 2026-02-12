@@ -19,13 +19,13 @@ describe("Db WriteBatch", () => {
           yield* batch.put(key, value);
           const interim = yield* get(key);
           const stored = Option.getOrThrow(interim);
-          assert.isTrue(Bytes.equals(stored, value));
+          assert.strictEqual(Bytes.equals(stored, value), true);
         }),
       );
 
       const result = yield* get(key);
       const stored = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(stored, value));
+      assert.strictEqual(Bytes.equals(stored, value), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -41,13 +41,13 @@ describe("Db WriteBatch", () => {
       yield* batch.put(key, value);
       const interim = yield* get(key);
       const stored = Option.getOrThrow(interim);
-      assert.isTrue(Bytes.equals(stored, value));
+      assert.strictEqual(Bytes.equals(stored, value), true);
 
       yield* Scope.close(scope, Exit.succeed(undefined));
 
       const result = yield* get(key);
       const storedAfter = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(storedAfter, value));
+      assert.strictEqual(Bytes.equals(storedAfter, value), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -62,12 +62,12 @@ describe("Db WriteBatch", () => {
           const batch = yield* startWriteBatch();
           yield* batch.remove(key);
           const interim = yield* get(key);
-          assert.isTrue(Option.isNone(interim));
+          assert.strictEqual(Option.isNone(interim), true);
         }),
       );
 
       const result = yield* get(key);
-      assert.isTrue(Option.isNone(result));
+      assert.strictEqual(Option.isNone(result), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -83,13 +83,13 @@ describe("Db WriteBatch", () => {
           yield* batch.clear();
           const interim = yield* get(key);
           const stored = Option.getOrThrow(interim);
-          assert.isTrue(Bytes.equals(stored, value));
+          assert.strictEqual(Bytes.equals(stored, value), true);
         }),
       );
 
       const result = yield* get(key);
       const stored = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(stored, value));
+      assert.strictEqual(Bytes.equals(stored, value), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -109,21 +109,21 @@ describe("Db WriteBatch", () => {
 
           const firstInterim = yield* get(firstKey);
           const firstStored = Option.getOrThrow(firstInterim);
-          assert.isTrue(Bytes.equals(firstStored, firstValue));
+          assert.strictEqual(Bytes.equals(firstStored, firstValue), true);
 
           const secondInterim = yield* get(secondKey);
           const secondStored = Option.getOrThrow(secondInterim);
-          assert.isTrue(Bytes.equals(secondStored, secondValue));
+          assert.strictEqual(Bytes.equals(secondStored, secondValue), true);
         }),
       );
 
       const firstResult = yield* get(firstKey);
       const firstStored = Option.getOrThrow(firstResult);
-      assert.isTrue(Bytes.equals(firstStored, firstValue));
+      assert.strictEqual(Bytes.equals(firstStored, firstValue), true);
 
       const secondResult = yield* get(secondKey);
       const secondStored = Option.getOrThrow(secondResult);
-      assert.isTrue(Bytes.equals(secondStored, secondValue));
+      assert.strictEqual(Bytes.equals(secondStored, secondValue), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -143,7 +143,7 @@ describe("Db WriteBatch", () => {
 
       const result = yield* get(key);
       const stored = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(stored, second));
+      assert.strictEqual(Bytes.equals(stored, second), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 });

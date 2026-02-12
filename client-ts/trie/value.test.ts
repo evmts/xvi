@@ -113,7 +113,7 @@ describe("trie account value encoding", () => {
         emptyAccount.codeHash,
       ]);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -132,7 +132,7 @@ describe("trie account value encoding", () => {
         account.codeHash,
       ]);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -144,9 +144,9 @@ describe("trie account value encoding", () => {
       };
       const result = yield* Effect.either(encodeAccount(account));
 
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof TrieValueEncodingError);
+        assert.strictEqual(result.left instanceof TrieValueEncodingError, true);
       }
     }),
   );
@@ -157,7 +157,7 @@ describe("trie value encoding", () => {
     Effect.gen(function* () {
       const value = bytesFromHex("0x1234");
       const encoded = yield* encodeTrieValue(value);
-      assert.isTrue(Bytes.equals(encoded, value));
+      assert.strictEqual(Bytes.equals(encoded, value), true);
     }),
   );
 
@@ -167,7 +167,7 @@ describe("trie value encoding", () => {
       const encoded = yield* encodeTrieValue(value);
       const expected = yield* encodeRlp(bytesFromHex("0x80"));
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -177,7 +177,7 @@ describe("trie value encoding", () => {
       const expected = Schema.encodeSync(TransactionSerializedSchema)(tx);
       const encoded = yield* encodeTrieValue(tx);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -198,7 +198,7 @@ describe("trie value encoding", () => {
       ]);
       const encoded = yield* encodeTrieValue(receipt);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -218,7 +218,7 @@ describe("trie value encoding", () => {
       ]);
       const encoded = yield* encodeTrieValue(receipt);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -242,7 +242,7 @@ describe("trie value encoding", () => {
 
       const encoded = yield* encodeTrieValue(receipt);
 
-      assert.isTrue(Bytes.equals(encoded, bytesFromUint8Array(expected)));
+      assert.strictEqual(Bytes.equals(encoded, bytesFromUint8Array(expected)), true);
     }),
   );
 
@@ -252,9 +252,9 @@ describe("trie value encoding", () => {
         encodeTrieValue({} as unknown as Parameters<typeof encodeTrieValue>[0]),
       );
 
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof TrieValueEncodingError);
+        assert.strictEqual(result.left instanceof TrieValueEncodingError, true);
       }
     }),
   );

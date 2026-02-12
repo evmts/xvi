@@ -55,9 +55,9 @@ describe("RefundCalculator", () => {
     providePrague(
       Effect.gen(function* () {
         const outcome = yield* Effect.either(calculateClaimableRefund(-1n, 0n));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidGasError);
+          assert.strictEqual(outcome.left instanceof InvalidGasError, true);
         }
       }),
     ),

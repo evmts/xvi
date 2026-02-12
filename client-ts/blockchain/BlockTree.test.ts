@@ -31,7 +31,7 @@ describe("BlockTree", () => {
 
       yield* putBlock(orphan);
 
-      assert.isTrue(yield* isOrphan(orphan.hash));
+      assert.strictEqual(yield* isOrphan(orphan.hash), true);
       assert.strictEqual(yield* orphanCount(), 1);
 
       const parent = makeBlock({
@@ -42,7 +42,7 @@ describe("BlockTree", () => {
 
       yield* putBlock(parent);
 
-      assert.isFalse(yield* isOrphan(orphan.hash));
+      assert.strictEqual(yield* isOrphan(orphan.hash), false);
       assert.strictEqual(yield* orphanCount(), 0);
     }).pipe(Effect.provide(BlockTreeMemoryTest)),
   );
@@ -74,14 +74,14 @@ describe("BlockTree", () => {
       yield* putBlock(block3);
       yield* putBlock(block2);
 
-      assert.isTrue(yield* isOrphan(block2.hash));
-      assert.isTrue(yield* isOrphan(block3.hash));
+      assert.strictEqual(yield* isOrphan(block2.hash), true);
+      assert.strictEqual(yield* isOrphan(block3.hash), true);
       assert.strictEqual(yield* orphanCount(), 2);
 
       yield* putBlock(block1);
 
-      assert.isFalse(yield* isOrphan(block2.hash));
-      assert.isFalse(yield* isOrphan(block3.hash));
+      assert.strictEqual(yield* isOrphan(block2.hash), false);
+      assert.strictEqual(yield* isOrphan(block3.hash), false);
       assert.strictEqual(yield* orphanCount(), 0);
     }).pipe(Effect.provide(BlockTreeMemoryTest)),
   );
@@ -104,17 +104,17 @@ describe("BlockTree", () => {
       yield* setCanonicalHead(block1.hash);
 
       const byNumber = yield* getBlockByNumber(block1.header.number);
-      assert.isTrue(Option.isSome(byNumber));
+      assert.strictEqual(Option.isSome(byNumber), true);
 
       const canonicalHash = yield* getCanonicalHash(block1.header.number);
-      assert.isTrue(Option.isSome(canonicalHash));
+      assert.strictEqual(Option.isSome(canonicalHash), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(canonicalHash)),
         Hex.fromBytes(block1.hash),
       );
 
       const headNumber = yield* getHeadBlockNumber();
-      assert.isTrue(Option.isSome(headNumber));
+      assert.strictEqual(Option.isSome(headNumber), true);
       assert.strictEqual(Option.getOrThrow(headNumber) as bigint, 1n);
       assert.strictEqual(yield* canonicalChainLength(), 2);
     }).pipe(Effect.provide(BlockTreeMemoryTest)),
@@ -168,11 +168,11 @@ describe("BlockTree", () => {
         yield* setCanonicalHead(block1.hash);
 
         const canonicalHash = yield* getCanonicalHash(block2.header.number);
-        assert.isTrue(Option.isNone(canonicalHash));
+        assert.strictEqual(Option.isNone(canonicalHash), true);
         assert.strictEqual(yield* canonicalChainLength(), 2);
 
         const headNumber = yield* getHeadBlockNumber();
-        assert.isTrue(Option.isSome(headNumber));
+        assert.strictEqual(Option.isSome(headNumber), true);
         assert.strictEqual(Option.getOrThrow(headNumber) as bigint, 1n);
       }).pipe(Effect.provide(BlockTreeMemoryTest)),
   );
@@ -206,9 +206,9 @@ describe("BlockTree", () => {
       yield* putBlock(side);
       yield* setCanonicalHead(block2.hash);
 
-      assert.isFalse(yield* isOrphan(block1.hash));
-      assert.isFalse(yield* isOrphan(block2.hash));
-      assert.isTrue(yield* isOrphan(side.hash));
+      assert.strictEqual(yield* isOrphan(block1.hash), false);
+      assert.strictEqual(yield* isOrphan(block2.hash), false);
+      assert.strictEqual(yield* isOrphan(side.hash), true);
     }).pipe(Effect.provide(BlockTreeMemoryTest)),
   );
 
@@ -235,7 +235,7 @@ describe("BlockTree", () => {
         assert.instanceOf(error, BlockNotFoundError);
 
         const canonicalHash = yield* getCanonicalHash(block2.header.number);
-        assert.isTrue(Option.isNone(canonicalHash));
+        assert.strictEqual(Option.isNone(canonicalHash), true);
         assert.strictEqual(yield* canonicalChainLength(), 0);
       }).pipe(Effect.provide(BlockTreeMemoryTest)),
   );

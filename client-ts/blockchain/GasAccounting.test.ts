@@ -107,9 +107,9 @@ describe("GasAccounting", () => {
             calldataFloorGas: 0n,
           }),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidGasAccountingError);
+          assert.strictEqual(outcome.left instanceof InvalidGasAccountingError, true);
         }
       }),
     ),
@@ -127,9 +127,9 @@ describe("GasAccounting", () => {
             calldataFloorGas: 0n,
           }),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidGasAccountingError);
+          assert.strictEqual(outcome.left instanceof InvalidGasAccountingError, true);
         }
       }),
     ),
@@ -147,9 +147,9 @@ describe("GasAccounting", () => {
             calldataFloorGas: 0n,
           }),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidEffectiveGasPriceError);
+          assert.strictEqual(outcome.left instanceof InvalidEffectiveGasPriceError, true);
         }
       }),
     ),
@@ -168,9 +168,9 @@ describe("GasAccounting", () => {
             calldataFloorGas: 0n,
           }),
         );
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidRefundAmountError);
+          assert.strictEqual(outcome.left instanceof InvalidRefundAmountError, true);
         }
       }),
     ),

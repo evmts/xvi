@@ -35,7 +35,7 @@ describe("Blockchain", () => {
   it.effect("getBlockByHash returns None for missing blocks", () =>
     Effect.gen(function* () {
       const missing = yield* getBlockByHash(blockHashFromByte(0x01));
-      assert.isTrue(Option.isNone(missing));
+      assert.strictEqual(Option.isNone(missing), true);
     }).pipe(Effect.provide(BlockchainTest)),
   );
 
@@ -50,7 +50,7 @@ describe("Blockchain", () => {
       yield* putBlock(block);
 
       const stored = yield* getBlockByHash(block.hash);
-      assert.isTrue(Option.isSome(stored));
+      assert.strictEqual(Option.isSome(stored), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(stored).hash),
         Hex.fromBytes(block.hash),
@@ -68,14 +68,14 @@ describe("Blockchain", () => {
 
       yield* putBlock(block);
 
-      assert.isTrue(yield* hasBlock(block.hash));
+      assert.strictEqual(yield* hasBlock(block.hash), true);
     }).pipe(Effect.provide(BlockchainTest)),
   );
 
   it.effect("hasBlock returns false for missing blocks", () =>
     Effect.gen(function* () {
       const missing = blockHashFromByte(0x04);
-      assert.isFalse(yield* hasBlock(missing));
+      assert.strictEqual(yield* hasBlock(missing), false);
     }).pipe(Effect.provide(BlockchainTest)),
   );
 
@@ -97,7 +97,7 @@ describe("Blockchain", () => {
       yield* setCanonicalHead(block1.hash);
 
       const byNumber = yield* getBlockByNumber(block1.header.number);
-      assert.isTrue(Option.isSome(byNumber));
+      assert.strictEqual(Option.isSome(byNumber), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(byNumber).hash),
         Hex.fromBytes(block1.hash),
@@ -125,7 +125,7 @@ describe("Blockchain", () => {
         yield* setCanonicalHead(block1.hash);
 
         const canonical = yield* getCanonicalHash(block1.header.number);
-        assert.isTrue(Option.isSome(canonical));
+        assert.strictEqual(Option.isSome(canonical), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(canonical)),
           Hex.fromBytes(block1.hash),
@@ -133,7 +133,7 @@ describe("Blockchain", () => {
 
         const missingNumber = 42n as unknown as typeof block1.header.number;
         const missing = yield* getCanonicalHash(missingNumber);
-        assert.isTrue(Option.isNone(missing));
+        assert.strictEqual(Option.isNone(missing), true);
       }).pipe(Effect.provide(BlockchainTest)),
   );
 
@@ -146,12 +146,12 @@ describe("Blockchain", () => {
       });
 
       const before = yield* getHead();
-      assert.isTrue(Option.isNone(before));
+      assert.strictEqual(Option.isNone(before), true);
 
       yield* initializeGenesis(genesis);
 
       const after = yield* getHead();
-      assert.isTrue(Option.isSome(after));
+      assert.strictEqual(Option.isSome(after), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(after).hash),
         Hex.fromBytes(genesis.hash),
@@ -266,10 +266,10 @@ describe("Blockchain", () => {
       yield* insertBlock(block);
 
       const byHash = yield* getBlockByHash(block.hash);
-      assert.isTrue(Option.isSome(byHash));
+      assert.strictEqual(Option.isSome(byHash), true);
 
       const bestKnown = yield* getBestKnownNumber();
-      assert.isTrue(Option.isSome(bestKnown));
+      assert.strictEqual(Option.isSome(bestKnown), true);
       assert.strictEqual(Option.getOrThrow(bestKnown), block.header.number);
     }).pipe(Effect.provide(BlockchainTest)),
   );
@@ -309,7 +309,7 @@ describe("Blockchain", () => {
       assert.strictEqual(fourth._tag, "BestSuggestedBlock");
 
       const bestSuggested = yield* getBestSuggestedBlock();
-      assert.isTrue(Option.isSome(bestSuggested));
+      assert.strictEqual(Option.isSome(bestSuggested), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(bestSuggested).hash),
         Hex.fromBytes(block2.hash),
@@ -326,12 +326,12 @@ describe("Blockchain", () => {
       });
 
       const before = yield* getGenesis();
-      assert.isTrue(Option.isNone(before));
+      assert.strictEqual(Option.isNone(before), true);
 
       yield* initializeGenesis(genesis);
 
       const after = yield* getGenesis();
-      assert.isTrue(Option.isSome(after));
+      assert.strictEqual(Option.isSome(after), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(after).hash),
         Hex.fromBytes(genesis.hash),
@@ -368,23 +368,23 @@ describe("Blockchain", () => {
       });
 
       const head = yield* getHead();
-      assert.isTrue(Option.isSome(head));
+      assert.strictEqual(Option.isSome(head), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(head).hash),
         Hex.fromBytes(block2.hash),
       );
 
       const canonicalNumberTwo = yield* getBlockByNumber(block2.header.number);
-      assert.isTrue(Option.isSome(canonicalNumberTwo));
+      assert.strictEqual(Option.isSome(canonicalNumberTwo), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(canonicalNumberTwo).hash),
         Hex.fromBytes(block2.hash),
       );
 
       const forkChoice = yield* getForkChoiceState();
-      assert.isTrue(Option.isSome(forkChoice.head));
-      assert.isTrue(Option.isSome(forkChoice.safe));
-      assert.isTrue(Option.isSome(forkChoice.finalized));
+      assert.strictEqual(Option.isSome(forkChoice.head), true);
+      assert.strictEqual(Option.isSome(forkChoice.safe), true);
+      assert.strictEqual(Option.isSome(forkChoice.finalized), true);
       assert.strictEqual(
         Hex.fromBytes(Option.getOrThrow(forkChoice.head)),
         Hex.fromBytes(block2.hash),

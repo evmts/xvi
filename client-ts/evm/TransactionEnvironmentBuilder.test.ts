@@ -205,7 +205,7 @@ describe("TransactionEnvironmentBuilder", () => {
         if (!first) {
           throw new Error("missing coinbase address");
         }
-        assert.isTrue(Address.equals(first, coinbase));
+        assert.strictEqual(Address.equals(first, coinbase), true);
         assert.strictEqual(refreshed.blobVersionedHashes.length, 0);
 
         const cleared = yield* refreshed.transientStorage.get(origin, slot);
@@ -230,10 +230,10 @@ describe("TransactionEnvironmentBuilder", () => {
           buildTransactionEnvironment({ tx, origin, coinbase, gasPrice }),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof InsufficientTransactionGasError,
+          assert.strictEqual(
+            outcome.left instanceof InsufficientTransactionGasError, true
           );
         }
       }),
@@ -254,10 +254,10 @@ describe("TransactionEnvironmentBuilder", () => {
           buildTransactionEnvironment({ tx, origin, coinbase, gasPrice }),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof IntrinsicGasInvalidTransactionError,
+          assert.strictEqual(
+            outcome.left instanceof IntrinsicGasInvalidTransactionError, true
           );
         }
       }),
@@ -277,9 +277,9 @@ describe("TransactionEnvironmentBuilder", () => {
           buildTransactionEnvironment({ tx, origin, coinbase, gasPrice }),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof InvalidTransactionGasError);
+          assert.strictEqual(outcome.left instanceof InvalidTransactionGasError, true);
         }
       }),
     ),
@@ -297,10 +297,10 @@ describe("TransactionEnvironmentBuilder", () => {
           buildTransactionEnvironment({ tx, origin, coinbase, gasPrice }),
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(
-            outcome.left instanceof UnsupportedIntrinsicGasFeatureError,
+          assert.strictEqual(
+            outcome.left instanceof UnsupportedIntrinsicGasFeatureError, true
           );
         }
       }),
@@ -346,8 +346,8 @@ describe("TransactionEnvironmentBuilder", () => {
 
         assert.strictEqual(env.blobVersionedHashes.length, hashes.length);
         const hashHexes = env.blobVersionedHashes.map(Hex.fromBytes);
-        assert.isTrue(hashHexes.includes(Hex.fromBytes(hashes[0]!)));
-        assert.isTrue(hashHexes.includes(Hex.fromBytes(hashes[1]!)));
+        assert.strictEqual(hashHexes.includes(Hex.fromBytes(hashes[0]!)), true);
+        assert.strictEqual(hashHexes.includes(Hex.fromBytes(hashes[1]!)), true);
       }),
     ),
   );

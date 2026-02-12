@@ -45,15 +45,15 @@ describe("ReadOnlyDb", () => {
       yield* base.put(key, baseValue);
 
       const readThrough = yield* readOnly.get(key);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(readThrough), baseValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(readThrough), baseValue), true);
 
       yield* readOnly.put(key, overlayValue);
 
       const overlayRead = yield* readOnly.get(key);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(overlayRead), overlayValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(overlayRead), overlayValue), true);
 
       const baseRead = yield* base.get(key);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(baseRead), baseValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(baseRead), baseValue), true);
     }).pipe(Effect.provide(withOverlay)),
   );
 
@@ -74,15 +74,15 @@ describe("ReadOnlyDb", () => {
       yield* readOnly.put(keyB, overlayB);
 
       const results = yield* readOnly.getMany([keyA, keyB, keyC]);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(results[0]!.value), baseA));
-      assert.isTrue(
-        Bytes.equals(Option.getOrThrow(results[1]!.value), overlayB),
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(results[0]!.value), baseA), true);
+      assert.strictEqual(
+        Bytes.equals(Option.getOrThrow(results[1]!.value), overlayB), true
       );
-      assert.isTrue(Option.isNone(results[2]!.value));
+      assert.strictEqual(Option.isNone(results[2]!.value), true);
 
-      assert.isTrue(yield* readOnly.has(keyA));
-      assert.isTrue(yield* readOnly.has(keyB));
-      assert.isFalse(yield* readOnly.has(keyC));
+      assert.strictEqual(yield* readOnly.has(keyA), true);
+      assert.strictEqual(yield* readOnly.has(keyB), true);
+      assert.strictEqual(yield* readOnly.has(keyC), false);
     }).pipe(Effect.provide(withOverlay)),
   );
 
@@ -106,33 +106,33 @@ describe("ReadOnlyDb", () => {
 
       const all = yield* readOnly.getAll(true);
       assert.strictEqual(all.length, 3);
-      assert.isTrue(Bytes.equals(all[0]!.key, key1));
-      assert.isTrue(Bytes.equals(all[0]!.value, base1));
-      assert.isTrue(Bytes.equals(all[1]!.key, key2));
-      assert.isTrue(Bytes.equals(all[1]!.value, overlay2));
-      assert.isTrue(Bytes.equals(all[2]!.key, key3));
-      assert.isTrue(Bytes.equals(all[2]!.value, overlay3));
+      assert.strictEqual(Bytes.equals(all[0]!.key, key1), true);
+      assert.strictEqual(Bytes.equals(all[0]!.value, base1), true);
+      assert.strictEqual(Bytes.equals(all[1]!.key, key2), true);
+      assert.strictEqual(Bytes.equals(all[1]!.value, overlay2), true);
+      assert.strictEqual(Bytes.equals(all[2]!.key, key3), true);
+      assert.strictEqual(Bytes.equals(all[2]!.value, overlay3), true);
 
       const keys = yield* readOnly.getAllKeys();
-      assert.isTrue(keys.some((key) => Bytes.equals(key, key1)));
-      assert.isTrue(keys.some((key) => Bytes.equals(key, key2)));
-      assert.isTrue(keys.some((key) => Bytes.equals(key, key3)));
+      assert.strictEqual(keys.some((key) => Bytes.equals(key, key1)), true);
+      assert.strictEqual(keys.some((key) => Bytes.equals(key, key2)), true);
+      assert.strictEqual(keys.some((key) => Bytes.equals(key, key3)), true);
 
       const orderedKeys = yield* readOnly.getAllKeys(true);
-      assert.isTrue(Bytes.equals(orderedKeys[0]!, key1));
-      assert.isTrue(Bytes.equals(orderedKeys[1]!, key2));
-      assert.isTrue(Bytes.equals(orderedKeys[2]!, key3));
+      assert.strictEqual(Bytes.equals(orderedKeys[0]!, key1), true);
+      assert.strictEqual(Bytes.equals(orderedKeys[1]!, key2), true);
+      assert.strictEqual(Bytes.equals(orderedKeys[2]!, key3), true);
 
       const values = yield* readOnly.getAllValues();
-      assert.isTrue(values.some((value) => Bytes.equals(value, base1)));
-      assert.isTrue(values.some((value) => Bytes.equals(value, overlay2)));
-      assert.isTrue(values.some((value) => Bytes.equals(value, overlay3)));
-      assert.isFalse(values.some((value) => Bytes.equals(value, base2)));
+      assert.strictEqual(values.some((value) => Bytes.equals(value, base1)), true);
+      assert.strictEqual(values.some((value) => Bytes.equals(value, overlay2)), true);
+      assert.strictEqual(values.some((value) => Bytes.equals(value, overlay3)), true);
+      assert.strictEqual(values.some((value) => Bytes.equals(value, base2)), false);
 
       const orderedValues = yield* readOnly.getAllValues(true);
-      assert.isTrue(Bytes.equals(orderedValues[0]!, base1));
-      assert.isTrue(Bytes.equals(orderedValues[1]!, overlay2));
-      assert.isTrue(Bytes.equals(orderedValues[2]!, overlay3));
+      assert.strictEqual(Bytes.equals(orderedValues[0]!, base1), true);
+      assert.strictEqual(Bytes.equals(orderedValues[1]!, overlay2), true);
+      assert.strictEqual(Bytes.equals(orderedValues[2]!, overlay3), true);
     }).pipe(Effect.provide(withOverlay)),
   );
 
@@ -150,7 +150,7 @@ describe("ReadOnlyDb", () => {
       yield* readOnly.remove(key);
 
       const result = yield* readOnly.get(key);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(result), baseValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(result), baseValue), true);
     }).pipe(Effect.provide(withOverlay)),
   );
 
@@ -174,7 +174,7 @@ describe("ReadOnlyDb", () => {
       assert.strictEqual(error._tag, "DbError");
 
       const result = yield* readOnly.get(key);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(result), baseValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(result), baseValue), true);
     }).pipe(Effect.provide(withOverlay)),
   );
 
@@ -206,14 +206,14 @@ describe("ReadOnlyDb", () => {
           yield* batch.put(key, overlayValue);
 
           const interim = yield* readOnly.get(key);
-          assert.isTrue(Bytes.equals(Option.getOrThrow(interim), overlayValue));
+          assert.strictEqual(Bytes.equals(Option.getOrThrow(interim), overlayValue), true);
 
           yield* batch.clear();
 
           yield* batch.remove(key);
           const afterRemove = yield* readOnly.get(key);
-          assert.isTrue(
-            Bytes.equals(Option.getOrThrow(afterRemove), baseValue),
+          assert.strictEqual(
+            Bytes.equals(Option.getOrThrow(afterRemove), baseValue), true
           );
         }),
       );
@@ -239,20 +239,20 @@ describe("ReadOnlyDb", () => {
             const snapshot = yield* readOnly.createSnapshot();
 
             const snapValue = yield* snapshot.get(key);
-            assert.isTrue(
-              Bytes.equals(Option.getOrThrow(snapValue), overlayValue),
+            assert.strictEqual(
+              Bytes.equals(Option.getOrThrow(snapValue), overlayValue), true
             );
 
             yield* readOnly.clearTempChanges();
 
             const afterClear = yield* readOnly.get(key);
-            assert.isTrue(
-              Bytes.equals(Option.getOrThrow(afterClear), baseValue),
+            assert.strictEqual(
+              Bytes.equals(Option.getOrThrow(afterClear), baseValue), true
             );
 
             const stillSnap = yield* snapshot.get(key);
-            assert.isTrue(
-              Bytes.equals(Option.getOrThrow(stillSnap), overlayValue),
+            assert.strictEqual(
+              Bytes.equals(Option.getOrThrow(stillSnap), overlayValue), true
             );
           }),
         );
@@ -322,13 +322,13 @@ describe("ReadOnlyDb", () => {
       yield* put(overlayKey, overlayValue);
 
       const single = yield* get(overlayKey);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(single), overlayValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(single), overlayValue), true);
 
       const many = yield* getMany([baseKey, overlayKey]);
       assert.strictEqual(many.length, 2);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(many[0]!.value), baseValue));
-      assert.isTrue(
-        Bytes.equals(Option.getOrThrow(many[1]!.value), overlayValue),
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(many[0]!.value), baseValue), true);
+      assert.strictEqual(
+        Bytes.equals(Option.getOrThrow(many[1]!.value), overlayValue), true
       );
 
       const entries = yield* getAll();
@@ -338,11 +338,11 @@ describe("ReadOnlyDb", () => {
       const values = yield* getAllValues();
       assert.strictEqual(values.length, 2);
 
-      assert.isTrue(yield* has(baseKey));
+      assert.strictEqual(yield* has(baseKey), true);
 
       yield* writeBatch([{ _tag: "put", key: batchKey, value: batchValue }]);
       const batchStored = yield* get(batchKey);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(batchStored), batchValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(batchStored), batchValue), true);
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -352,14 +352,14 @@ describe("ReadOnlyDb", () => {
         }),
       );
       const scopedStored = yield* get(scopedKey);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(scopedStored), scopedValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(scopedStored), scopedValue), true);
 
       yield* Effect.scoped(
         Effect.gen(function* () {
           const snapshot = yield* createSnapshot();
           const snapshotValue = yield* snapshot.get(overlayKey);
-          assert.isTrue(
-            Bytes.equals(Option.getOrThrow(snapshotValue), overlayValue),
+          assert.strictEqual(
+            Bytes.equals(Option.getOrThrow(snapshotValue), overlayValue), true
           );
         }),
       );
@@ -377,11 +377,11 @@ describe("ReadOnlyDb", () => {
 
       yield* remove(overlayKey);
       const removed = yield* get(overlayKey);
-      assert.isTrue(Option.isNone(removed));
+      assert.strictEqual(Option.isNone(removed), true);
 
       yield* clearTempChanges();
       const afterClear = yield* get(baseKey);
-      assert.isTrue(Bytes.equals(Option.getOrThrow(afterClear), baseValue));
+      assert.strictEqual(Bytes.equals(Option.getOrThrow(afterClear), baseValue), true);
     }).pipe(Effect.provide(withOverlay)),
   );
 });

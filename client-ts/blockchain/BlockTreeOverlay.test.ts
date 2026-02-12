@@ -136,8 +136,8 @@ describe("BlockTreeOverlay", () => {
           overlay[BLOCK_TREE_INSTANCE_ID],
           overlayTree[BLOCK_TREE_INSTANCE_ID],
         );
-        assert.isTrue(yield* overlayTree.hasBlock(genesis.hash));
-        assert.isFalse(yield* base.hasBlock(genesis.hash));
+        assert.strictEqual(yield* overlayTree.hasBlock(genesis.hash), true);
+        assert.strictEqual(yield* base.hasBlock(genesis.hash), false);
       }).pipe(Effect.provide(blockTreeOverlayIsolatedLive)),
   );
 
@@ -153,10 +153,10 @@ describe("BlockTreeOverlay", () => {
           yield* baseTree.setCanonicalHead(block1.hash);
           yield* overlay.putBlock(block2);
 
-          assert.isTrue(yield* overlayTree.hasBlock(genesis.hash));
-          assert.isTrue(yield* overlayTree.hasBlock(block1.hash));
-          assert.isTrue(yield* overlayTree.hasBlock(block2.hash));
-          assert.isFalse(yield* overlay.isOrphan(block2.hash));
+          assert.strictEqual(yield* overlayTree.hasBlock(genesis.hash), true);
+          assert.strictEqual(yield* overlayTree.hasBlock(block1.hash), true);
+          assert.strictEqual(yield* overlayTree.hasBlock(block2.hash), true);
+          assert.strictEqual(yield* overlay.isOrphan(block2.hash), false);
         }),
       ),
   );
@@ -177,12 +177,12 @@ describe("BlockTreeOverlay", () => {
           block1.header.number,
         );
 
-        assert.isTrue(yield* overlayTree.hasBlock(genesis.hash));
-        assert.isTrue(yield* overlayTree.hasBlock(block1.hash));
-        assert.isTrue(yield* overlayTree.hasBlock(block2.hash));
-        assert.isTrue(Option.isSome(head));
+        assert.strictEqual(yield* overlayTree.hasBlock(genesis.hash), true);
+        assert.strictEqual(yield* overlayTree.hasBlock(block1.hash), true);
+        assert.strictEqual(yield* overlayTree.hasBlock(block2.hash), true);
+        assert.strictEqual(Option.isSome(head), true);
         assert.strictEqual(Option.getOrThrow(head) as bigint, 2n);
-        assert.isTrue(Option.isSome(canonical1));
+        assert.strictEqual(Option.isSome(canonical1), true);
         assert.strictEqual(
           Hex.fromBytes(Option.getOrThrow(canonical1)),
           Hex.fromBytes(block1.hash),

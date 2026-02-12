@@ -26,7 +26,7 @@ describe("Db snapshots", () => {
               assert.fail("expected snapshot to contain initial value"),
             onSome: (v) => v,
           });
-          assert.isTrue(Bytes.equals(snapshotStored, initial));
+          assert.strictEqual(Bytes.equals(snapshotStored, initial), true);
 
           const liveValue = yield* get(key);
           const liveStored = Option.match(liveValue, {
@@ -34,7 +34,7 @@ describe("Db snapshots", () => {
               assert.fail("expected live DB to contain updated value"),
             onSome: (v) => v,
           });
-          assert.isTrue(Bytes.equals(liveStored, updated));
+          assert.strictEqual(Bytes.equals(liveStored, updated), true);
         }),
       );
     }).pipe(Effect.provide(DbMemoryTest())),
@@ -61,16 +61,16 @@ describe("Db snapshots", () => {
           assert.strictEqual(entries.length, 2);
           const first = entries[0]!;
           const second = entries[1]!;
-          assert.isTrue(Bytes.equals(first.key, keyA));
-          assert.isTrue(Option.isSome(first.value));
+          assert.strictEqual(Bytes.equals(first.key, keyA), true);
+          assert.strictEqual(Option.isSome(first.value), true);
           const firstVal = Option.match(first.value, {
             onNone: () =>
               assert.fail("expected first value to be present in snapshot"),
             onSome: (v) => v,
           });
-          assert.isTrue(Bytes.equals(firstVal, initial));
-          assert.isTrue(Bytes.equals(second.key, keyB));
-          assert.isTrue(Option.isNone(second.value));
+          assert.strictEqual(Bytes.equals(firstVal, initial), true);
+          assert.strictEqual(Bytes.equals(second.key, keyB), true);
+          assert.strictEqual(Option.isNone(second.value), true);
         }),
       );
     }).pipe(Effect.provide(DbMemoryTest())),
@@ -100,7 +100,7 @@ describe("Db snapshots", () => {
                 assert.fail("expected snapshot seek to find first key"),
               onSome: (v) => v,
             });
-            assert.isTrue(Bytes.equals(e.key, b));
+            assert.strictEqual(Bytes.equals(e.key, b), true);
 
             const n = yield* snapshot.next(b);
             const e2 = Option.match(n, {
@@ -108,7 +108,7 @@ describe("Db snapshots", () => {
                 assert.fail("expected snapshot next to find second key"),
               onSome: (v) => v,
             });
-            assert.isTrue(Bytes.equals(e2.key, a));
+            assert.strictEqual(Bytes.equals(e2.key, a), true);
 
             const all = yield* snapshot.range();
             assert.strictEqual(all.length, 2);

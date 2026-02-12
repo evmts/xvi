@@ -124,9 +124,9 @@ describe("TxPoolAdmissionValidator", () => {
       const tx = makeSignedEip4844Tx(0n);
       const outcome = yield* Effect.either(validateTxPoolAdmission(tx));
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolBlobSupportDisabledError);
+        assert.strictEqual(outcome.left instanceof TxPoolBlobSupportDisabledError, true);
       }
     }).pipe(
       Effect.provide(
@@ -145,9 +145,9 @@ describe("TxPoolAdmissionValidator", () => {
         const tx = makeSignedEip1559Tx(0n, 70_000n);
         const outcome = yield* Effect.either(validateTxPoolAdmission(tx));
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof TxPoolGasLimitExceededError);
+          assert.strictEqual(outcome.left instanceof TxPoolGasLimitExceededError, true);
           if (outcome.left instanceof TxPoolGasLimitExceededError) {
             assert.strictEqual(outcome.left.configuredLimit, 55_000n);
           }
@@ -173,9 +173,9 @@ describe("TxPoolAdmissionValidator", () => {
       const tx = makeSignedEip4844Tx(0n, 9n);
       const outcome = yield* Effect.either(validateTxPoolAdmission(tx));
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
-        assert.isTrue(outcome.left instanceof TxPoolBlobFeeCapTooLowError);
+        assert.strictEqual(outcome.left instanceof TxPoolBlobFeeCapTooLowError, true);
       }
     }).pipe(
       Effect.provide(

@@ -126,13 +126,13 @@ describe("JsonRpcErrors", () => {
       assert.strictEqual(parseError.message, "Parse error");
 
       const message = yield* jsonRpcErrorMessageForCode(-32005);
-      assert.isTrue(Option.isSome(message));
+      assert.strictEqual(Option.isSome(message), true);
       if (Option.isSome(message)) {
         assert.strictEqual(message.value, "Limit exceeded");
       }
 
       const missing = yield* jsonRpcErrorMessageForCode(12345);
-      assert.isTrue(Option.isNone(missing));
+      assert.strictEqual(Option.isNone(missing), true);
     }).pipe(Effect.provide(JsonRpcErrorRegistryLive)),
   );
 });

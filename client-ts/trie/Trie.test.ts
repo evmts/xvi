@@ -56,7 +56,7 @@ describe("Trie", () => {
       yield* put(key, value);
       const result = yield* get(key);
 
-      assert.isTrue(Bytes.equals(result, value));
+      assert.strictEqual(Bytes.equals(result, value), true);
     }).pipe(Effect.provide(trieLayerLive())),
   );
 
@@ -65,7 +65,7 @@ describe("Trie", () => {
       const invalidKey = null as unknown as BytesType;
       const result = yield* get(invalidKey).pipe(Effect.either);
       if (result._tag === "Left") {
-        assert.isTrue(result.left instanceof TrieError);
+        assert.strictEqual(result.left instanceof TrieError, true);
         return;
       }
       assert.fail("Expected TrieError for invalid key");
@@ -78,7 +78,7 @@ describe("Trie", () => {
       const invalidValue = null as unknown as BytesType;
       const result = yield* put(key, invalidValue).pipe(Effect.either);
       if (result._tag === "Left") {
-        assert.isTrue(result.left instanceof TrieError);
+        assert.strictEqual(result.left instanceof TrieError, true);
         return;
       }
       assert.fail("Expected TrieError for invalid value");
@@ -89,15 +89,15 @@ describe("Trie", () => {
     Effect.gen(function* () {
       const key = bytesFromHex("0x02");
       const result = yield* get(key);
-      assert.isTrue(Bytes.equals(result, EmptyBytes));
+      assert.strictEqual(Bytes.equals(result, EmptyBytes), true);
     }).pipe(Effect.provide(trieLayer())),
   );
 
   it.effect("empty trie root matches the canonical empty hash", () =>
     Effect.gen(function* () {
       const hash = yield* root();
-      assert.isTrue(
-        yield* coerceEffect<boolean, never>(Hash.equals(hash, EMPTY_TRIE_ROOT)),
+      assert.strictEqual(
+        yield* coerceEffect<boolean, never>(Hash.equals(hash, EMPTY_TRIE_ROOT)), true
       );
     }).pipe(Effect.provide(trieLayer())),
   );
@@ -111,7 +111,7 @@ describe("Trie", () => {
       yield* remove(key);
       const result = yield* get(key);
 
-      assert.isTrue(Bytes.equals(result, EmptyBytes));
+      assert.strictEqual(Bytes.equals(result, EmptyBytes), true);
     }).pipe(Effect.provide(trieLayer())),
   );
 
@@ -124,10 +124,10 @@ describe("Trie", () => {
       yield* put(key, EmptyBytes);
 
       const result = yield* get(key);
-      assert.isTrue(Bytes.equals(result, EmptyBytes));
+      assert.strictEqual(Bytes.equals(result, EmptyBytes), true);
       const hash = yield* root();
-      assert.isTrue(
-        yield* coerceEffect<boolean, never>(Hash.equals(hash, EMPTY_TRIE_ROOT)),
+      assert.strictEqual(
+        yield* coerceEffect<boolean, never>(Hash.equals(hash, EMPTY_TRIE_ROOT)), true
       );
     }).pipe(Effect.provide(trieLayer())),
   );
@@ -147,10 +147,10 @@ describe("Trie", () => {
         return yield* root();
       }).pipe(Effect.provide(trieLayer(true)));
 
-      assert.isFalse(
+      assert.strictEqual(
         yield* coerceEffect<boolean, never>(
           Hash.equals(plainRoot, securedRoot),
-        ),
+        ), false
       );
     }),
   );

@@ -1,97 +1,78 @@
 <div align="center">
   <h1>
-    Minimal, spec-compliant EVM in Zig.
+    Louis
+    <br/>
+    Ethereum Execution Client in Zig + Effect-TS
     <br/>
     <br/>
   </h1>
   <sup>
-    <a href="https://github.com/evmts/guillotine-mini">
+    <a href="https://github.com/evmts/louis">
        <img src="https://img.shields.io/badge/zig-0.15.1+-orange.svg" alt="zig version" />
     </a>
-    <a href="https://github.com/evmts/guillotine-mini/actions">
-      <img src="https://img.shields.io/badge/build-passing-brightgreen.svg" alt="build status" />
+    <a href="https://github.com/evmts/louis">
+       <img src="https://img.shields.io/badge/effect--ts-3.19+-blue.svg" alt="effect-ts" />
     </a>
-    <a href="https://github.com/evmts/guillotine-mini">
-      <img src="https://img.shields.io/badge/tests-all%20hardforks%20passing-brightgreen.svg" alt="tests" />
+    <a href="https://github.com/evmts/louis/actions">
+      <img src="https://img.shields.io/badge/build-passing-brightgreen.svg" alt="build status" />
     </a>
   </sup>
 </div>
 
-> We are actively building a full Ethereum execution client (Guillotine) on top of this EVM. Guillotine-mini remains the core execution engine.
+Louis is an Ethereum execution client built with [Zig](https://ziglang.org/) and [Effect-TS](https://effect.website/). It uses [guillotine-mini](https://github.com/evmts/guillotine-mini) as its EVM engine and [Voltaire](https://github.com/evmts/voltaire) for Ethereum primitives.
+
+## Architecture
+
+| Component | Language | Description |
+|-----------|----------|-------------|
+| [guillotine-mini](https://github.com/evmts/guillotine-mini) | Zig | EVM execution engine (opcodes, gas, hardforks Berlin→Prague) |
+| [client-ts](./client-ts) | Effect-TS | Execution client modules (blockchain, state, trie, RPC, sync, txpool) |
+| [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (Address, Block, Tx, RLP, Crypto, Precompiles) |
 
 ## Requirements
 
 - Zig 0.15.1+
 - Cargo (for Rust crypto deps)
-- Python 3.8+ (optional, test generation)
-
-## Install
-
-**Use as a Zig dependency (recommended)**
-
-```bash
-zig fetch --save https://github.com/evmts/guillotine-mini/archive/main.tar.gz
-```
-
-```zig
-const guillotine_dep = b.dependency("guillotine_mini", .{
-    .target = target,
-    .optimize = optimize,
-});
-const guillotine_mod = guillotine_dep.module("guillotine_mini");
-exe.root_module.addImport("guillotine_mini", guillotine_mod);
-
-const primitives_dep = b.dependency("guillotine_primitives", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe.linkLibrary(primitives_dep.artifact("blst"));
-exe.linkLibrary(primitives_dep.artifact("keccak-asm"));
-exe.linkLibrary(primitives_dep.artifact("sha3-asm"));
-exe.linkLibrary(primitives_dep.artifact("crypto_wrappers"));
-```
-
-**Build from source**
-
-```bash
-git clone https://github.com/evmts/guillotine-mini.git --recurse-submodules
-cd guillotine-mini
-zig build
-```
-
-> The primitives library is fetched automatically during build. Downstream consumers must link the crypto artifacts from `guillotine_primitives` (see snippet above).
+- Bun or Node.js 20+ (for Effect-TS client)
 
 ## Quick Start
 
-```bash
-zig build
-zig build test
-zig build specs
-zig build wasm
-```
+**Zig EVM**
 
 ```bash
-TEST_FILTER="push0" zig build specs
+cd guillotine-mini
+zig build           # Build EVM
+zig build test      # Run unit tests
+zig build specs     # Run ethereum/tests
 ```
 
-## Docs
+**Effect-TS Client**
 
-- `CLAUDE.md` — project guide for devs and AI assistants
-- `CONTRIBUTING.md` — setup and contribution workflow
-- `src/precompiles/CLAUDE.md` — precompile docs
+```bash
+cd client-ts
+bun install
+bun run test        # Run all tests
+```
 
-## Highlights
+## Client Modules
 
-- Full hardfork support (Frontier → Osaka)
-- 20+ EIPs implemented
-- EIP-3155 tracing
-- WASM target (~193 KB optimized)
-- 100% ethereum/tests coverage
+| Module | Purpose |
+|--------|---------|
+| `blockchain/` | Block storage, validation, and chain management |
+| `state/` | World state, journaled state, transient storage |
+| `trie/` | Merkle Patricia Trie implementation |
+| `evm/` | EVM host adapter, transaction processing |
+| `rpc/` | JSON-RPC server and method handlers |
+| `sync/` | Full sync peer request planning |
+| `txpool/` | Transaction pool with admission, sorting, and replacement |
+| `engine/` | Engine API (consensus-layer interface) |
+| `db/` | Database abstraction (RocksDB-compatible) |
+| `network/` | RLPx networking |
 
-## More
+## Related
 
-- Primitives library: https://github.com/evmts/primitives
-- Guillotine (full client): https://github.com/evmts/guillotine
+- [guillotine-mini](https://github.com/evmts/guillotine-mini) — EVM engine
+- [Voltaire](https://github.com/evmts/voltaire) — Ethereum primitives library
 
 ## License
 

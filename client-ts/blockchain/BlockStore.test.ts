@@ -22,11 +22,11 @@ describe("BlockStore", () => {
 
       yield* putBlock(genesis);
 
-      assert.isTrue(yield* hasBlock(genesis.hash));
+      assert.strictEqual(yield* hasBlock(genesis.hash), true);
       assert.strictEqual(yield* blockCount(), 1);
 
       const result = yield* getBlock(genesis.hash);
-      assert.isTrue(Option.isSome(result));
+      assert.strictEqual(Option.isSome(result), true);
 
       const stored = Option.getOrThrow(result);
       assert.strictEqual(
@@ -39,7 +39,7 @@ describe("BlockStore", () => {
   it.effect("hasBlock returns false for missing hashes", () =>
     Effect.gen(function* () {
       const missing = blockHashFromByte(0xaa);
-      assert.isFalse(yield* hasBlock(missing));
+      assert.strictEqual(yield* hasBlock(missing), false);
 
       const block = makeBlock({
         number: 0n,
@@ -48,7 +48,7 @@ describe("BlockStore", () => {
       });
 
       yield* putBlock(block);
-      assert.isTrue(yield* hasBlock(block.hash));
+      assert.strictEqual(yield* hasBlock(block.hash), true);
     }).pipe(Effect.provide(BlockStoreMemoryTest)),
   );
 

@@ -41,7 +41,7 @@ describe("JsonRpcService", () => {
         } satisfies JsonRpcRequest;
 
         const response = yield* sendJsonRpcRequest(request);
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -63,7 +63,7 @@ describe("JsonRpcService", () => {
         } satisfies JsonRpcRequest;
 
         const response = yield* sendJsonRpcRequest(request);
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",
@@ -92,7 +92,7 @@ describe("JsonRpcService", () => {
           } satisfies JsonRpcRequest;
 
           const response = yield* sendJsonRpcRequest(request);
-          assert.isTrue(Option.isSome(response));
+          assert.strictEqual(Option.isSome(response), true);
           if (Option.isSome(response)) {
             assert.deepStrictEqual(response.value, {
               jsonrpc: "2.0",
@@ -127,7 +127,7 @@ describe("JsonRpcService", () => {
         );
         const callCount = yield* Ref.get(called);
 
-        assert.isTrue(Option.isNone(response));
+        assert.strictEqual(Option.isNone(response), true);
         assert.strictEqual(callCount, 1);
       }),
   );
@@ -141,7 +141,7 @@ describe("JsonRpcService", () => {
         } satisfies JsonRpcRequest;
 
         const response = yield* sendJsonRpcRequest(request);
-        assert.isTrue(Option.isNone(response));
+        assert.strictEqual(Option.isNone(response), true);
       }),
     ),
   );
@@ -166,7 +166,7 @@ describe("JsonRpcService", () => {
         } satisfies JsonRpcRequest;
 
         const response = yield* sendJsonRpcRequest(request);
-        assert.isTrue(Option.isSome(response));
+        assert.strictEqual(Option.isSome(response), true);
         if (Option.isSome(response)) {
           assert.deepStrictEqual(response.value, {
             jsonrpc: "2.0",

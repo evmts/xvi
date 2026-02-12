@@ -64,7 +64,7 @@ describe("WorldStateReader", () => {
     provideEnv(
       Effect.gen(function* () {
         const account = yield* getAccountOptional(Address.zero());
-        assert.isNull(account);
+        assert.strictEqual(account, null);
       }),
     ),
   );
@@ -73,14 +73,14 @@ describe("WorldStateReader", () => {
     provideEnv(
       Effect.gen(function* () {
         const addr = makeAddress(0xee);
-        assert.isFalse(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), false);
         yield* setAccount(addr, {
           ...EMPTY_ACCOUNT,
           nonce: 1n,
         } satisfies AccountStateType);
-        assert.isTrue(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), true);
         yield* destroyAccount(addr);
-        assert.isFalse(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), false);
       }),
     ),
   );

@@ -56,7 +56,7 @@ describe("EngineCapabilities", () => {
           "eth_getBlockByNumberV1",
         ]).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           assert.strictEqual(error._tag, "InvalidEngineCapabilityMethodError");
@@ -75,7 +75,7 @@ describe("EngineCapabilities", () => {
           Effect.either,
         );
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           assert.strictEqual(error._tag, "InvalidEngineCapabilityMethodError");
@@ -96,7 +96,7 @@ describe("EngineCapabilities", () => {
             "engine_exchangeCapabilities",
           ]).pipe(Effect.either);
 
-          assert.isTrue(Either.isLeft(outcome));
+          assert.strictEqual(Either.isLeft(outcome), true);
           if (Either.isLeft(outcome)) {
             const error = outcome.left;
             assert.strictEqual(
@@ -118,10 +118,10 @@ describe("EngineCapabilities", () => {
         Effect.either,
       );
 
-      assert.isTrue(Either.isLeft(outcome));
+      assert.strictEqual(Either.isLeft(outcome), true);
       if (Either.isLeft(outcome)) {
         const error = outcome.left;
-        assert.isTrue(error instanceof InvalidEngineCapabilityMethodError);
+        assert.strictEqual(error instanceof InvalidEngineCapabilityMethodError, true);
         assert.strictEqual(error.source, "response");
         assert.strictEqual(error.method, "engine_exchangeCapabilities");
         assert.strictEqual(error.reason, "ExchangeCapabilitiesNotAllowed");

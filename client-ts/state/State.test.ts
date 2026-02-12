@@ -78,7 +78,7 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const account = yield* getAccountOptional(Address.zero());
-        assert.isNull(account);
+        assert.strictEqual(account, null);
       }),
     ),
   );
@@ -87,7 +87,7 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const account = yield* getAccount(Address.zero());
-        assert.isTrue(isTotallyEmpty(account));
+        assert.strictEqual(isTotallyEmpty(account), true);
       }),
     ),
   );
@@ -96,7 +96,7 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const existsAndIsEmpty = yield* accountExistsAndIsEmpty(Address.zero());
-        assert.isFalse(existsAndIsEmpty);
+        assert.strictEqual(existsAndIsEmpty, false);
       }),
     ),
   );
@@ -104,11 +104,11 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const addr = makeAddress(0xfe);
-        assert.isFalse(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), false);
         yield* setAccount(addr, makeAccount({ nonce: 1n }));
-        assert.isTrue(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), true);
         yield* destroyAccount(addr);
-        assert.isFalse(yield* hasAccount(addr));
+        assert.strictEqual(yield* hasAccount(addr), false);
       }),
     ),
   );
@@ -129,8 +129,8 @@ describe("WorldState", () => {
         );
         yield* setAccount(nonEmpty, makeAccount({ nonce: 1n }));
 
-        assert.isTrue(yield* accountExistsAndIsEmpty(empty));
-        assert.isFalse(yield* accountExistsAndIsEmpty(nonEmpty));
+        assert.strictEqual(yield* accountExistsAndIsEmpty(empty), true);
+        assert.strictEqual(yield* accountExistsAndIsEmpty(nonEmpty), false);
       }),
     ),
   );
@@ -142,7 +142,7 @@ describe("WorldState", () => {
         yield* setAccount(addr, makeAccount({ nonce: 1n }));
 
         const created = yield* getAccountOptional(addr);
-        assert.isNotNull(created);
+        assert.notStrictEqual(created, null);
         assert.strictEqual(created?.nonce, 1n);
 
         yield* setAccount(addr, makeAccount({ nonce: 2n }));
@@ -151,7 +151,7 @@ describe("WorldState", () => {
 
         yield* destroyAccount(addr);
         const deleted = yield* getAccountOptional(addr);
-        assert.isNull(deleted);
+        assert.strictEqual(deleted, null);
       }),
     ),
   );
@@ -177,14 +177,14 @@ describe("WorldState", () => {
           ]);
 
           const deleted = yield* getAccountOptional(touchedEmpty);
-          assert.isNull(deleted);
+          assert.strictEqual(deleted, null);
 
           const preservedNonEmpty = yield* getAccountOptional(touchedNonEmpty);
-          assert.isNotNull(preservedNonEmpty);
+          assert.notStrictEqual(preservedNonEmpty, null);
           assert.strictEqual(preservedNonEmpty?.nonce, 1n);
 
           const untouched = yield* getAccountOptional(untouchedEmpty);
-          assert.isNotNull(untouched);
+          assert.notStrictEqual(untouched, null);
         }),
       ),
   );
@@ -221,11 +221,11 @@ describe("WorldState", () => {
           const addr = makeAddress(0xe3);
           const empty = EMPTY_CODE;
           // no prior account
-          assert.isNull(yield* getAccountOptional(addr));
+          assert.strictEqual(yield* getAccountOptional(addr), null);
           // set empty code → should not create account or journal
           yield* setCode(addr, empty);
           const stillMissing = yield* getAccountOptional(addr);
-          assert.isNull(stillMissing);
+          assert.strictEqual(stillMissing, null);
           const bytes = yield* getCode(addr);
           assert.strictEqual(codeHex(bytes), codeHex(empty));
         }),
@@ -270,7 +270,7 @@ describe("WorldState", () => {
           // roll back to s2; account should remain
           yield* restoreSnapshot(s2);
           const present = yield* getAccountOptional(addr);
-          assert.isNotNull(present);
+          assert.notStrictEqual(present, null);
           assert.strictEqual(present?.nonce, 2n);
           // cleanup
           yield* restoreSnapshot(s1);
@@ -283,7 +283,7 @@ describe("WorldState", () => {
       Effect.gen(function* () {
         const addr = makeAddress(0xe0);
         const res = yield* Effect.either(markAccountCreated(addr));
-        assert.isTrue(Either.isLeft(res));
+        assert.strictEqual(Either.isLeft(res), true);
       }),
     ),
   );
@@ -329,7 +329,7 @@ describe("WorldState", () => {
           // should not throw
           yield* clear();
           const missing = yield* getAccountOptional(addr);
-          assert.isNull(missing);
+          assert.strictEqual(missing, null);
         }),
       ),
   );
@@ -601,18 +601,18 @@ describe("WorldState", () => {
         yield* markAccountCreated(addr);
         yield* setAccount(addr, makeAccount({ nonce: 1n }));
 
-        assert.isTrue(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), true);
 
         const inner = yield* takeSnapshot();
         yield* setAccount(addr, makeAccount({ nonce: 9n }));
         yield* restoreSnapshot(inner);
 
-        assert.isTrue(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), true);
         const reverted = yield* getAccountOptional(addr);
         assert.strictEqual(reverted?.nonce, 1n);
 
         yield* commitSnapshot(outer);
-        assert.isFalse(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), false);
       }),
     ),
   );
@@ -624,10 +624,10 @@ describe("WorldState", () => {
         const snapshot = yield* takeSnapshot();
 
         yield* markAccountCreated(addr);
-        assert.isTrue(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), true);
 
         yield* commitSnapshot(snapshot);
-        assert.isFalse(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), false);
       }),
     ),
   );
@@ -639,9 +639,9 @@ describe("WorldState", () => {
         const slot = makeSlot(4);
         const value = makeStorageValue(1);
         const outcome = yield* Effect.either(setStorage(addr, slot, value));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof MissingAccountError);
+          assert.strictEqual(outcome.left instanceof MissingAccountError, true);
         }
       }),
     ),
@@ -656,15 +656,15 @@ describe("WorldState", () => {
 
         yield* markAccountCreated(addr);
         yield* setAccount(addr, makeAccount({ nonce: 1n }));
-        assert.isTrue(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), true);
 
         yield* restoreSnapshot(inner);
-        assert.isTrue(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), true);
         const reverted = yield* getAccountOptional(addr);
-        assert.isNull(reverted);
+        assert.strictEqual(reverted, null);
 
         yield* restoreSnapshot(outer);
-        assert.isFalse(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), false);
       }),
     ),
   );
@@ -673,10 +673,10 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const outcome = yield* Effect.either(restoreSnapshot(5));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
 
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof UnknownSnapshotError);
+          assert.strictEqual(outcome.left instanceof UnknownSnapshotError, true);
         }
       }),
     ),
@@ -686,10 +686,10 @@ describe("WorldState", () => {
     provideWorldState(
       Effect.gen(function* () {
         const outcome = yield* Effect.either(commitSnapshot(5));
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
 
         if (Either.isLeft(outcome)) {
-          assert.isTrue(outcome.left instanceof UnknownSnapshotError);
+          assert.strictEqual(outcome.left instanceof UnknownSnapshotError, true);
         }
       }),
     ),
@@ -710,7 +710,7 @@ describe("WorldState", () => {
         yield* clear();
 
         const account = yield* getAccountOptional(addr);
-        assert.isNull(account);
+        assert.strictEqual(account, null);
 
         const stored = yield* getStorage(addr, slot);
         assert.strictEqual(
@@ -718,12 +718,12 @@ describe("WorldState", () => {
           storageValueHex(ZERO_STORAGE_VALUE),
         );
 
-        assert.isFalse(yield* wasAccountCreated(addr));
+        assert.strictEqual(yield* wasAccountCreated(addr), false);
 
         const restored = yield* Effect.either(restoreSnapshot(snapshot));
-        assert.isTrue(Either.isLeft(restored));
+        assert.strictEqual(Either.isLeft(restored), true);
         if (Either.isLeft(restored)) {
-          assert.isTrue(restored.left instanceof UnknownSnapshotError);
+          assert.strictEqual(restored.left instanceof UnknownSnapshotError, true);
         }
       }),
     ),

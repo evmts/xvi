@@ -19,15 +19,15 @@ describe("Db iterator API", () => {
       // Nethermind ordering: 0x0100 < 0x01 < 0x02
       const s1 = yield* seek(toBytes("0x00"));
       const e1 = Option.getOrThrow(s1);
-      assert.isTrue(Bytes.equals(e1.key, b));
+      assert.strictEqual(Bytes.equals(e1.key, b), true);
 
       const s2 = yield* seek(toBytes("0x01"));
       const e2 = Option.getOrThrow(s2);
-      assert.isTrue(Bytes.equals(e2.key, a));
+      assert.strictEqual(Bytes.equals(e2.key, a), true);
 
       const s3 = yield* seek(toBytes("0x0200"));
       const e3 = Option.getOrThrow(s3);
-      assert.isTrue(Bytes.equals(e3.key, c));
+      assert.strictEqual(Bytes.equals(e3.key, c), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -43,14 +43,14 @@ describe("Db iterator API", () => {
 
       const n1 = yield* next(b);
       const e1 = Option.getOrThrow(n1);
-      assert.isTrue(Bytes.equals(e1.key, a));
+      assert.strictEqual(Bytes.equals(e1.key, a), true);
 
       const n2 = yield* next(a);
       const e2 = Option.getOrThrow(n2);
-      assert.isTrue(Bytes.equals(e2.key, c));
+      assert.strictEqual(Bytes.equals(e2.key, c), true);
 
       const n3 = yield* next(c);
-      assert.isTrue(Option.isNone(n3));
+      assert.strictEqual(Option.isNone(n3), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -67,8 +67,8 @@ describe("Db iterator API", () => {
 
       const entries = yield* range({ prefix: p as any });
       assert.strictEqual(entries.length, 2);
-      assert.isTrue(Bytes.equals(entries[0]!.key, k1 as any));
-      assert.isTrue(Bytes.equals(entries[1]!.key, k2 as any));
+      assert.strictEqual(Bytes.equals(entries[0]!.key, k1 as any), true);
+      assert.strictEqual(Bytes.equals(entries[1]!.key, k2 as any), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 });

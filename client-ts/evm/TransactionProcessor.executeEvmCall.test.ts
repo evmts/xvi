@@ -134,7 +134,7 @@ describe("TransactionProcessor.executeEvmCall", () => {
           }),
         );
 
-        assert.isTrue(Either.isLeft(result));
+        assert.strictEqual(Either.isLeft(result), true);
       }),
     ),
   );
@@ -165,9 +165,9 @@ describe("TransactionProcessor.executeEvmCall", () => {
 
       const ErrorLayer = Layer.mergeAll(BaseTestLayer, EvmExecutorLive);
       const result = yield* Effect.either(eff.pipe(Effect.provide(ErrorLayer)));
-      assert.isTrue(Either.isLeft(result));
+      assert.strictEqual(Either.isLeft(result), true);
       if (Either.isLeft(result)) {
-        assert.isTrue(result.left instanceof EvmExecutionError);
+        assert.strictEqual(result.left instanceof EvmExecutionError, true);
       }
     }),
   );

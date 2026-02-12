@@ -23,7 +23,7 @@ describe("Db", () => {
       const result = yield* get(key);
 
       const stored = Option.getOrThrow(result);
-      assert.isTrue(Bytes.equals(stored, value));
+      assert.strictEqual(Bytes.equals(stored, value), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -31,7 +31,7 @@ describe("Db", () => {
     Effect.gen(function* () {
       const key = toBytes("0x02");
       const result = yield* get(key);
-      assert.isTrue(Option.isNone(result));
+      assert.strictEqual(Option.isNone(result), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -40,11 +40,11 @@ describe("Db", () => {
       const key = toBytes("0x03");
       const value = toBytes("0x01");
 
-      assert.isFalse(yield* has(key));
+      assert.strictEqual(yield* has(key), false);
       yield* put(key, value);
-      assert.isTrue(yield* has(key));
+      assert.strictEqual(yield* has(key), true);
       yield* remove(key);
-      assert.isFalse(yield* has(key));
+      assert.strictEqual(yield* has(key), false);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -56,7 +56,7 @@ describe("Db", () => {
       yield* put(key, value);
       yield* remove(key);
       const result = yield* get(key);
-      assert.isTrue(Option.isNone(result));
+      assert.strictEqual(Option.isNone(result), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 
@@ -70,8 +70,8 @@ describe("Db", () => {
 
       const keys = yield* getAllKeys(true);
       assert.strictEqual(keys.length, 2);
-      assert.isTrue(Bytes.equals(keys[0]!, longKey));
-      assert.isTrue(Bytes.equals(keys[1]!, shortKey));
+      assert.strictEqual(Bytes.equals(keys[0]!, longKey), true);
+      assert.strictEqual(Bytes.equals(keys[1]!, shortKey), true);
     }).pipe(Effect.provide(DbMemoryTest())),
   );
 

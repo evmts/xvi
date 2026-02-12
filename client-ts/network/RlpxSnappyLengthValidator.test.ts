@@ -49,7 +49,7 @@ describe("RlpxSnappyLengthValidator", () => {
           toBytes("0x81808008"),
         ).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           if (error instanceof RlpxSnappyLengthExceededError) {
@@ -73,7 +73,7 @@ describe("RlpxSnappyLengthValidator", () => {
           toBytes("0x"),
         ).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           if (error instanceof RlpxSnappyLengthHeaderError) {
@@ -93,7 +93,7 @@ describe("RlpxSnappyLengthValidator", () => {
           toBytes("0x80"),
         ).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           if (error instanceof RlpxSnappyLengthHeaderError) {
@@ -113,7 +113,7 @@ describe("RlpxSnappyLengthValidator", () => {
           toBytes("0x808080808001"),
         ).pipe(Effect.either);
 
-        assert.isTrue(Either.isLeft(outcome));
+        assert.strictEqual(Either.isLeft(outcome), true);
         if (Either.isLeft(outcome)) {
           const error = outcome.left;
           if (error instanceof RlpxSnappyLengthHeaderError) {
