@@ -508,16 +508,18 @@ pub fn head_hash_of(chain: anytype) !?Hash.Hash {
 /// - `max_attempts`: number of reads allowed when head changes during read.
 ///   Trade-off: higher values increase stability under contention but add extra
 ///   reads. Default of 2 mirrors Nethermind snapshot semantics (one retry,
-///   then return the first consistent snapshot).
+///   then return the first consistent snapshot). Values below 1 are clamped
+///   to 1 to avoid silent null snapshots.
 pub fn head_block_of_with_policy(chain: anytype, max_attempts: usize) !?Block.Block {
+    const attempts = @max(max_attempts, 1);
     var attempt: usize = 0;
-    while (attempt < max_attempts) : (attempt += 1) {
+    while (attempt < attempts) : (attempt += 1) {
         const before = chain.getHeadBlockNumber() orelse return null;
         const maybe_block = try chain.getBlockByNumber(before);
         const hb = maybe_block orelse return null;
         const after = chain.getHeadBlockNumber() orelse return null;
         if (after == before) return hb;
-        if (attempt + 1 == max_attempts) return hb; // return 'before' snapshot
+        if (attempt + 1 == attempts) return hb; // return 'before' snapshot
     }
     return null; // defensive
 }
@@ -1099,6 +1101,21 @@ test "Chain - head_block_of_with_policy returns head snapshot" {
     try chain.setCanonicalHead(genesis.hash);
 
     const hb = try head_block_of_with_policy(&chain, 1);
+    try std.testing.expect(hb != null);
+    try std.testing.expectEqual(@as(u64, 0), hb.?.header.number);
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hb.?.hash);
+}
+
+test "Chain - head_block_of_with_policy clamps zero attempts to one" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    const hb = try head_block_of_with_policy(&chain, 0);
     try std.testing.expect(hb != null);
     try std.testing.expectEqual(@as(u64, 0), hb.?.header.number);
     try std.testing.expectEqualSlices(u8, &genesis.hash, &hb.?.hash);
