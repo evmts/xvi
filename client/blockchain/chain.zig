@@ -233,7 +233,7 @@ pub fn parent_header_local(
 /// - Walks parent links strictly via local storage; returns null if any
 ///   intermediate block is missing or when genesis has no parent.
 /// - Never consults fork caches; performs no allocations.
-pub fn ancestor_hash_local(
+fn ancestor_hash_local(
     chain: *Chain,
     start: Hash.Hash,
     distance: u64,
@@ -277,14 +277,14 @@ pub fn block_hash_by_number_local(
     return ancestor_hash_local(chain, current_hash, depth);
 }
 
-/// Returns the ancestor block at  from  using local store only.
+/// Returns the ancestor block at `distance` from `start` using local store only.
 ///
 /// Semantics:
-/// -  returns the full  block iff it exists locally.
+/// - `distance == 0` returns the full `start` block iff it exists locally.
 /// - Walks parent links strictly via local storage; returns null if any
 ///   intermediate block is missing or when genesis has no parent.
 /// - Never consults fork caches; performs no allocations.
-pub fn ancestor_block_local(
+fn ancestor_block_local(
     chain: *Chain,
     start: Hash.Hash,
     distance: u64,
@@ -315,7 +315,7 @@ pub fn ancestor_block_local(
 /// - If the chains converge, returns the first matching hash when walking
 ///   upward; otherwise returns `null` (e.g., when an ancestor is missing
 ///   locally).
-pub fn common_ancestor_hash_local(
+fn common_ancestor_hash_local(
     chain: *Chain,
     a: Hash.Hash,
     b: Hash.Hash,
@@ -501,14 +501,15 @@ pub fn head_number_of(chain: anytype) ?u64 {
 /// remote reads are acceptable in the call site.
 pub fn safe_head_hash_of(fc: anytype) ?Hash.Hash {
     // Intentionally a thin wrapper to keep DI surface consistent. Callers
-    // should pass  by convention; we do not enforce pointer receivers at
+    // should pass `*fc` by convention; we do not enforce pointer receivers at
     // comptime as it reduces DI flexibility and diverges from repo style.
     return fc.getSafeHash();
 }
 
+/// Returns the finalized-head hash from a forkchoice provider.
 pub fn finalized_head_hash_of(fc: anytype) ?Hash.Hash {
     // Intentionally a thin wrapper to keep DI surface consistent. Callers
-    // should pass  by convention; we do not enforce pointer receivers at
+    // should pass `*fc` by convention; we do not enforce pointer receivers at
     // comptime as it reduces DI flexibility and diverges from repo style.
     return fc.getFinalizedHash();
 }
@@ -533,6 +534,37 @@ pub fn finalized_head_block_of(chain: *Chain, fc: anytype) ?Block.Block {
 test {
     @import("std").testing.refAllDecls(@This());
 }
+
+fn fetch_remote_block_zero_for_test(
+    chain: *Chain,
+    fork_cache: *ForkBlockCache,
+    allocator: std.mem.Allocator,
+    hash_hex: []const u8,
+) !Block.Block {
+    try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
+    const req = fork_cache.nextRequest() orelse return error.UnexpectedNull;
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}",
+        .{hash_hex},
+    );
+    defer allocator.free(response);
+    try fork_cache.continueRequest(req.id, response);
+    return (try chain.getBlockByNumber(0)) orelse return error.UnexpectedNull;
+}
+
+const TestForkchoice = struct {
+    safe: ?Hash.Hash,
+    finalized: ?Hash.Hash,
+
+    pub fn getSafeHash(self: *const @This()) ?Hash.Hash {
+        return self.safe;
+    }
+
+    pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
+        return self.finalized;
+    }
+};
 
 test "Chain - missing blocks return null" {
     const allocator = std.testing.allocator;
@@ -793,18 +825,14 @@ test "Chain - has_block reflects local and fork-cache presence" {
         defer chain.deinit();
 
         // Queue a remote fetch by number, then supply a minimal JSON response
-        try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
-        const req = fork_cache.nextRequest() orelse {
-            try std.testing.expect(false);
-            return;
-        };
-        const hash_hex = "0x" ++ ("22" ** 32);
-        const response = try std.fmt.allocPrint(allocator, "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}", .{hash_hex});
-        defer allocator.free(response);
-        try fork_cache.continueRequest(req.id, response);
+        const fetched = try fetch_remote_block_zero_for_test(
+            &chain,
+            &fork_cache,
+            allocator,
+            "0x" ++ ("22" ** 32),
+        );
 
-        // Verify has_block=true using the retrieved block's hash
-        const fetched = (try chain.getBlockByNumber(0)).?;
+        // Verify has_block=true using the retrieved block's hash.
         try std.testing.expect(has_block(&chain, fetched.hash));
         if (get_block_local(&chain, fetched.hash) == null) try chain.putBlock(fetched);
         try chain.setCanonicalHead(fetched.hash);
@@ -838,17 +866,13 @@ test "Chain - get_block_local reads only from local store" {
         defer chain.deinit();
 
         // Queue a remote fetch by number and fulfill
-        try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
-        const req = fork_cache.nextRequest() orelse {
-            try std.testing.expect(false);
-            return;
-        };
-        const hash_hex = "0x" ++ ("33" ** 32);
-        const response = try std.fmt.allocPrint(allocator, "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}", .{hash_hex});
-        defer allocator.free(response);
-        try fork_cache.continueRequest(req.id, response);
+        const fetched = try fetch_remote_block_zero_for_test(
+            &chain,
+            &fork_cache,
+            allocator,
+            "0x" ++ ("33" ** 32),
+        );
 
-        const fetched = (try chain.getBlockByNumber(0)).?;
         // Sanity: has_block should see cached remote
         try std.testing.expect(has_block(&chain, fetched.hash));
         // Local-only read must not see it
@@ -885,18 +909,14 @@ test "Chain - get_block_by_number_local reads canonical only and stays local" {
         defer chain.deinit();
 
         // Request remote block #0 and fulfill
-        try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
-        const req = fork_cache.nextRequest() orelse {
-            try std.testing.expect(false);
-            return;
-        };
-        const hash_hex = "0x" ++ ("44" ** 32);
-        const response = try std.fmt.allocPrint(allocator, "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}", .{hash_hex});
-        defer allocator.free(response);
-        try fork_cache.continueRequest(req.id, response);
+        const fetched = try fetch_remote_block_zero_for_test(
+            &chain,
+            &fork_cache,
+            allocator,
+            "0x" ++ ("44" ** 32),
+        );
 
-        // Sanity: unified getter sees it via cache, but local-by-number should not
-        const fetched = (try chain.getBlockByNumber(0)).?;
+        // Sanity: unified getter sees it via cache, but local-by-number should not.
         try std.testing.expectEqual(@as(u64, 0), fetched.header.number);
         try std.testing.expect(get_block_by_number_local(&chain, 0) == null);
     }
@@ -937,17 +957,12 @@ test "Chain - get_parent_block_local ignores fork-cache-only parent" {
     defer chain.deinit();
 
     // Request remote block #0 and fulfill
-    try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
-    const req = fork_cache.nextRequest() orelse {
-        try std.testing.expect(false);
-        return;
-    };
-    const hash_hex = "0x" ++ ("55" ** 32);
-    const response = try std.fmt.allocPrint(allocator, "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}", .{hash_hex});
-    defer allocator.free(response);
-    try fork_cache.continueRequest(req.id, response);
-
-    const fetched = (try chain.getBlockByNumber(0)).?;
+    const fetched = try fetch_remote_block_zero_for_test(
+        &chain,
+        &fork_cache,
+        allocator,
+        "0x" ++ ("55" ** 32),
+    );
 
     var hdr = BlockHeader.init();
     hdr.number = 1;
@@ -996,17 +1011,12 @@ test "Chain - parent_header_local ignores fork-cache-only parent and returns typ
     defer chain.deinit();
 
     // Request remote block #0 and fulfill
-    try std.testing.expectError(error.RpcPending, chain.getBlockByNumber(0));
-    const req = fork_cache.nextRequest() orelse {
-        try std.testing.expect(false);
-        return;
-    };
-    const hash_hex = "0x" ++ ("66" ** 32);
-    const response = try std.fmt.allocPrint(allocator, "{{\"hash\":\"{s}\",\"number\":\"0x0\"}}", .{hash_hex});
-    defer allocator.free(response);
-    try fork_cache.continueRequest(req.id, response);
-
-    const fetched = (try chain.getBlockByNumber(0)).?;
+    const fetched = try fetch_remote_block_zero_for_test(
+        &chain,
+        &fork_cache,
+        allocator,
+        "0x" ++ ("66" ** 32),
+    );
 
     var hdr = BlockHeader.init();
     hdr.number = 1;
@@ -1113,36 +1123,14 @@ test "Chain - head helpers reflect new head after reorg" {
 }
 
 test "Chain - safe_head_hash_of forwards forkchoice value" {
-    const Fc = struct {
-        safe: ?Hash.Hash,
-        finalized: ?Hash.Hash,
-        pub fn getSafeHash(self: *const @This()) ?Hash.Hash {
-            return self.safe;
-        }
-        pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
-            return self.finalized;
-        }
-    };
-
-    var fc = Fc{ .safe = Hash.ZERO, .finalized = null };
+    var fc = TestForkchoice{ .safe = Hash.ZERO, .finalized = null };
     const h = safe_head_hash_of(&fc);
     try std.testing.expect(h != null);
     try std.testing.expectEqualSlices(u8, &Hash.ZERO, &h.?);
 }
 
 test "Chain - finalized_head_hash_of forwards forkchoice value" {
-    const Fc = struct {
-        safe: ?Hash.Hash,
-        finalized: ?Hash.Hash,
-        pub fn getSafeHash(self: *const @This()) ?Hash.Hash {
-            return self.safe;
-        }
-        pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
-            return self.finalized;
-        }
-    };
-
-    var fc = Fc{ .safe = null, .finalized = Hash.ZERO };
+    var fc = TestForkchoice{ .safe = null, .finalized = Hash.ZERO };
     const h = finalized_head_hash_of(&fc);
     try std.testing.expect(h != null);
     try std.testing.expectEqualSlices(u8, &Hash.ZERO, &h.?);
@@ -1156,18 +1144,7 @@ test "Chain - safe/finalized head block helpers return local blocks" {
     const genesis = try Block.genesis(1, allocator);
     try chain.putBlock(genesis);
 
-    const Fc = struct {
-        safe: ?Hash.Hash,
-        finalized: ?Hash.Hash,
-        pub fn getSafeHash(self: *const @This()) ?Hash.Hash {
-            return self.safe;
-        }
-        pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
-            return self.finalized;
-        }
-    };
-
-    var fc = Fc{ .safe = genesis.hash, .finalized = genesis.hash };
+    var fc = TestForkchoice{ .safe = genesis.hash, .finalized = genesis.hash };
 
     const sb = safe_head_block_of(&chain, &fc);
     try std.testing.expect(sb != null);
@@ -1183,19 +1160,8 @@ test "Chain - safe/finalized head block helpers return null when missing locally
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    const Fc = struct {
-        safe: ?Hash.Hash,
-        finalized: ?Hash.Hash,
-        pub fn getSafeHash(self: *const @This()) ?Hash.Hash {
-            return self.safe;
-        }
-        pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
-            return self.finalized;
-        }
-    };
-
     // Some non-existent hash (all zeros is fine since store is empty)
-    var fc = Fc{ .safe = Hash.ZERO, .finalized = Hash.ZERO };
+    var fc = TestForkchoice{ .safe = Hash.ZERO, .finalized = Hash.ZERO };
     try std.testing.expect(safe_head_block_of(&chain, &fc) == null);
     try std.testing.expect(finalized_head_block_of(&chain, &fc) == null);
 }

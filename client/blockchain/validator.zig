@@ -170,16 +170,17 @@ pub fn validate_timestamp_strictly_greater(
     if (header.timestamp <= parent.timestamp) return ValidationError.InvalidTimestamp;
 }
 
-/// Decide whether  should be validated under post-merge (PoS) rules.
+/// Decides whether `header` should be validated under post-merge (PoS) rules.
 ///
 /// Semantics:
 /// - If Terminal Total Difficulty (TTD) is provided:
-///   - With : post-merge when ,
-///     parent (when provided) also crossed TTD, and .
-///   - Without : conservatively fall back to checking
-///     . Callers that require strict TTD gating must
+///   - With `ctx.header_total_difficulty`: post-merge when
+///     `header_total_difficulty >= terminal_total_difficulty`,
+///     parent (when provided) also crossed TTD, and `header.difficulty == 0`.
+///   - Without `ctx.header_total_difficulty`: conservatively fall back to
+///     checking `header.difficulty == 0`. Callers that require strict TTD gating must
 ///     supply TDs for both header and parent.
-/// - If no TTD is provided: use hardfork gating (>= MERGE) and .
+/// - If no TTD is provided: use hardfork gating (>= MERGE) and `difficulty == 0`.
 fn is_post_merge(header: *const BlockHeader.BlockHeader, ctx: HeaderValidationContext) bool {
     if (ctx.terminal_total_difficulty) |ttd| {
         if (ctx.header_total_difficulty) |td| {
