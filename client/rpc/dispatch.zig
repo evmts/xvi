@@ -7,7 +7,6 @@
 const std = @import("std");
 const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
-const server = @import("server.zig");
 const scan = @import("scan.zig");
 
 /// Returns the root namespace tag of a JSON-RPC method name.
@@ -118,62 +117,27 @@ pub const ParseNamespaceResult = union(enum) {
 /// `.error(.method_not_found)`. If the field is missing or malformed,
 /// returns `.error(.invalid_request)` per EIP-1474.
 pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
-    if (server.validate_request_jsonrpc_version(request)) |code| {
-        return .{ .err = code };
-    }
+    const fields = scan.scan_request_fields(request) catch |err| switch (err) {
+        error.ParseError => return .{ .err = .parse_error },
+        error.InvalidRequest => return .{ .err = .invalid_request },
+    };
 
-    // Top-level JSON type validation and batch guard
-    var i_top: usize = 0;
-    // Skip UTF-8 BOM if present
-    if (request.len >= 3 and request[0] == 0xEF and request[1] == 0xBB and request[2] == 0xBF) {
-        i_top = 3;
-    }
-    // Skip leading whitespace
-    while (i_top < request.len and std.ascii.isWhitespace(request[i_top])) : (i_top += 1) {}
-    if (i_top >= request.len) return .{ .err = .parse_error };
-    const first = request[i_top];
-    if (first == '[') {
-        // Batch request arrays are handled by upper layers; treat as invalid_request here.
+    const jsonrpc_span = fields.jsonrpc orelse return .{ .err = .invalid_request };
+    const jsonrpc_token = request[jsonrpc_span.start..jsonrpc_span.end];
+    if (jsonrpc_token.len < 2 or jsonrpc_token[0] != '"' or jsonrpc_token[jsonrpc_token.len - 1] != '"') {
         return .{ .err = .invalid_request };
     }
-    if (first != '{') {
-        // Valid JSON but not a Request object -> invalid_request (EIP-1474)
+    if (!std.mem.eql(u8, jsonrpc_token[1 .. jsonrpc_token.len - 1], "2.0")) {
+        return .{ .err = .jsonrpc_version_not_supported };
+    }
+
+    const method_span = fields.method orelse return .{ .err = .invalid_request };
+    const method_token = request[method_span.start..method_span.end];
+    if (method_token.len < 2 or method_token[0] != '"' or method_token[method_token.len - 1] != '"') {
         return .{ .err = .invalid_request };
     }
+    const method_name = method_token[1 .. method_token.len - 1];
 
-    const key = "\"method\"";
-    const idx_opt = scan.find_top_level_key(request[i_top..], key);
-    if (idx_opt == null) return .{ .err = .invalid_request };
-
-    var i: usize = i_top + idx_opt.? + key.len;
-    // Skip whitespace to the ':'
-    while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
-    if (i >= request.len or request[i] != ':') return .{ .err = .invalid_request };
-    i += 1; // past ':'
-
-    // Skip whitespace to the opening quote of the method string
-    while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
-    if (i >= request.len or request[i] != '"') return .{ .err = .invalid_request };
-
-    // Extract string value with proper escape handling
-    var end = i + 1;
-    var esc = false;
-    while (end < request.len) : (end += 1) {
-        const ch = request[end];
-        if (esc) {
-            esc = false;
-            continue;
-        }
-        if (ch == '\\') {
-            esc = true;
-            continue;
-        }
-        if (ch == '"') break;
-    }
-    if (end >= request.len or request[end] != '"') return .{ .err = .parse_error };
-    const start = i + 1;
-
-    const method_name = request[start..end];
     if (resolve_namespace(method_name)) |tag| {
         return .{ .namespace = tag };
     } else {
@@ -286,5 +250,29 @@ test "parseRequestNamespace validates jsonrpc field before method handling" {
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
         .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+    }
+}
+
+test "parseRequestNamespace rejects malformed JSON after method extraction" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"method\": \"eth_blockNumber\",\n" ++
+        "  \"params\": []\n";
+
+    const res = parse_request_namespace(req);
+    switch (res) {
+        .namespace => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+    }
+}
+
+test "parseRequestNamespace rejects trailing non-json bytes" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\", \"params\": [] } trailing";
+
+    const res = parse_request_namespace(req);
+    switch (res) {
+        .namespace => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
     }
 }
