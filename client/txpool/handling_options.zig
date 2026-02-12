@@ -22,6 +22,7 @@ pub const TxHandlingOptions = struct {
     /// Allows replacing transaction signature even if already signed.
     pub const allow_replacing_signature = TxHandlingOptions{ .bits = 1 << 3 };
 
+    /// Bitmask containing every declared option flag.
     pub const all = TxHandlingOptions{
         .bits = managed_nonce.bits |
             persistent_broadcast.bits |
@@ -29,30 +30,36 @@ pub const TxHandlingOptions = struct {
             allow_replacing_signature.bits,
     };
 
+    /// Builds an option set from raw bits and rejects unknown flags.
     pub fn from_bits(bits: Int) Error!Self {
         const options = Self{ .bits = bits };
         try options.validate();
         return options;
     }
 
+    /// Drops any unknown bits and returns only declared flags.
     pub fn sanitize(self: Self) Self {
         return .{ .bits = self.bits & all.bits };
     }
 
+    /// Returns true when all bits map to declared option flags.
     pub fn is_valid(self: Self) bool {
         return self.bits == self.sanitize().bits;
     }
 
+    /// Returns `error.InvalidTxHandlingOptions` when unknown flags are present.
     pub fn validate(self: Self) Error!void {
         if (!self.is_valid()) return error.InvalidTxHandlingOptions;
     }
 
+    /// Combines two option sets after sanitizing both operands.
     pub fn merge(self: Self, other: Self) Self {
         const lhs = self.sanitize();
         const rhs = other.sanitize();
         return .{ .bits = lhs.bits | rhs.bits };
     }
 
+    /// Returns true when `self` contains all flags set in `other`.
     pub fn has(self: Self, other: Self) bool {
         if (!self.is_valid() or !other.is_valid()) return false;
         return (self.bits & other.bits) == other.bits;
