@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
     const precompiles_mod = primitives_dep.module("precompiles");
     const blockchain_mod = primitives_dep.module("blockchain");
     const jsonrpc_mod = b.addModule("jsonrpc", .{
-        .root_source_file = primitives_dep.path("src/jsonrpc/root.zig"),
+        .root_source_file = primitives_dep.path("packages/voltaire-zig/src/jsonrpc/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) void {
         // intend to expose to consumers that were defined in other files part
         // of this module, you will have to make sure to re-export them from
         // the root file.
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("guillotine-mini/src/root.zig"),
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) void {
 
     // Create EVM module (used by spec tests and client EVM adapter)
     const evm_mod = b.addModule("evm", .{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("guillotine-mini/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -158,7 +158,7 @@ pub fn build(b: *std.Build) void {
 
     // Trie integration tests (ethereum-tests/TrieTests fixtures)
     const trie_fixture_mod = b.addModule("trie_fixtures", .{
-        .root_source_file = b.path("test/trie/fixtures.zig"),
+        .root_source_file = b.path("guillotine-mini/test/trie/fixtures.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -336,29 +336,6 @@ pub fn build(b: *std.Build) void {
 
     const client_rpc_test_step = b.step("test-rpc", "Run JSON-RPC server tests");
     client_rpc_test_step.dependOn(&run_client_rpc_tests.step);
-
-    // Client Engine API module (Consensus Layer interface)
-    const client_engine_mod = b.addModule("client_engine", .{
-        .root_source_file = b.path("client/engine/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "primitives", .module = primitives_mod },
-            .{ .name = "crypto", .module = crypto_mod },
-            .{ .name = "jsonrpc", .module = jsonrpc_mod },
-        },
-    });
-
-    const client_engine_tests = b.addTest(.{
-        .root_module = client_engine_mod,
-    });
-
-    const run_client_engine_tests = b.addRunArtifact(client_engine_tests);
-    test_step.dependOn(&run_client_engine_tests.step);
-    unit_test_step.dependOn(&run_client_engine_tests.step);
-
-    const client_engine_test_step = b.step("test-engine", "Run Engine API tests");
-    client_engine_test_step.dependOn(&run_client_engine_tests.step);
 
     // Client Engine API module (Consensus Layer interface)
     const client_engine_mod = b.addModule("client_engine", .{
@@ -647,7 +624,7 @@ pub fn build(b: *std.Build) void {
     const spec_tests_state = b.addTest(.{
         .root_module = spec_runner_mod,
         .test_runner = .{
-            .path = b.path("test_runner.zig"),
+            .path = b.path("guillotine-mini/test_runner.zig"),
             .mode = .simple,
         },
     });
@@ -655,7 +632,7 @@ pub fn build(b: *std.Build) void {
     const spec_tests_blockchain = b.addTest(.{
         .root_module = spec_runner_mod,
         .test_runner = .{
-            .path = b.path("test_runner.zig"),
+            .path = b.path("guillotine-mini/test_runner.zig"),
             .mode = .simple,
         },
     });
@@ -851,7 +828,7 @@ pub fn build(b: *std.Build) void {
             const sub_tests = b.addTest(.{
                 .root_module = spec_runner_mod,
                 .test_runner = .{
-                    .path = b.path("test_runner.zig"),
+                    .path = b.path("guillotine-mini/test_runner.zig"),
                     .mode = .simple,
                 },
             });
@@ -875,7 +852,7 @@ pub fn build(b: *std.Build) void {
         const fork_tests = b.addTest(.{
             .root_module = spec_runner_mod,
             .test_runner = .{
-                .path = b.path("test_runner.zig"),
+                .path = b.path("guillotine-mini/test_runner.zig"),
                 .mode = .simple,
             },
         });
@@ -909,7 +886,7 @@ pub fn build(b: *std.Build) void {
         const eip_tests = b.addTest(.{
             .root_module = spec_runner_mod,
             .test_runner = .{
-                .path = b.path("test_runner.zig"),
+                .path = b.path("guillotine-mini/test_runner.zig"),
                 .mode = .simple,
             },
         });

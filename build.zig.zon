@@ -1,0 +1,26 @@
+.{
+    .name = .guillotine_mini,
+    .version = "0.0.0",
+    .fingerprint = 0xa47ea6adb5ac1c01,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .primitives = .{
+            .path = "../voltaire",
+        },
+        .guillotine_primitives = .{
+            .path = "../voltaire",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "lib",
+        "test",
+        "test_runner.zig",
+        "interactive_test_runner.zig",
+        "test_trace.zig",
+        "LICENSE",
+        "README.md",
+    },
+}
