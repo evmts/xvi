@@ -1,19 +1,19 @@
 <div align="center">
   <h1>
-    Louis
+    XVI
     <br/>
     An experiment in fully vibecoding an Ethereum execution client
     <br/>
     <br/>
   </h1>
   <sup>
-    <a href="https://github.com/evmts/louis">
+    <a href="https://github.com/evmts/xvi">
        <img src="https://img.shields.io/badge/zig-0.15.1+-orange.svg" alt="zig version" />
     </a>
-    <a href="https://github.com/evmts/louis">
+    <a href="https://github.com/evmts/xvi">
        <img src="https://img.shields.io/badge/effect--ts-3.19+-blue.svg" alt="effect-ts" />
     </a>
-    <a href="https://github.com/evmts/louis">
+    <a href="https://github.com/evmts/xvi">
        <img src="https://img.shields.io/badge/vibecoded-100%25-ff69b4.svg" alt="vibecoded" />
     </a>
   </sup>
@@ -21,22 +21,22 @@
 
 ## What is this?
 
-Louis is an experiment to see how far you can get **vibecoding an entire Ethereum execution client** — meaning every line of source code is written by AI agents, orchestrated by [Smithers](https://github.com/evmts/smithers).
+XVI is an experiment to see how far you can get **vibecoding an entire Ethereum execution client** — meaning every line of source code is written by AI agents, orchestrated by [Smithers](https://github.com/evmts/smithers).
 
-The human role is purely architectural: defining what modules to build, what specs to follow, and what tests to pass. The AI does all the implementation.
+The human role is purely architectural: defining what modules to build, what specs to follow, and what tests to pass. The AI does all the implementation. Even this README was vibecoded.
 
 ### Current status
 
 - **~19k lines** of Effect-TS source across 87 modules (blockchain, state, trie, EVM host, RPC, sync, txpool, engine, db, networking)
 - **~14k lines** of tests (528 tests, 507 passing)
-- **EVM engine** provided by [guillotine-mini](https://github.com/evmts/guillotine-mini) (Zig, also vibecoded) — full hardfork support Frontier → Prague, 20+ EIPs, 100% ethereum/tests passing
+- **EVM engine** provided by [xvi-evm](https://github.com/evmts/xvi) (Zig, also vibecoded) — full hardfork support Frontier → Prague, 20+ EIPs, 100% ethereum/tests passing
 - **Primitives** provided by [Voltaire](https://github.com/evmts/voltaire) — Address, Block, Transaction, RLP, Crypto, Precompiles
 
 ## Architecture
 
 | Component | Language | Description |
 |-----------|----------|-------------|
-| [guillotine-mini](./guillotine-mini) | Zig | EVM execution engine (submodule) |
+| [xvi-evm](./xvi-evm) | Zig | EVM execution engine (submodule) |
 | [client-ts](./client-ts) | Effect-TS | Execution client modules |
 | [smithers](./smithers) | TSX/React | AI workflow orchestrator that generates the code |
 | [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (fetched from npm/GitHub releases) |
@@ -125,7 +125,6 @@ All intermediate outputs (plans, code, test results, review feedback) are persis
 **Zig EVM**
 
 ```bash
-cd guillotine-mini
 zig build           # Build EVM
 zig build test      # Run unit tests
 zig build specs     # Run ethereum/tests
@@ -148,7 +147,7 @@ npx vitest run      # Run all tests
 
 ## Related
 
-- [guillotine-mini](https://github.com/evmts/guillotine-mini) — EVM engine
+- [XVI](https://github.com/evmts/xvi) — EVM engine
 - [Voltaire](https://github.com/evmts/voltaire) — Ethereum primitives
 - [Smithers](https://github.com/evmts/smithers) — AI workflow orchestrator
 
