@@ -284,23 +284,38 @@ pub fn block_hash_by_number_local(
 ///   context (typically parent hash while executing the next block).
 /// - Returns hashes ordered by increasing block number (oldest -> newest).
 /// - Includes `tip_hash` as the last element when present.
-/// - Stops at genesis, after 256 hashes, or when local ancestry is missing.
+/// - Fails closed with a typed error when in-range ancestry is missing.
 /// - Never consults fork cache and performs no allocations.
+pub const RecentBlockHashesError = error{
+    MissingTipBlock,
+    MissingAncestorBlock,
+};
+
 pub fn last_256_block_hashes_local(
     chain: *Chain,
     tip_hash: Hash.Hash,
     out: *[256]Hash.Hash,
-) []const Hash.Hash {
+) RecentBlockHashesError![]const Hash.Hash {
+    const tip_block = get_block_local(chain, tip_hash) orelse return error.MissingTipBlock;
+    const expected_len: usize = if (tip_block.header.number >= 255)
+        256
+    else
+        @intCast(tip_block.header.number + 1);
+
     var write_start: usize = out.len;
     var cursor_hash = tip_hash;
+    var cursor_block = tip_block;
+    var written: usize = 0;
 
-    while (write_start > 0) {
-        const block = get_block_local(chain, cursor_hash) orelse break;
+    while (written < expected_len) : (written += 1) {
         write_start -= 1;
         out[write_start] = cursor_hash;
 
-        if (block.header.number == 0) break;
-        cursor_hash = block.header.parent_hash;
+        if (written + 1 == expected_len) break;
+        if (cursor_block.header.number == 0) return error.MissingAncestorBlock;
+
+        cursor_hash = cursor_block.header.parent_hash;
+        cursor_block = get_block_local(chain, cursor_hash) orelse return error.MissingAncestorBlock;
     }
 
     return out[write_start..];
@@ -1337,14 +1352,13 @@ test "Chain - block_hash_by_number_local returns null when ancestry missing loca
     try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 299) == null);
 }
 
-test "Chain - last_256_block_hashes_local returns empty when tip missing" {
+test "Chain - last_256_block_hashes_local returns MissingTipBlock when tip missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
     var out: [256]Hash.Hash = undefined;
-    const hashes = last_256_block_hashes_local(&chain, Hash.ZERO, &out);
-    try std.testing.expectEqual(@as(usize, 0), hashes.len);
+    try std.testing.expectError(error.MissingTipBlock, last_256_block_hashes_local(&chain, Hash.ZERO, &out));
 }
 
 test "Chain - last_256_block_hashes_local returns increasing order and includes tip" {
@@ -1370,7 +1384,7 @@ test "Chain - last_256_block_hashes_local returns increasing order and includes 
     try chain.putBlock(b2);
 
     var out: [256]Hash.Hash = undefined;
-    const hashes = last_256_block_hashes_local(&chain, b2.hash, &out);
+    const hashes = try last_256_block_hashes_local(&chain, b2.hash, &out);
 
     try std.testing.expectEqual(@as(usize, 3), hashes.len);
     try std.testing.expectEqualSlices(u8, &genesis.hash, &hashes[0]);
@@ -1402,11 +1416,27 @@ test "Chain - last_256_block_hashes_local caps result at 256 hashes" {
     }
 
     var out: [256]Hash.Hash = undefined;
-    const hashes = last_256_block_hashes_local(&chain, hashes_by_number[259], &out);
+    const hashes = try last_256_block_hashes_local(&chain, hashes_by_number[259], &out);
 
     try std.testing.expectEqual(@as(usize, 256), hashes.len);
     try std.testing.expectEqualSlices(u8, &hashes_by_number[4], &hashes[0]);
     try std.testing.expectEqualSlices(u8, &hashes_by_number[259], &hashes[255]);
+}
+
+test "Chain - last_256_block_hashes_local returns MissingAncestorBlock when ancestry missing" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var orphan_header = primitives.BlockHeader.init();
+    orphan_header.number = 42;
+    orphan_header.parent_hash = [_]u8{0xAB} ** 32;
+    orphan_header.timestamp = 42;
+    const orphan = try Block.from(&orphan_header, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(orphan);
+
+    var out: [256]Hash.Hash = undefined;
+    try std.testing.expectError(error.MissingAncestorBlock, last_256_block_hashes_local(&chain, orphan.hash, &out));
 }
 
 test "Chain - ancestor_block_local returns null when start missing" {
