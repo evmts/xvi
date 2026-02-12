@@ -277,6 +277,35 @@ pub fn block_hash_by_number_local(
     return ancestor_hash_local(chain, current_hash, depth);
 }
 
+/// Collects up to 256 recent block hashes from local storage in spec order.
+///
+/// Semantics:
+/// - `tip_hash` must be the latest complete block hash for the execution
+///   context (typically parent hash while executing the next block).
+/// - Returns hashes ordered by increasing block number (oldest -> newest).
+/// - Includes `tip_hash` as the last element when present.
+/// - Stops at genesis, after 256 hashes, or when local ancestry is missing.
+/// - Never consults fork cache and performs no allocations.
+pub fn last_256_block_hashes_local(
+    chain: *Chain,
+    tip_hash: Hash.Hash,
+    out: *[256]Hash.Hash,
+) []const Hash.Hash {
+    var write_start: usize = out.len;
+    var cursor_hash = tip_hash;
+
+    while (write_start > 0) {
+        const block = get_block_local(chain, cursor_hash) orelse break;
+        write_start -= 1;
+        out[write_start] = cursor_hash;
+
+        if (block.header.number == 0) break;
+        cursor_hash = block.header.parent_hash;
+    }
+
+    return out[write_start..];
+}
+
 /// Returns the ancestor block at `distance` from `start` using local store only.
 ///
 /// Semantics:
@@ -1306,6 +1335,78 @@ test "Chain - block_hash_by_number_local returns null when ancestry missing loca
     try chain.putBlock(orphan);
 
     try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 299) == null);
+}
+
+test "Chain - last_256_block_hashes_local returns empty when tip missing" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var out: [256]Hash.Hash = undefined;
+    const hashes = last_256_block_hashes_local(&chain, Hash.ZERO, &out);
+    try std.testing.expectEqual(@as(usize, 0), hashes.len);
+}
+
+test "Chain - last_256_block_hashes_local returns increasing order and includes tip" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    var h2 = primitives.BlockHeader.init();
+    h2.number = 2;
+    h2.parent_hash = b1.hash;
+    h2.timestamp = 2;
+    const b2 = try Block.from(&h2, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b2);
+
+    var out: [256]Hash.Hash = undefined;
+    const hashes = last_256_block_hashes_local(&chain, b2.hash, &out);
+
+    try std.testing.expectEqual(@as(usize, 3), hashes.len);
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hashes[0]);
+    try std.testing.expectEqualSlices(u8, &b1.hash, &hashes[1]);
+    try std.testing.expectEqualSlices(u8, &b2.hash, &hashes[2]);
+}
+
+test "Chain - last_256_block_hashes_local caps result at 256 hashes" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var hashes_by_number: [260]Hash.Hash = undefined;
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    hashes_by_number[0] = genesis.hash;
+
+    var parent_hash = genesis.hash;
+    var i: u64 = 1;
+    while (i < hashes_by_number.len) : (i += 1) {
+        var header = primitives.BlockHeader.init();
+        header.number = i;
+        header.parent_hash = parent_hash;
+        header.timestamp = i;
+        const block = try Block.from(&header, &primitives.BlockBody.init(), allocator);
+        try chain.putBlock(block);
+        hashes_by_number[i] = block.hash;
+        parent_hash = block.hash;
+    }
+
+    var out: [256]Hash.Hash = undefined;
+    const hashes = last_256_block_hashes_local(&chain, hashes_by_number[259], &out);
+
+    try std.testing.expectEqual(@as(usize, 256), hashes.len);
+    try std.testing.expectEqualSlices(u8, &hashes_by_number[4], &hashes[0]);
+    try std.testing.expectEqualSlices(u8, &hashes_by_number[259], &hashes[255]);
 }
 
 test "Chain - ancestor_block_local returns null when start missing" {
