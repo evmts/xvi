@@ -306,31 +306,6 @@ pub fn last_256_block_hashes_local(
     return out[write_start..];
 }
 
-/// Populates EVM `BlockContext.block_hashes` from local chain ancestry.
-///
-/// Semantics:
-/// - Uses local-only ancestry reads via `last_256_block_hashes_local`.
-/// - Writes at most 256 hashes in increasing block-number order.
-/// - Stops on missing ancestry; never fetches from fork cache and never allocates.
-/// - `tip_hash` should be the latest complete block for the execution context.
-pub fn populate_block_context_hashes_local(
-    chain: *Chain,
-    block_context: anytype,
-    tip_hash: Hash.Hash,
-    out: *[256]Hash.Hash,
-) void {
-    comptime {
-        const PtrType = @TypeOf(block_context);
-        const ptr_info = @typeInfo(PtrType);
-        if (ptr_info != .pointer) @compileError("block_context must be a pointer type");
-        const CtxType = ptr_info.pointer.child;
-        if (!@hasField(CtxType, "block_hashes")) {
-            @compileError("block_context type must expose a 'block_hashes' field");
-        }
-    }
-    block_context.block_hashes = last_256_block_hashes_local(chain, tip_hash, out);
-}
-
 /// Returns the ancestor block at `distance` from `start` using local store only.
 ///
 /// Semantics:
@@ -618,10 +593,6 @@ const TestForkchoice = struct {
     pub fn getFinalizedHash(self: *const @This()) ?Hash.Hash {
         return self.finalized;
     }
-};
-
-const TestExecBlockContext = struct {
-    block_hashes: []const Hash.Hash = &[_]Hash.Hash{},
 };
 
 test "Chain - missing blocks return null" {
@@ -1436,78 +1407,6 @@ test "Chain - last_256_block_hashes_local caps result at 256 hashes" {
     try std.testing.expectEqual(@as(usize, 256), hashes.len);
     try std.testing.expectEqualSlices(u8, &hashes_by_number[4], &hashes[0]);
     try std.testing.expectEqualSlices(u8, &hashes_by_number[259], &hashes[255]);
-}
-
-test "Chain - populate_block_context_hashes_local fills canonical ancestry" {
-    const allocator = std.testing.allocator;
-    var chain = try Chain.init(allocator, null);
-    defer chain.deinit();
-
-    const genesis = try Block.genesis(1, allocator);
-    try chain.putBlock(genesis);
-    try chain.setCanonicalHead(genesis.hash);
-
-    var h1 = primitives.BlockHeader.init();
-    h1.number = 1;
-    h1.parent_hash = genesis.hash;
-    h1.timestamp = 1;
-    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
-    try chain.putBlock(b1);
-    try chain.setCanonicalHead(b1.hash);
-
-    var h2 = primitives.BlockHeader.init();
-    h2.number = 2;
-    h2.parent_hash = b1.hash;
-    h2.timestamp = 2;
-    const b2 = try Block.from(&h2, &primitives.BlockBody.init(), allocator);
-    try chain.putBlock(b2);
-    try chain.setCanonicalHead(b2.hash);
-
-    var block_context = TestExecBlockContext{};
-    var out: [256]Hash.Hash = undefined;
-    populate_block_context_hashes_local(&chain, &block_context, b2.hash, &out);
-
-    try std.testing.expectEqual(@as(usize, 3), block_context.block_hashes.len);
-    try std.testing.expectEqualSlices(u8, &genesis.hash, &block_context.block_hashes[0]);
-    try std.testing.expectEqualSlices(u8, &b1.hash, &block_context.block_hashes[1]);
-    try std.testing.expectEqualSlices(u8, &b2.hash, &block_context.block_hashes[2]);
-}
-
-test "Chain - populate_block_context_hashes_local handles short chain" {
-    const allocator = std.testing.allocator;
-    var chain = try Chain.init(allocator, null);
-    defer chain.deinit();
-
-    const genesis = try Block.genesis(1, allocator);
-    try chain.putBlock(genesis);
-    try chain.setCanonicalHead(genesis.hash);
-
-    var block_context = TestExecBlockContext{};
-    var out: [256]Hash.Hash = undefined;
-    populate_block_context_hashes_local(&chain, &block_context, genesis.hash, &out);
-
-    try std.testing.expectEqual(@as(usize, 1), block_context.block_hashes.len);
-    try std.testing.expectEqualSlices(u8, &genesis.hash, &block_context.block_hashes[0]);
-}
-
-test "Chain - populate_block_context_hashes_local stops on missing ancestry" {
-    const allocator = std.testing.allocator;
-    var chain = try Chain.init(allocator, null);
-    defer chain.deinit();
-
-    var orphan_header = primitives.BlockHeader.init();
-    orphan_header.number = 42;
-    orphan_header.parent_hash = [_]u8{0xAB} ** 32;
-    orphan_header.timestamp = 42;
-    const orphan = try Block.from(&orphan_header, &primitives.BlockBody.init(), allocator);
-    try chain.putBlock(orphan);
-
-    var block_context = TestExecBlockContext{};
-    var out: [256]Hash.Hash = undefined;
-    populate_block_context_hashes_local(&chain, &block_context, orphan.hash, &out);
-
-    try std.testing.expectEqual(@as(usize, 1), block_context.block_hashes.len);
-    try std.testing.expectEqualSlices(u8, &orphan.hash, &block_context.block_hashes[0]);
 }
 
 test "Chain - ancestor_block_local returns null when start missing" {
