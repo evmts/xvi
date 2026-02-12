@@ -5,6 +5,7 @@ const std = @import("std");
 
 const pool = @import("pool.zig");
 const accept_result = @import("accept_result.zig");
+const handling_options = @import("handling_options.zig");
 const sorter = @import("sorter.zig");
 const limits = @import("limits.zig");
 const policy = @import("policy.zig");
@@ -16,6 +17,8 @@ pub const TxPool = pool.TxPool;
 pub const TxPoolConfig = pool.TxPoolConfig;
 /// Transaction admission outcome model (Nethermind parity).
 pub const AcceptTxResult = accept_result.AcceptTxResult;
+/// Transaction submission handling flags (Nethermind TxHandlingOptions parity).
+pub const TxHandlingOptions = handling_options.TxHandlingOptions;
 /// Fee market comparator (EIP-1559-aware).
 pub const compare_fee_market_priority = sorter.compare_fee_market_priority;
 /// Broadcast policy helper: base-fee threshold calculator (parity with Nethermind's TxBroadcaster.CalculateBaseFeeThreshold).
