@@ -34,3 +34,6 @@
 [submodule "effect-repo"]
 	path = effect-repo
 	url = https://github.com/Effect-TS/effect
+[submodule "guillotine-mini"]
+	path = guillotine-mini
+	url = https://github.com/evmts/guillotine-mini.git
