@@ -3,6 +3,8 @@
 /// Mirrors core settings from Nethermind's JsonRpcConfig needed for
 /// HTTP and WebSocket transports.
 const std = @import("std");
+const errors = @import("error.zig");
+const scan = @import("scan.zig");
 
 const default_enabled = false;
 const default_host: []const u8 = "127.0.0.1";
@@ -47,6 +49,57 @@ pub const RpcServerConfig = struct {
     }
 };
 
+/// Validate the top-level `jsonrpc` version in a request object.
+///
+/// Returns `null` when the version is exactly `"2.0"`, otherwise returns
+/// an EIP-1474-compatible error code.
+pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErrorCode {
+    var i: usize = 0;
+    // Skip UTF-8 BOM if present.
+    if (request.len >= 3 and request[0] == 0xEF and request[1] == 0xBB and request[2] == 0xBF) {
+        i = 3;
+    }
+    while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
+    if (i >= request.len) return .parse_error;
+
+    const first = request[i];
+    if (first == '[') return .invalid_request;
+    if (first != '{') return .invalid_request;
+
+    const key = "\"jsonrpc\"";
+    const idx_opt = scan.find_top_level_key(request[i..], key);
+    if (idx_opt == null) return .invalid_request;
+
+    var j: usize = i + idx_opt.? + key.len;
+    while (j < request.len and std.ascii.isWhitespace(request[j])) : (j += 1) {}
+    if (j >= request.len or request[j] != ':') return .invalid_request;
+    j += 1;
+
+    while (j < request.len and std.ascii.isWhitespace(request[j])) : (j += 1) {}
+    if (j >= request.len) return .parse_error;
+    if (request[j] != '"') return .invalid_request;
+
+    const start = j + 1;
+    var end = start;
+    var esc = false;
+    while (end < request.len) : (end += 1) {
+        const ch = request[end];
+        if (esc) {
+            esc = false;
+            continue;
+        }
+        if (ch == '\\') {
+            esc = true;
+            continue;
+        }
+        if (ch == '"') break;
+    }
+    if (end >= request.len or request[end] != '"') return .parse_error;
+
+    if (std.mem.eql(u8, request[start..end], "2.0")) return null;
+    return .jsonrpc_version_not_supported;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -82,4 +135,58 @@ test "rpc server config defaults match Nethermind limits" {
     try std.testing.expectEqual(default_max_request_body_size, cfg.max_request_body_size);
     try std.testing.expectEqual(default_max_batch_response_body_size, cfg.max_batch_response_body_size);
     try std.testing.expectEqual(default_strict_hex_format, cfg.strict_hex_format);
+}
+
+test "validate_request_jsonrpc_version accepts 2.0 request objects" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expect(validate_request_jsonrpc_version(req) == null);
+}
+
+test "validate_request_jsonrpc_version rejects missing jsonrpc field" {
+    const req =
+        "{\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version(req).?);
+}
+
+test "validate_request_jsonrpc_version rejects unsupported version" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"1.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
+}
+
+test "validate_request_jsonrpc_version rejects non-string version token" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": 2.0,\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version(req).?);
+}
+
+test "validate_request_jsonrpc_version returns parse_error on unterminated version string" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0,\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
 }

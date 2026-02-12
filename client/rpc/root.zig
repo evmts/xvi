@@ -9,6 +9,8 @@ const eth = @import("eth.zig");
 
 /// JSON-RPC server configuration.
 pub const RpcServerConfig = server.RpcServerConfig;
+/// Top-level JSON-RPC version validator.
+pub const validate_request_jsonrpc_version = server.validate_request_jsonrpc_version;
 /// JSON-RPC error codes per EIP-1474 and Nethermind extensions.
 pub const JsonRpcErrorCode = errors.JsonRpcErrorCode;
 /// JSON-RPC envelope utilities (ID extraction, zero-copy)
