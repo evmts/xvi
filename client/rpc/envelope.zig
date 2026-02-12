@@ -30,7 +30,6 @@ pub const ExtractIdResult = union(enum) {
 /// - Batch (top-level array) is not handled here → `.err = .invalid_request`.
 /// - Missing `id` yields `.id = .null` (error responses must carry `null`).
 /// - `id` must be string, number (integer), or null → otherwise `.err = .invalid_request`.
-/// Extract the JSON-RPC request id as a zero-copy token.
 pub fn extract_request_id(input: []const u8) ExtractIdResult {
     // Skip UTF-8 BOM
     var i: usize = 0;

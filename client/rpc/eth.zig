@@ -38,12 +38,11 @@ pub fn EthApi(comptime Provider: type) type {
 
         provider: *const Provider,
 
-        /// Handle `eth_chainId` and write a full JSON-RPC envelope.
+        /// Handle `eth_chainId` request.
         ///
         /// - Extracts the request `id` allocation-free.
         /// - On success, returns QUANTITY(u64) per EIP-1474.
         /// - On malformed/unsupported envelope, returns an EIP-1474 error with id=null.
-        /// Handle `eth_chainId` request.
         pub fn handle_chain_id(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
             // Keep shapes aligned with Voltaire types for eth_chainId
             const EthMethod = jsonrpc.eth.EthMethod;
