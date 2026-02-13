@@ -11,6 +11,7 @@ const ExchangeCapabilitiesMethod = @FieldType(jsonrpc.engine.EngineMethod, "engi
 const ExchangeTransitionConfigurationV1Method =
     @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeTransitionConfigurationV1");
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
+const NewPayloadV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV2");
 const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
 const GetPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
 const GetPayloadV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV2");
@@ -31,6 +32,8 @@ const ExchangeTransitionConfigurationV1VoltaireParams = @FieldType(ExchangeTrans
 const ExchangeTransitionConfigurationV1VoltaireResult = @FieldType(ExchangeTransitionConfigurationV1Method, "result");
 const NewPayloadV1VoltaireParams = @FieldType(NewPayloadV1Method, "params");
 const NewPayloadV1VoltaireResult = @FieldType(NewPayloadV1Method, "result");
+const NewPayloadV2VoltaireParams = @FieldType(NewPayloadV2Method, "params");
+const NewPayloadV2VoltaireResult = @FieldType(NewPayloadV2Method, "result");
 const ForkchoiceUpdatedV1VoltaireParams = @FieldType(ForkchoiceUpdatedV1Method, "params");
 const ForkchoiceUpdatedV1VoltaireResult = @FieldType(ForkchoiceUpdatedV1Method, "result");
 const GetPayloadV1VoltaireParams = @FieldType(GetPayloadV1Method, "params");
@@ -78,6 +81,14 @@ pub const NewPayloadV1Params = struct {
 pub const NewPayloadV1Result = struct {
     value: voltaire_runtime_type(@FieldType(NewPayloadV1VoltaireResult, "value")),
 };
+/// Parameters for `engine_newPayloadV2` requests.
+pub const NewPayloadV2Params = struct {
+    execution_payload: voltaire_runtime_type(@FieldType(NewPayloadV2VoltaireParams, "execution_payload")),
+};
+/// Result payload for `engine_newPayloadV2` responses.
+pub const NewPayloadV2Result = struct {
+    value: voltaire_runtime_type(@FieldType(NewPayloadV2VoltaireResult, "value")),
+};
 /// Parameters for `engine_forkchoiceUpdatedV1` requests.
 pub const ForkchoiceUpdatedV1Params = struct {
     forkchoice_state: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireParams, "forkchoice_state")),
@@ -108,6 +119,7 @@ fn DispatchResult(comptime Method: type) type {
     if (Method == ExchangeCapabilitiesMethod) return ExchangeCapabilitiesResult;
     if (Method == ExchangeTransitionConfigurationV1Method) return ExchangeTransitionConfigurationV1Result;
     if (Method == NewPayloadV1Method) return NewPayloadV1Result;
+    if (Method == NewPayloadV2Method) return NewPayloadV2Result;
     if (Method == ForkchoiceUpdatedV1Method) return ForkchoiceUpdatedV1Result;
     if (Method == GetPayloadV1Method) return GetPayloadV1Result;
     if (Method == GetPayloadV2Method) return GetPayloadV2Result;
@@ -209,6 +221,11 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: NewPayloadV1Params,
         ) Error!NewPayloadV1Result,
+        /// Validate an incoming execution payload V2.
+        new_payload_v2: *const fn (
+            ptr: *anyopaque,
+            params: NewPayloadV2Params,
+        ) Error!NewPayloadV2Result,
         /// Updates forkchoice state and optionally starts payload building (V1).
         forkchoice_updated_v1: *const fn (
             ptr: *anyopaque,
@@ -276,6 +293,20 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Validates and imports an execution payload V2.
+    ///
+    /// This stage performs request/response shape checks only.
+    /// Full payload semantics are handled by the execution path.
+    pub fn new_payload_v2(
+        self: EngineApi,
+        params: NewPayloadV2Params,
+    ) Error!NewPayloadV2Result {
+        try validate_new_payload_v2_params(params, Error.InvalidParams);
+        const result = try self.vtable.new_payload_v2(self.ptr, params);
+        try validate_new_payload_v2_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Applies a forkchoice update V1 with optional payload attributes.
     ///
     /// This stage performs request/response shape checks only.
@@ -320,7 +351,8 @@ pub const EngineApi = struct {
     ///
     /// Partial coverage: currently handles `engine_exchangeCapabilities`,
     /// `engine_exchangeTransitionConfigurationV1`, `engine_newPayloadV1`,
-    /// `engine_forkchoiceUpdatedV1`, `engine_getPayloadV1`, and `engine_getPayloadV2`.
+    /// `engine_newPayloadV2`, `engine_forkchoiceUpdatedV1`, `engine_getPayloadV1`,
+    /// and `engine_getPayloadV2`.
     /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
@@ -336,6 +368,8 @@ pub const EngineApi = struct {
             return self.exchange_transition_configuration_v1(params);
         } else if (comptime Method == NewPayloadV1Method) {
             return self.new_payload_v1(params);
+        } else if (comptime Method == NewPayloadV2Method) {
+            return self.new_payload_v2(params);
         } else if (comptime Method == ForkchoiceUpdatedV1Method) {
             return self.forkchoice_updated_v1(params);
         } else if (comptime Method == GetPayloadV1Method) {
@@ -484,6 +518,39 @@ fn validate_new_payload_v1_result(
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
     try validate_payload_status_v1_json(result.value.value, invalid_err, is_payload_status_v1_status);
+}
+
+fn validate_new_payload_v2_params(
+    params: NewPayloadV2Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v1_or_v2_json(params.execution_payload.value, invalid_err);
+    try validate_execution_payload_v2_version_gate_json(params.execution_payload.value, invalid_err);
+}
+
+fn validate_new_payload_v2_result(
+    result: NewPayloadV2Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_status_v1_json(
+        result.value.value,
+        invalid_err,
+        is_payload_status_no_invalid_block_hash_status,
+    );
+}
+
+fn validate_execution_payload_v2_version_gate_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    // engine_newPayloadV2 only allows ExecutionPayloadV1 or ExecutionPayloadV2.
+    if (obj.get("blobGasUsed") != null) return invalid_err;
+    if (obj.get("excessBlobGas") != null) return invalid_err;
+    if (obj.get("blockAccessList") != null) return invalid_err;
+    if (obj.get("slotNumber") != null) return invalid_err;
 }
 
 fn validate_forkchoice_updated_v1_params(
@@ -757,6 +824,13 @@ fn is_payload_status_v1_status(status: []const u8) bool {
         std.mem.eql(u8, status, "INVALID_BLOCK_HASH");
 }
 
+fn is_payload_status_no_invalid_block_hash_status(status: []const u8) bool {
+    return std.mem.eql(u8, status, "VALID") or
+        std.mem.eql(u8, status, "INVALID") or
+        std.mem.eql(u8, status, "SYNCING") or
+        std.mem.eql(u8, status, "ACCEPTED");
+}
+
 fn is_restricted_payload_status_v1_status(status: []const u8) bool {
     return std.mem.eql(u8, status, "VALID") or
         std.mem.eql(u8, status, "INVALID") or
@@ -865,6 +939,7 @@ const DummyEngine = struct {
     client_version_result: ClientVersionV1Result = undefined,
     transition_result: ExchangeTransitionConfigurationV1Result = undefined,
     new_payload_result: NewPayloadV1Result = undefined,
+    new_payload_v2_result: NewPayloadV2Result = undefined,
     forkchoice_updated_result: ForkchoiceUpdatedV1Result = undefined,
     get_payload_result: GetPayloadV1Result = undefined,
     get_payload_v2_result: GetPayloadV2Result = undefined,
@@ -872,6 +947,7 @@ const DummyEngine = struct {
     client_version_called: bool = false,
     transition_called: bool = false,
     new_payload_called: bool = false,
+    new_payload_v2_called: bool = false,
     forkchoice_updated_called: bool = false,
     get_payload_called: bool = false,
     get_payload_v2_called: bool = false,
@@ -916,6 +992,16 @@ const DummyEngine = struct {
         return self.new_payload_result;
     }
 
+    fn new_payload_v2(
+        ptr: *anyopaque,
+        params: NewPayloadV2Params,
+    ) EngineApi.Error!NewPayloadV2Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.new_payload_v2_called = true;
+        return self.new_payload_v2_result;
+    }
+
     fn forkchoice_updated_v1(
         ptr: *anyopaque,
         params: ForkchoiceUpdatedV1Params,
@@ -952,6 +1038,7 @@ const dummy_vtable = EngineApi.VTable{
     .get_client_version_v1 = DummyEngine.get_client_version_v1,
     .exchange_transition_configuration_v1 = DummyEngine.exchange_transition_configuration_v1,
     .new_payload_v1 = DummyEngine.new_payload_v1,
+    .new_payload_v2 = DummyEngine.new_payload_v2,
     .forkchoice_updated_v1 = DummyEngine.forkchoice_updated_v1,
     .get_payload_v1 = DummyEngine.get_payload_v1,
     .get_payload_v2 = DummyEngine.get_payload_v2,
@@ -1588,6 +1675,111 @@ test "engine api generic dispatcher routes newPayloadV1" {
     const out = try api.dispatch(NewPayloadV1Method, params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.new_payload_called);
+}
+
+test "engine api dispatches newPayloadV2" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    const params = NewPayloadV2Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_v2_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.new_payload_v2(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_v2_called);
+}
+
+test "engine api rejects newPayloadV2 params with post-Shanghai payload fields" {
+    const alloc = std.testing.allocator;
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    try payload.object.put("blobGasUsed", .{ .string = "0x0" });
+    try payload.object.put("excessBlobGas", .{ .string = "0x0" });
+
+    const params = NewPayloadV2Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+    };
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.new_payload_v2(params));
+    try std.testing.expect(!dummy.new_payload_v2_called);
+}
+
+test "engine api rejects newPayloadV2 response with INVALID_BLOCK_HASH status" {
+    const alloc = std.testing.allocator;
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    const params = NewPayloadV2Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "INVALID_BLOCK_HASH" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+    const bad_result = NewPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_v2_result = bad_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.new_payload_v2(params));
+    try std.testing.expect(dummy.new_payload_v2_called);
+}
+
+test "engine api generic dispatcher routes newPayloadV2" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    const params = NewPayloadV2Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "SYNCING" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_v2_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.dispatch(NewPayloadV2Method, params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_v2_called);
 }
 
 test "engine api dispatches getPayloadV1" {
