@@ -231,25 +231,28 @@ pub fn parent_header_local(
 /// Semantics:
 /// - `distance == 0` returns `start` iff the start block exists locally.
 /// - Walks parent links strictly via local storage; returns null if any
-///   intermediate block is missing or when genesis has no parent.
+///   intermediate block is missing, parent-number continuity is malformed, or
+///   when genesis has no parent.
 /// - Never consults fork caches; performs no allocations.
 fn ancestor_hash_local(
     chain: *Chain,
     start: Hash.Hash,
     distance: u64,
 ) ?Hash.Hash {
-    if (distance == 0) {
-        return if (get_block_local(chain, start) != null) start else null;
-    }
-    var current = start;
+    var current_block = get_block_local(chain, start) orelse return null;
+    if (distance == 0) return current_block.hash;
+
     var i: u64 = 0;
     while (i < distance) : (i += 1) {
-        const blk = get_block_local(chain, current) orelse return null;
-        if (blk.header.number == 0) return null; // genesis has no parent
-        current = blk.header.parent_hash;
+        if (current_block.header.number == 0) return null; // genesis has no parent
+
+        const parent_hash = current_block.header.parent_hash;
+        const parent_block = get_block_local(chain, parent_hash) orelse return null;
+        if (parent_block.header.number != current_block.header.number - 1) return null;
+
+        current_block = parent_block;
     }
-    // Ensure the final ancestor exists locally as well.
-    return if (get_block_local(chain, current) != null) current else null;
+    return current_block.hash;
 }
 
 /// Returns the `BLOCKHASH` value for `number` relative to `current_hash`.
@@ -259,7 +262,7 @@ fn ancestor_hash_local(
 /// - Only the previous 256 blocks are addressable (`depth` in `1..=256`).
 /// - Uses local storage only; never fetches from fork cache and never allocates.
 /// - Returns `null` when the current block is missing locally or ancestry is
-///   incomplete in local storage.
+///   incomplete/malformed in local storage.
 pub fn block_hash_by_number_local(
     chain: *Chain,
     current_hash: Hash.Hash,
@@ -284,11 +287,12 @@ pub fn block_hash_by_number_local(
 ///   context (typically parent hash while executing the next block).
 /// - Returns hashes ordered by increasing block number (oldest -> newest).
 /// - Includes `tip_hash` as the last element when present.
-/// - Fails closed with a typed error when in-range ancestry is missing.
+/// - Fails closed with a typed error when in-range ancestry is missing or malformed.
 /// - Never consults fork cache and performs no allocations.
 pub const RecentBlockHashesError = error{
     MissingTipBlock,
     MissingAncestorBlock,
+    MalformedAncestorBlock,
 };
 
 pub fn last_256_block_hashes_local(
@@ -314,8 +318,10 @@ pub fn last_256_block_hashes_local(
         if (written + 1 == expected_len) break;
         if (cursor_block.header.number == 0) return error.MissingAncestorBlock;
 
+        const expected_parent_number = cursor_block.header.number - 1;
         cursor_hash = cursor_block.header.parent_hash;
         cursor_block = get_block_local(chain, cursor_hash) orelse return error.MissingAncestorBlock;
+        if (cursor_block.header.number != expected_parent_number) return error.MalformedAncestorBlock;
     }
 
     return out[write_start..];
@@ -1519,6 +1525,25 @@ test "Chain - block_hash_by_number_local returns null when ancestry missing loca
     try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 299) == null);
 }
 
+test "Chain - block_hash_by_number_local returns null for malformed parent-number continuity" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    // Malformed child: #2 points directly to #0.
+    var hdr = primitives.BlockHeader.init();
+    hdr.number = 2;
+    hdr.parent_hash = genesis.hash;
+    hdr.timestamp = 2;
+    const malformed = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(malformed);
+
+    try std.testing.expect(block_hash_by_number_local(&chain, malformed.hash, 1) == null);
+}
+
 test "Chain - last_256_block_hashes_local returns MissingTipBlock when tip missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -1604,4 +1629,23 @@ test "Chain - last_256_block_hashes_local returns MissingAncestorBlock when ance
 
     var out: [256]Hash.Hash = undefined;
     try std.testing.expectError(error.MissingAncestorBlock, last_256_block_hashes_local(&chain, orphan.hash, &out));
+}
+
+test "Chain - last_256_block_hashes_local returns MalformedAncestorBlock on non-contiguous ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    var header = primitives.BlockHeader.init();
+    header.number = 2;
+    header.parent_hash = genesis.hash;
+    header.timestamp = 2;
+    const malformed = try Block.from(&header, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(malformed);
+
+    var out: [256]Hash.Hash = undefined;
+    try std.testing.expectError(error.MalformedAncestorBlock, last_256_block_hashes_local(&chain, malformed.hash, &out));
 }
