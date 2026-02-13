@@ -1,85 +1,84 @@
-# [pass 1/5] phase-5-txpool (Transaction Pool) - Context
+# Context - [pass 1/5] phase-5-txpool (Transaction Pool)
+
+Focused implementation context for txpool work in Zig using Voltaire primitives and the existing guillotine-mini EVM boundary.
 
 ## Phase Goal (`prd/GUILLOTINE_CLIENT_PLAN.md`)
-- Phase 5 goal: implement pending transaction pool behavior.
-- Planned units:
-  - `client/txpool/pool.zig` (admission, storage, replacement, eviction)
-  - `client/txpool/sorter.zig` (ordering by effective tip/fee policy)
-- Structural reference: `nethermind/src/Nethermind/Nethermind.TxPool/`.
+
+- Phase: `phase-5-txpool`
+- Goal: implement pending transaction pool behavior.
+- Planned code units:
+- `client/txpool/pool.zig`
+- `client/txpool/sorter.zig`
+- Architecture reference:
+- `nethermind/src/Nethermind/Nethermind.TxPool/`
 
 ## Relevant Specs (`prd/ETHEREUM_SPECS_REFERENCE.md`)
-Phase 5 explicitly maps to:
+
+Phase 5 maps directly to:
 - EIP-1559 (fee market)
 - EIP-2930 (access lists)
 - EIP-4844 (blob transactions)
 
-### Concrete spec files read for txpool rules
+### execution-specs files read (authoritative tx behavior)
+
 - `execution-specs/src/ethereum/forks/london/transactions.py`
-  - Type-0/1/2 transaction models, intrinsic gas, sender recovery, signing hashes.
+- Covers legacy, type-1, and type-2 transaction models and validation (`validate_transaction`, intrinsic gas, sender recovery, signing hashes).
 - `execution-specs/src/ethereum/forks/cancun/transactions.py`
-  - Adds type-3 blob transactions and blob-fee related transaction validation.
-- `execution-specs/src/ethereum/forks/prague/transactions.py`
-  - Adds newer typed tx handling (including type-4 set-code transaction), useful for forward-compatible txpool type dispatch.
-- `execution-specs/src/ethereum/forks/london/fork.py`
-  - Inclusion-time checks: sender nonce matching, balance checks, tx processing flow.
-- `execution-specs/src/ethereum/forks/cancun/fork.py`
-  - Inclusion-time blob constraints and post-Cancun transaction validity hooks.
-- `execution-specs/src/ethereum/forks/prague/fork.py`
-  - Latest fork-level checks, including tx validation call structure.
+- Adds blob transaction model (`BlobTransaction` / type-3), `max_fee_per_blob_gas`, `blob_versioned_hashes`, and updated validation paths.
 
-### EIP files read for txpool admission semantics
-- `EIPs/EIPS/eip-2718.md`
-  - Typed transaction envelope and tx type byte space.
-- `EIPs/EIPS/eip-155.md`
-  - Legacy replay protection and signature `v` rules.
-- `EIPs/EIPS/eip-2930.md`
-  - Access list transaction format and intrinsic/access-list gas costs.
+### EIP files read (normative transaction rules)
+
 - `EIPs/EIPS/eip-1559.md`
-  - Dynamic fee tx format and `max_fee_per_gas` / `max_priority_fee_per_gas` constraints.
+- Type-2 payload, effective fee semantics, base fee constraints at inclusion time.
+- `EIPs/EIPS/eip-2930.md`
+- Type-1 payload, access-list shape checks, and intrinsic access-list gas costs (2400/address, 1900/storage key).
 - `EIPs/EIPS/eip-4844.md`
-  - Blob tx format, blob fee constraints, and pooled network representation requirements.
-- `EIPs/EIPS/eip-3607.md`
-  - Reject transactions whose sender has deployed code (EOA-only sender rule).
+- Type-3 payload, non-nil `to` requirement for blob txs, blob-fee market and blob validity constraints.
 
-### devp2p files read for txpool gossip protocol
+### devp2p file read (tx gossip wire protocol)
+
 - `devp2p/caps/eth.md`
-  - Transaction exchange lifecycle and messages:
-    - `Transactions (0x02)`
-    - `NewPooledTransactionHashes (0x08)`
-    - `GetPooledTransactions (0x09)`
-    - `PooledTransactions (0x0a)`
-  - Rules for unknown tx types, peer behavior, and announcement/request flow.
+- Transaction pool message set:
+- `Transactions (0x02)`
+- `NewPooledTransactionHashes (0x08)`
+- `GetPooledTransactions (0x09)`
+- `PooledTransactions (0x0a)`
+- Behavioral constraints relevant to txpool implementation:
+- do not resend same tx to same peer in a session
+- preserve requested hash order in `PooledTransactions`
+- empty `Transactions` payload is discouraged
 
-## Nethermind DB Listing (`nethermind/src/Nethermind/Nethermind.Db/`)
-Directory inventory captured; key files for architecture boundaries:
+## Nethermind DB Listing (requested inventory)
+
+Listed directory:
+- `nethermind/src/Nethermind/Nethermind.Db/`
+
+Key files to keep in mind for storage layering patterns:
 - `IDb.cs`
-  - Base DB interface (KV access, iterators, metadata hooks).
 - `IDbProvider.cs`
-  - Named DB access surface (`state`, `code`, `receipts`, `blobTransactions`, etc.).
 - `DbProvider.cs`
-  - DI-backed resolver for named DB instances.
 - `DbNames.cs`
-  - Canonical DB name constants.
 - `IColumnsDb.cs`
-  - Column-family abstraction used by receipts/blob tx storage.
-- `BlobTxsColumns.cs`, `ReceiptsColumns.cs`
-  - Column identifiers relevant to transaction/receipt persistence.
-- `MemDb.cs`, `MemColumnsDb.cs`, `InMemoryWriteBatch.cs`
-  - In-memory/testing DB implementations.
-- `RocksDbSettings.cs`, `CompressingDb.cs`
-  - Persistent DB configuration and implementation concerns.
+- `BlobTxsColumns.cs`
+- `ReceiptsColumns.cs`
+- `InMemoryWriteBatch.cs`
+- `MemDb.cs`
+- `MemColumnsDb.cs`
+- `ReadOnlyDb.cs`
+- `ReadOnlyDbProvider.cs`
+- `RocksDbSettings.cs`
+- `CompressingDb.cs`
 
-Additional phase structure reference (not required listing step but relevant):
+Txpool structure references (phase-specific):
 - `nethermind/src/Nethermind/Nethermind.TxPool/ITxPool.cs`
 - `nethermind/src/Nethermind/Nethermind.TxPool/TxPool.cs`
 - `nethermind/src/Nethermind/Nethermind.TxPool/TxPoolConfig.cs`
-- `nethermind/src/Nethermind/Nethermind.TxPool/ITxValidator.cs`
 - `nethermind/src/Nethermind/Nethermind.TxPool/NonceManager.cs`
 - `nethermind/src/Nethermind/Nethermind.TxPool/TxBroadcaster.cs`
-- `nethermind/src/Nethermind/Nethermind.TxPool/ITxGossipPolicy.cs`
-- `nethermind/src/Nethermind/Nethermind.TxPool/SpecDrivenTxGossipPolicy.cs`
+- `nethermind/src/Nethermind/Nethermind.TxPool/ITxValidator.cs`
 
 ## Voltaire APIs (`/Users/williamcory/voltaire/packages/voltaire-zig/src/`)
+
 Top-level modules listed:
 - `blockchain/`
 - `crypto/`
@@ -89,45 +88,49 @@ Top-level modules listed:
 - `primitives/`
 - `state-manager/`
 
-Primary txpool-relevant APIs to use (no custom duplicate types):
-- `Primitives.Transaction`
-  - Canonical transaction types and typed transaction encoding/signing helpers.
-- `Primitives.AccessList`
-  - Access-list data model (EIP-2930).
-- `Primitives.FeeMarket`
-  - EIP-1559 base-fee/effective-fee calculations.
-- `Primitives.Nonce`
-  - Nonce primitive wrapper.
-- `Primitives.TransactionHash`
-  - Transaction hash type.
-- `Primitives.Address`
-  - Address primitive.
-- `Primitives.Hash`
-  - Hash primitive.
-- `Primitives.Blob`
-  - Blob transaction related types.
-- `Primitives.Rlp`
-  - Canonical transaction encoding/decoding.
-- `Primitives.PendingTransactionFilter`
-  - Pending tx filter primitive for RPC integration.
-- `blockchain/Blockchain.zig`
-  - Chain context access for fee/nonce policy and canonical head integration.
+Txpool-relevant primitive exports from `.../primitives/root.zig`:
+- `primitives.Transaction`
+- `primitives.AccessList`
+- `primitives.FeeMarket`
+- `primitives.Nonce`
+- `primitives.TransactionHash`
+- `primitives.Address`
+- `primitives.Hash`
+- `primitives.Blob`
+- `primitives.Rlp`
+- `primitives.Signature`
+- `primitives.Gas`
+- `primitives.GasPrice`
+- `primitives.BaseFeePerGas`
+- `primitives.MaxFeePerGas`
+- `primitives.MaxPriorityFeePerGas`
+- `primitives.PendingTransactionFilter`
 
-## Existing EVM Host Interface
-Requested path `src/host.zig` is not present at repo root.
-Active host interface file:
+Concrete Voltaire files read:
+- `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/Transaction/Transaction.zig`
+- `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/AccessList/access_list.zig`
+- `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/FeeMarket/fee_market.zig`
+
+Rule for this phase: use these Voltaire primitives directly; do not add custom duplicate transaction or fee wrapper types.
+
+## Existing Host Interface
+
+Requested path `src/host.zig` does not exist at repository root.
+
+Actual host interface file:
 - `guillotine-mini/src/host.zig`
 
-`HostInterface` shape (vtable-backed):
+`HostInterface` (vtable/DI pattern) methods:
 - `getBalance` / `setBalance`
 - `getCode` / `setCode`
 - `getStorage` / `setStorage`
 - `getNonce` / `setNonce`
 
-Implication for phase 5: txpool validation should consume canonical account state through existing host/state plumbing and reuse existing guillotine-mini execution path rather than reimplementing VM behavior.
+Implication: txpool validation should query canonical account state via existing host/state plumbing and reuse guillotine-mini execution behavior, not reimplement EVM behavior.
 
-## ethereum-tests Directory Listing (fixture paths)
-Top-level test directories present:
+## Ethereum Test Fixture Paths
+
+Directory families listed under `ethereum-tests/`:
 - `ethereum-tests/ABITests`
 - `ethereum-tests/BasicTests`
 - `ethereum-tests/BlockchainTests`
@@ -141,13 +144,11 @@ Top-level test directories present:
 - `ethereum-tests/TransactionTests`
 - `ethereum-tests/TrieTests`
 
-Txpool-focused fixture paths to prioritize:
+Txpool-focused fixture paths:
 - `ethereum-tests/TransactionTests/ttAddress`
 - `ethereum-tests/TransactionTests/ttData`
 - `ethereum-tests/TransactionTests/ttEIP1559`
-- `ethereum-tests/TransactionTests/ttEIP2028`
 - `ethereum-tests/TransactionTests/ttEIP2930`
-- `ethereum-tests/TransactionTests/ttEIP3860`
 - `ethereum-tests/TransactionTests/ttGasLimit`
 - `ethereum-tests/TransactionTests/ttGasPrice`
 - `ethereum-tests/TransactionTests/ttNonce`
@@ -157,9 +158,12 @@ Txpool-focused fixture paths to prioritize:
 - `ethereum-tests/TransactionTests/ttValue`
 - `ethereum-tests/TransactionTests/ttWrongRLP`
 - `ethereum-tests/RLPTests/RandomRLPTests`
+- `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP1559`
+- `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP4844-blobtransactions`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/bcEIP1559`
 
-## Implementation Notes for Next Pass
-- Keep txpool validation fork-aware and type-aware (legacy + typed txs).
-- Encode/decode and signature checks should be anchored to Voltaire primitives and execution-spec behavior.
-- Gossip behavior must match `devp2p/caps/eth.md` tx exchange semantics.
-- Follow Nethermind module boundaries conceptually, but implement with Zig idioms and comptime-friendly composition.
+## Implementation Notes for Next Step
+
+- Keep admission and replacement logic fork-aware and transaction-type aware (legacy/type-1/type-2/type-3).
+- Match execution-spec validation boundaries for txpool checks and devp2p gossip semantics.
+- Follow Nethermind module boundaries conceptually, but keep Zig idiomatic with small, testable, DI-friendly units.
