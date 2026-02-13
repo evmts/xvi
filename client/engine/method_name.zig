@@ -10,7 +10,7 @@ const std = @import("std");
 pub fn is_valid_advertisable_engine_method_name(name: []const u8) bool {
     if (!std.mem.startsWith(u8, name, "engine_")) return false;
     if (std.mem.eql(u8, name, "engine_exchangeCapabilities")) return false;
-    return hasVersionSuffix(name);
+    return has_version_suffix(name);
 }
 
 /// Return true iff `name` belongs to the `engine_` namespace and carries a
@@ -19,11 +19,11 @@ pub fn is_valid_advertisable_engine_method_name(name: []const u8) bool {
 /// `engine_exchangeCapabilities`. Use for validating consensus requests.
 pub fn is_engine_versioned_method_name(name: []const u8) bool {
     if (!std.mem.startsWith(u8, name, "engine_")) return false;
-    return hasVersionSuffix(name);
+    return has_version_suffix(name);
 }
 
 /// Check for a trailing `V<digits>` suffix.
-fn hasVersionSuffix(name: []const u8) bool {
+fn has_version_suffix(name: []const u8) bool {
     if (name.len < 2) return false;
 
     var i: usize = name.len;
