@@ -40,6 +40,8 @@ pub const last_256_block_hashes_local = chain.last_256_block_hashes_local;
 pub const common_ancestor_hash_local = chain.common_ancestor_hash_local;
 /// Local-only canonical divergence check between current head and candidate head.
 pub const has_canonical_divergence_local = chain.has_canonical_divergence_local;
+/// Local-only reorg depth from canonical head to candidate common ancestor.
+pub const canonical_reorg_depth_local = chain.canonical_reorg_depth_local;
 /// Generic comptime DI helpers for head reads.
 pub const head_hash_of = chain.head_hash_of;
 pub const head_block_of = chain.head_block_of;

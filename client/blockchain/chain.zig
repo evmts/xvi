@@ -417,6 +417,30 @@ pub fn has_canonical_divergence_local(
     return true;
 }
 
+/// Returns local-only reorg depth from canonical head to common ancestor.
+///
+/// Semantics:
+/// - Uses local store only and never fetches from fork cache.
+/// - Returns `null` when canonical head snapshot is unavailable, candidate is
+///   missing locally, or no local common ancestor can be established.
+/// - Returns `0` when candidate equals canonical head or extends canonical
+///   head (ancestor is canonical head).
+/// - Otherwise returns `canonical_head.number - ancestor.number`, i.e. the
+///   number of canonical blocks that would be rolled back if candidate became
+///   canonical.
+pub fn canonical_reorg_depth_local(
+    chain: *Chain,
+    candidate_head: Hash.Hash,
+) ?u64 {
+    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return null;
+    const canonical_head_block = get_block_local(chain, canonical_head) orelse return null;
+    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return null;
+    const ancestor_block = get_block_local(chain, ancestor) orelse return null;
+
+    if (ancestor_block.header.number > canonical_head_block.header.number) return null;
+    return canonical_head_block.header.number - ancestor_block.header.number;
+}
+
 test "Chain - common_ancestor_hash_local returns null when either missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -649,6 +673,141 @@ test "Chain - has_canonical_divergence_local returns false when ancestry missing
     try chain.putBlock(orphan);
 
     try std.testing.expect(!has_canonical_divergence_local(&chain, orphan.hash));
+}
+
+test "Chain - canonical_reorg_depth_local returns null for empty canonical chain" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expect(canonical_reorg_depth_local(&chain, Hash.ZERO) == null);
+}
+
+test "Chain - canonical_reorg_depth_local returns zero for canonical head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    try std.testing.expectEqual(@as(u64, 0), canonical_reorg_depth_local(&chain, genesis.hash) orelse return error.Unreachable);
+}
+
+test "Chain - canonical_reorg_depth_local returns zero when candidate extends canonical head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    try std.testing.expectEqual(@as(u64, 0), canonical_reorg_depth_local(&chain, b1.hash) orelse return error.Unreachable);
+}
+
+test "Chain - canonical_reorg_depth_local returns one for sibling fork at height one" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1a = primitives.BlockHeader.init();
+    h1a.number = 1;
+    h1a.parent_hash = genesis.hash;
+    h1a.timestamp = 1;
+    const b1a = try Block.from(&h1a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1a);
+    try chain.setCanonicalHead(b1a.hash);
+
+    var h1b = primitives.BlockHeader.init();
+    h1b.number = 1;
+    h1b.parent_hash = genesis.hash;
+    h1b.timestamp = 2;
+    const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1b);
+
+    try std.testing.expectEqual(@as(u64, 1), canonical_reorg_depth_local(&chain, b1b.hash) orelse return error.Unreachable);
+}
+
+test "Chain - canonical_reorg_depth_local returns rollback depth for deeper fork" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1a = primitives.BlockHeader.init();
+    h1a.number = 1;
+    h1a.parent_hash = genesis.hash;
+    h1a.timestamp = 1;
+    const b1a = try Block.from(&h1a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1a);
+    try chain.setCanonicalHead(b1a.hash);
+
+    var h2a = primitives.BlockHeader.init();
+    h2a.number = 2;
+    h2a.parent_hash = b1a.hash;
+    h2a.timestamp = 2;
+    const b2a = try Block.from(&h2a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b2a);
+    try chain.setCanonicalHead(b2a.hash);
+
+    var h3a = primitives.BlockHeader.init();
+    h3a.number = 3;
+    h3a.parent_hash = b2a.hash;
+    h3a.timestamp = 3;
+    const b3a = try Block.from(&h3a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b3a);
+    try chain.setCanonicalHead(b3a.hash);
+
+    var h2b = primitives.BlockHeader.init();
+    h2b.number = 2;
+    h2b.parent_hash = b1a.hash;
+    h2b.timestamp = 4;
+    const b2b = try Block.from(&h2b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b2b);
+
+    var h3b = primitives.BlockHeader.init();
+    h3b.number = 3;
+    h3b.parent_hash = b2b.hash;
+    h3b.timestamp = 5;
+    const b3b = try Block.from(&h3b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b3b);
+
+    try std.testing.expectEqual(@as(u64, 2), canonical_reorg_depth_local(&chain, b3b.hash) orelse return error.Unreachable);
+}
+
+test "Chain - canonical_reorg_depth_local returns null when ancestry missing locally" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var orphan_h = primitives.BlockHeader.init();
+    orphan_h.number = 9;
+    orphan_h.parent_hash = [_]u8{0x44} ** 32;
+    orphan_h.timestamp = 9;
+    const orphan = try Block.from(&orphan_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(orphan);
+
+    try std.testing.expect(canonical_reorg_depth_local(&chain, orphan.hash) == null);
 }
 
 /// Generic, comptime-injected head hash reader for any chain-like type.
