@@ -10,6 +10,10 @@ pub const BlockSize: u16 = 16;
 pub const ProtocolMaxFrameSize: u24 = 0xFF_FF_FF;
 /// Default fragmentation target for outbound frames; not a hard inbound limit.
 pub const DefaultMaxFrameSize: u16 = BlockSize * 64;
+/// Public, stable error set for frame helpers to avoid error-set widening.
+pub const FrameError = error{
+    InvalidFrameSize,
+};
 
 /// Returns the zero-fill padding required to align to the AES block size.
 pub inline fn calculate_padding(size: usize) usize {
@@ -33,10 +37,6 @@ pub inline fn decode_frame_size_24(bytes: [3]u8) usize {
     const v: u24 = std.mem.readInt(u24, &bytes, .big);
     return @as(usize, @intCast(v));
 }
-
-// NOTE(rlpx): Integration test plan — Add a header/decoder-level test ensuring
-// nodes reject any incoming frame with size > u24::max prior to decryption or
-// allocation. This hardens invariants and prevents resource waste. (Future work.)
 
 test "calculate padding returns zero for aligned sizes" {
     try std.testing.expectEqual(@as(usize, 0), calculate_padding(0));
@@ -88,7 +88,3 @@ test "decode_frame_size_24: roundtrips representative values" {
         try std.testing.expectEqual(v, dec);
     }
 }
-/// Public, stable error set for frame helpers to avoid error-set widening.
-pub const FrameError = error{
-    InvalidFrameSize,
-};

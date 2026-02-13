@@ -11,6 +11,7 @@ pub fn MacStatesFor(comptime Hasher: type) type {
 
 /// Default MAC states use Keccak256 as per RLPx.
 pub const MacStates = MacStatesFor(crypto.Keccak256);
+/// Error set for auth/ack framing validation during MAC seeding.
 pub const MacSeedError = error{ InvalidAuthPrefix, InvalidAckPrefix, InvalidAuthSize, InvalidAckSize };
 
 /// Initialize MAC states for an arbitrary `Hasher` (DI-friendly).
