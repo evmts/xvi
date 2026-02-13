@@ -1,0 +1,664 @@
+/// Sync manager startup planner (Nethermind Synchronizer.Start parity).
+///
+/// This module captures the startup feed activation rules from Nethermind's
+/// `Synchronizer.Start*` methods as a small, allocation-free function.
+const std = @import("std");
+
+/// Subset of sync configuration used to decide which feeds are started.
+pub const SyncManagerStartConfig = struct {
+    /// Global networking enable switch.
+    networking_enabled: bool = true,
+    /// Synchronization enable switch (effective only when networking is enabled).
+    synchronization_enabled: bool = true,
+    /// Enable fast-sync stages.
+    fast_sync: bool = false,
+    /// Enable snap sync stage.
+    snap_sync: bool = false,
+    /// Enable fast header download stage.
+    download_headers_in_fast_sync: bool = true,
+    /// Enable fast block body download stage.
+    download_bodies_in_fast_sync: bool = true,
+    /// Enable fast receipts download stage.
+    download_receipts_in_fast_sync: bool = true,
+    /// Install process-exit watcher once sync reaches terminal state.
+    exit_on_synced: bool = false,
+    /// Exit watcher delay in seconds.
+    exit_on_synced_wait_time_sec: u32 = 60,
+    /// Trigger GC hook when feed completion modes are observed.
+    gc_on_feed_finished: bool = true,
+};
+
+/// Startup feed bit flags produced by `startup_feed_mask`.
+pub const SyncStartupFeed = struct {
+    pub const none: u32 = 0;
+    pub const full: u32 = 1 << 0;
+    pub const fast_blocks: u32 = 1 << 1;
+    pub const fast_state: u32 = 1 << 2;
+    pub const snap: u32 = 1 << 3;
+    pub const fast_headers: u32 = 1 << 4;
+    pub const fast_bodies: u32 = 1 << 5;
+    pub const fast_receipts: u32 = 1 << 6;
+};
+
+/// Optional lifecycle wiring hooks for `SyncManager.start`.
+///
+/// These hooks map to Nethermind `Synchronizer.Start` responsibilities after
+/// feed dispatch startup:
+/// - `watch_for_exit` (`ExitOnSynced`)
+/// - `wire_mode_selector`
+/// - `wire_sync_report`
+/// - `wire_gc_on_feed_finished` (optional by config)
+/// - `update_mode_selector`
+pub const SyncManagerLifecycle = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const Error = error{
+        WatchForExitFailed,
+        WireModeSelectorFailed,
+        WireSyncReportFailed,
+        WireGcOnFeedFinishedFailed,
+        UpdateModeSelectorFailed,
+    };
+
+    pub const VTable = struct {
+        watch_for_exit: ?*const fn (ptr: *anyopaque, wait_time_sec: u32) Error!void = null,
+        wire_mode_selector: ?*const fn (ptr: *anyopaque) Error!void = null,
+        wire_sync_report: ?*const fn (ptr: *anyopaque) Error!void = null,
+        wire_gc_on_feed_finished: ?*const fn (ptr: *anyopaque) Error!void = null,
+        update_mode_selector: ?*const fn (ptr: *anyopaque) Error!void = null,
+    };
+
+    pub fn watch_for_exit(self: SyncManagerLifecycle, wait_time_sec: u32) Error!void {
+        const call = self.vtable.watch_for_exit orelse return;
+        try call(self.ptr, wait_time_sec);
+    }
+
+    pub fn wire_mode_selector(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_mode_selector orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn wire_sync_report(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_sync_report orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn wire_gc_on_feed_finished(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_gc_on_feed_finished orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn update_mode_selector(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.update_mode_selector orelse return;
+        try call(self.ptr);
+    }
+};
+
+/// Compute the feed startup plan from sync configuration.
+///
+/// Mirrors Nethermind `Synchronizer.Start*`:
+/// - If synchronization is disabled: start nothing.
+/// - Always start full feed when synchronization is enabled.
+/// - If fast-sync or snap-sync is enabled: start fast blocks feed + state feed.
+/// - If snap-sync is enabled: start snap feed.
+/// - Fast headers always start under fast-sync.
+/// - Fast bodies/receipts start only when `download_headers_in_fast_sync`.
+pub fn startup_feed_mask(config: SyncManagerStartConfig) u32 {
+    if (!(config.networking_enabled and config.synchronization_enabled)) return SyncStartupFeed.none;
+
+    var mask: u32 = SyncStartupFeed.full;
+    const fast_sync_enabled = config.fast_sync or config.snap_sync;
+    if (!fast_sync_enabled) return mask;
+
+    mask |= SyncStartupFeed.fast_blocks | SyncStartupFeed.fast_state | SyncStartupFeed.fast_headers;
+
+    if (config.snap_sync) {
+        mask |= SyncStartupFeed.snap;
+    }
+
+    if (config.download_headers_in_fast_sync) {
+        if (config.download_bodies_in_fast_sync) {
+            mask |= SyncStartupFeed.fast_bodies;
+        }
+        if (config.download_receipts_in_fast_sync) {
+            mask |= SyncStartupFeed.fast_receipts;
+        }
+    }
+
+    return mask;
+}
+
+fn has_flag(mask: u32, flag: u32) bool {
+    return (mask & flag) != 0;
+}
+
+/// Comptime-injected sync manager coordinator.
+///
+/// `Feeds` must be a struct containing these fields:
+/// - `full`
+/// - `fast_blocks`
+/// - `fast_state`
+/// - `snap`
+/// - `fast_headers`
+/// - `fast_bodies`
+/// - `fast_receipts`
+///
+/// Every feed field type must expose:
+/// - `pub fn start(self: *Feed) void` OR
+/// - `pub fn start(self: *Feed) !void`
+///
+/// Startup ordering mirrors Nethermind `Synchronizer.Start*` flow:
+/// `full -> headers -> bodies -> receipts -> fast_blocks -> snap -> state`,
+/// then `ExitOnSynced/watch` -> selector/report/gc wiring -> selector update.
+pub fn SyncManager(comptime Feeds: type) type {
+    comptime validate_feeds_type(Feeds);
+
+    return struct {
+        const Self = @This();
+        const StartError = feed_start_error_set(@FieldType(Feeds, "full")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_blocks")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_state")) ||
+            feed_start_error_set(@FieldType(Feeds, "snap")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_headers")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_bodies")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_receipts")) ||
+            SyncManagerLifecycle.Error;
+
+        config: SyncManagerStartConfig,
+        feeds: *Feeds,
+        lifecycle: ?SyncManagerLifecycle = null,
+
+        /// Start all enabled sync feeds and return the computed startup mask.
+        ///
+        /// Any feed start failure is returned to the caller; no errors are
+        /// swallowed, and later feeds are not started after a failure.
+        pub fn start(self: *Self) StartError!u32 {
+            const mask = startup_feed_mask(self.config);
+
+            try start_feed_if_enabled(mask, SyncStartupFeed.full, &self.feeds.full);
+            try start_feed_if_enabled(mask, SyncStartupFeed.fast_headers, &self.feeds.fast_headers);
+            try start_feed_if_enabled(mask, SyncStartupFeed.fast_bodies, &self.feeds.fast_bodies);
+            try start_feed_if_enabled(mask, SyncStartupFeed.fast_receipts, &self.feeds.fast_receipts);
+            try start_feed_if_enabled(mask, SyncStartupFeed.fast_blocks, &self.feeds.fast_blocks);
+            try start_feed_if_enabled(mask, SyncStartupFeed.snap, &self.feeds.snap);
+            try start_feed_if_enabled(mask, SyncStartupFeed.fast_state, &self.feeds.fast_state);
+
+            try self.start_lifecycle_hooks();
+            return mask;
+        }
+
+        fn start_lifecycle_hooks(self: *Self) SyncManagerLifecycle.Error!void {
+            const lifecycle = self.lifecycle orelse return;
+
+            if (self.config.exit_on_synced) {
+                try lifecycle.watch_for_exit(self.config.exit_on_synced_wait_time_sec);
+            }
+
+            try lifecycle.wire_mode_selector();
+            try lifecycle.wire_sync_report();
+
+            if (self.config.gc_on_feed_finished) {
+                try lifecycle.wire_gc_on_feed_finished();
+            }
+
+            try lifecycle.update_mode_selector();
+        }
+    };
+}
+
+fn validate_feeds_type(comptime Feeds: type) void {
+    const feeds_info = @typeInfo(Feeds);
+    if (feeds_info != .@"struct") {
+        @compileError("SyncManager Feeds must be a struct type");
+    }
+
+    require_feed_field(Feeds, "full");
+    require_feed_field(Feeds, "fast_blocks");
+    require_feed_field(Feeds, "fast_state");
+    require_feed_field(Feeds, "snap");
+    require_feed_field(Feeds, "fast_headers");
+    require_feed_field(Feeds, "fast_bodies");
+    require_feed_field(Feeds, "fast_receipts");
+}
+
+fn require_feed_field(comptime Feeds: type, comptime field_name: []const u8) void {
+    if (!@hasField(Feeds, field_name)) {
+        @compileError("SyncManager Feeds is missing required field '" ++ field_name ++ "'");
+    }
+    const Feed = @FieldType(Feeds, field_name);
+    require_feed_start_signature(Feed, field_name);
+}
+
+fn require_feed_start_signature(comptime Feed: type, comptime field_name: []const u8) void {
+    if (!@hasDecl(Feed, "start")) {
+        @compileError("SyncManager feed '" ++ field_name ++ "' must define start(self: *Feed) !void (or void)");
+    }
+
+    const fn_info = @typeInfo(@TypeOf(Feed.start));
+    if (fn_info != .@"fn") {
+        @compileError("SyncManager feed '" ++ field_name ++ "' start must be a function");
+    }
+
+    const start_fn = fn_info.@"fn";
+    if (start_fn.params.len != 1 or start_fn.params[0].type == null) {
+        @compileError("SyncManager feed '" ++ field_name ++ "' start must take one self pointer parameter");
+    }
+
+    const self_type = start_fn.params[0].type.?;
+    const self_info = @typeInfo(self_type);
+    if (self_info != .pointer or self_info.pointer.child != Feed) {
+        @compileError("SyncManager feed '" ++ field_name ++ "' start(self: *Feed) has invalid self type");
+    }
+
+    const ret = start_fn.return_type orelse {
+        @compileError("SyncManager feed '" ++ field_name ++ "' start must return void or !void");
+    };
+
+    if (ret == void) return;
+
+    const ret_info = @typeInfo(ret);
+    if (ret_info != .error_union or ret_info.error_union.payload != void) {
+        @compileError("SyncManager feed '" ++ field_name ++ "' start must return void or !void");
+    }
+}
+
+fn feed_start_error_set(comptime Feed: type) type {
+    const start_ret = @typeInfo(@TypeOf(Feed.start)).@"fn".return_type.?;
+    if (start_ret == void) return error{};
+
+    const start_ret_info = @typeInfo(start_ret);
+    return switch (start_ret_info) {
+        .error_union => |error_union| error_union.error_set,
+        else => @compileError("Feed.start must return void or an error union"),
+    };
+}
+
+fn FeedStartError(comptime FeedPtr: type) type {
+    const Feed = @typeInfo(FeedPtr).pointer.child;
+    return feed_start_error_set(Feed);
+}
+
+fn start_feed_if_enabled(mask: u32, flag: u32, feed_ptr: anytype) FeedStartError(@TypeOf(feed_ptr))!void {
+    if (!has_flag(mask, flag)) return;
+    try call_feed_start(feed_ptr);
+}
+
+fn call_feed_start(feed_ptr: anytype) FeedStartError(@TypeOf(feed_ptr))!void {
+    const Feed = @typeInfo(@TypeOf(feed_ptr)).pointer.child;
+    const start_ret = @typeInfo(@TypeOf(Feed.start)).@"fn".return_type.?;
+
+    if (comptime start_ret == void) {
+        Feed.start(feed_ptr);
+        return;
+    }
+
+    try Feed.start(feed_ptr);
+}
+
+test "startup_feed_mask: disabled synchronization starts no feeds" {
+    const mask = startup_feed_mask(.{
+        .networking_enabled = true,
+        .synchronization_enabled = false,
+        .fast_sync = true,
+        .snap_sync = true,
+    });
+    try std.testing.expectEqual(SyncStartupFeed.none, mask);
+}
+
+test "startup_feed_mask: networking disabled starts no feeds" {
+    const mask = startup_feed_mask(.{
+        .networking_enabled = false,
+        .synchronization_enabled = true,
+        .fast_sync = true,
+        .snap_sync = true,
+    });
+    try std.testing.expectEqual(SyncStartupFeed.none, mask);
+}
+
+test "startup_feed_mask: snap sync implies fast-sync startup path" {
+    const mask = startup_feed_mask(.{
+        .synchronization_enabled = true,
+        .fast_sync = false,
+        .snap_sync = true,
+    });
+    try std.testing.expectEqual(@as(u32, SyncStartupFeed.full |
+        SyncStartupFeed.fast_blocks |
+        SyncStartupFeed.fast_state |
+        SyncStartupFeed.fast_headers |
+        SyncStartupFeed.snap |
+        SyncStartupFeed.fast_bodies |
+        SyncStartupFeed.fast_receipts), mask);
+}
+
+test "startup_feed_mask: fast sync starts full + fast blocks + state + headers" {
+    const mask = startup_feed_mask(.{
+        .synchronization_enabled = true,
+        .fast_sync = true,
+        .snap_sync = false,
+        .download_headers_in_fast_sync = false,
+        .download_bodies_in_fast_sync = true,
+        .download_receipts_in_fast_sync = true,
+    });
+
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.full));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_blocks));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_state));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_headers));
+    try std.testing.expect(!has_flag(mask, SyncStartupFeed.fast_bodies));
+    try std.testing.expect(!has_flag(mask, SyncStartupFeed.fast_receipts));
+    try std.testing.expect(!has_flag(mask, SyncStartupFeed.snap));
+}
+
+test "startup_feed_mask: snap and fast body/receipt feeds follow toggles" {
+    const mask = startup_feed_mask(.{
+        .synchronization_enabled = true,
+        .fast_sync = true,
+        .snap_sync = true,
+        .download_headers_in_fast_sync = true,
+        .download_bodies_in_fast_sync = true,
+        .download_receipts_in_fast_sync = true,
+    });
+
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.full));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_blocks));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_state));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.snap));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_headers));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_bodies));
+    try std.testing.expect(has_flag(mask, SyncStartupFeed.fast_receipts));
+}
+
+const FeedTrace = struct {
+    order: [8]u8 = [_]u8{0} ** 8,
+    len: usize = 0,
+
+    fn push(self: *FeedTrace, id: u8) void {
+        self.order[self.len] = id;
+        self.len += 1;
+    }
+};
+
+const TraceFeed = struct {
+    trace: *FeedTrace,
+    id: u8,
+    starts: u8 = 0,
+    fail: bool = false,
+
+    pub const StartError = error{StartFailed};
+
+    pub fn start(self: *@This()) StartError!void {
+        self.starts += 1;
+        self.trace.push(self.id);
+        if (self.fail) return error.StartFailed;
+    }
+};
+
+const TestFeeds = struct {
+    full: TraceFeed,
+    fast_blocks: TraceFeed,
+    fast_state: TraceFeed,
+    snap: TraceFeed,
+    fast_headers: TraceFeed,
+    fast_bodies: TraceFeed,
+    fast_receipts: TraceFeed,
+};
+
+fn init_test_feeds(trace: *FeedTrace) TestFeeds {
+    return .{
+        .full = .{ .trace = trace, .id = 1 },
+        .fast_blocks = .{ .trace = trace, .id = 5 },
+        .fast_state = .{ .trace = trace, .id = 7 },
+        .snap = .{ .trace = trace, .id = 6 },
+        .fast_headers = .{ .trace = trace, .id = 2 },
+        .fast_bodies = .{ .trace = trace, .id = 3 },
+        .fast_receipts = .{ .trace = trace, .id = 4 },
+    };
+}
+
+const LifecycleTrace = struct {
+    order: [16]u8 = [_]u8{0} ** 16,
+    len: usize = 0,
+    watch_wait_time_sec: ?u32 = null,
+
+    fn push(self: *LifecycleTrace, id: u8) void {
+        self.order[self.len] = id;
+        self.len += 1;
+    }
+};
+
+const TraceLifecycle = struct {
+    trace: *LifecycleTrace,
+
+    const vtable = SyncManagerLifecycle.VTable{
+        .watch_for_exit = watch_for_exit,
+        .wire_mode_selector = wire_mode_selector,
+        .wire_sync_report = wire_sync_report,
+        .wire_gc_on_feed_finished = wire_gc_on_feed_finished,
+        .update_mode_selector = update_mode_selector,
+    };
+
+    fn as_lifecycle(self: *@This()) SyncManagerLifecycle {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+        };
+    }
+
+    fn watch_for_exit(ptr: *anyopaque, wait_time_sec: u32) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.watch_wait_time_sec = wait_time_sec;
+        self.trace.push(8);
+    }
+
+    fn wire_mode_selector(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(9);
+    }
+
+    fn wire_sync_report(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(10);
+    }
+
+    fn wire_gc_on_feed_finished(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(11);
+    }
+
+    fn update_mode_selector(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(12);
+    }
+};
+
+test "SyncManager.start: starts enabled feeds in Nethermind startup order" {
+    const Manager = SyncManager(TestFeeds);
+
+    var trace = FeedTrace{};
+    var feeds = init_test_feeds(&trace);
+
+    var manager = Manager{
+        .config = .{
+            .synchronization_enabled = true,
+            .fast_sync = true,
+            .snap_sync = true,
+            .download_headers_in_fast_sync = true,
+            .download_bodies_in_fast_sync = true,
+            .download_receipts_in_fast_sync = true,
+        },
+        .feeds = &feeds,
+    };
+
+    const mask = try manager.start();
+    const expected_order = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    try std.testing.expectEqual(@as(u32, SyncStartupFeed.full |
+        SyncStartupFeed.fast_headers |
+        SyncStartupFeed.fast_bodies |
+        SyncStartupFeed.fast_receipts |
+        SyncStartupFeed.fast_blocks |
+        SyncStartupFeed.snap |
+        SyncStartupFeed.fast_state), mask);
+    try std.testing.expectEqualSlices(u8, &expected_order, trace.order[0..trace.len]);
+    try std.testing.expectEqual(@as(u8, 1), feeds.full.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_headers.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_bodies.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_receipts.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_blocks.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.snap.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_state.starts);
+}
+
+test "SyncManager.start: disabled synchronization starts no feed components" {
+    const Manager = SyncManager(TestFeeds);
+
+    var trace = FeedTrace{};
+    var feeds = init_test_feeds(&trace);
+    var manager = Manager{
+        .config = .{
+            .synchronization_enabled = false,
+            .fast_sync = true,
+            .snap_sync = true,
+        },
+        .feeds = &feeds,
+    };
+
+    const mask = try manager.start();
+    try std.testing.expectEqual(SyncStartupFeed.none, mask);
+    try std.testing.expectEqual(@as(usize, 0), trace.len);
+    try std.testing.expectEqual(@as(u8, 0), feeds.full.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_headers.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_bodies.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_receipts.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_blocks.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.snap.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_state.starts);
+}
+
+test "SyncManager.start: propagates feed start errors and stops later startup" {
+    const Manager = SyncManager(TestFeeds);
+
+    var trace = FeedTrace{};
+    var feeds = init_test_feeds(&trace);
+    feeds.fast_headers.fail = true;
+
+    var manager = Manager{
+        .config = .{
+            .synchronization_enabled = true,
+            .fast_sync = true,
+            .download_headers_in_fast_sync = true,
+            .download_bodies_in_fast_sync = true,
+            .download_receipts_in_fast_sync = true,
+        },
+        .feeds = &feeds,
+    };
+
+    try std.testing.expectError(TraceFeed.StartError.StartFailed, manager.start());
+    const expected_order = [_]u8{ 1, 2 };
+    try std.testing.expectEqualSlices(u8, &expected_order, trace.order[0..trace.len]);
+    try std.testing.expectEqual(@as(u8, 1), feeds.full.starts);
+    try std.testing.expectEqual(@as(u8, 1), feeds.fast_headers.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_bodies.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_receipts.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_blocks.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.snap.starts);
+    try std.testing.expectEqual(@as(u8, 0), feeds.fast_state.starts);
+}
+
+test "SyncManager.start: wires lifecycle hooks after feed startup order" {
+    const Manager = SyncManager(TestFeeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = init_test_feeds(&feed_trace);
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = true,
+            .snap_sync = true,
+            .download_headers_in_fast_sync = true,
+            .download_bodies_in_fast_sync = true,
+            .download_receipts_in_fast_sync = true,
+            .exit_on_synced = false,
+            .gc_on_feed_finished = true,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+    const expected_lifecycle_order = [_]u8{ 9, 10, 11, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, null), lifecycle_trace.watch_wait_time_sec);
+}
+
+test "SyncManager.start: exit_on_synced wires watcher before selector/report hooks" {
+    const Manager = SyncManager(TestFeeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = init_test_feeds(&feed_trace);
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = false,
+            .snap_sync = false,
+            .exit_on_synced = true,
+            .exit_on_synced_wait_time_sec = 77,
+            .gc_on_feed_finished = true,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{1};
+    const expected_lifecycle_order = [_]u8{ 8, 9, 10, 11, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, 77), lifecycle_trace.watch_wait_time_sec);
+}
+
+test "SyncManager.start: gc hook wiring is optional" {
+    const Manager = SyncManager(TestFeeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = init_test_feeds(&feed_trace);
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = false,
+            .snap_sync = false,
+            .exit_on_synced = false,
+            .gc_on_feed_finished = false,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{1};
+    const expected_lifecycle_order = [_]u8{ 9, 10, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, null), lifecycle_trace.watch_wait_time_sec);
+}
