@@ -23,6 +23,12 @@ pub const RequestFieldSpans = struct {
     method: ?ValueSpan = null,
 };
 
+/// Parsed and JSON-RPC-version-validated request field scan result.
+pub const ScanAndValidateRequestResult = union(enum) {
+    fields: RequestFieldSpans,
+    err: errors.JsonRpcErrorCode,
+};
+
 /// Top-level JSON-RPC request shape.
 pub const TopLevelRequestKind = union(enum) {
     object,
@@ -50,6 +56,15 @@ pub fn validate_jsonrpc_version_token(input: []const u8, fields: RequestFieldSpa
         return .jsonrpc_version_not_supported;
     }
     return null;
+}
+
+/// Parse request fields and validate that top-level `jsonrpc` is exactly `"2.0"`.
+pub fn scan_and_validate_request_fields(input: []const u8) ScanAndValidateRequestResult {
+    const fields = scan_request_fields(input) catch |err| return .{ .err = scan_error_to_jsonrpc_error(err) };
+    if (validate_jsonrpc_version_token(input, fields)) |code| {
+        return .{ .err = code };
+    }
+    return .{ .fields = fields };
 }
 
 /// Return the index at which the given JSON object key (including quotes)
@@ -451,6 +466,36 @@ test "validate_jsonrpc_version_token accepts only jsonrpc 2.0 string token" {
     const bad_req = "{ \"jsonrpc\": 2.0, \"method\": \"eth_blockNumber\" }";
     const bad_fields = try scan_request_fields(bad_req);
     try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_jsonrpc_version_token(bad_req, bad_fields).?);
+}
+
+test "scan_and_validate_request_fields returns fields for valid request" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\", \"params\": [] }";
+    const res = scan_and_validate_request_fields(req);
+    switch (res) {
+        .fields => |fields| {
+            try std.testing.expect(fields.jsonrpc != null);
+            try std.testing.expect(fields.method != null);
+        },
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "scan_and_validate_request_fields returns jsonrpc_version_not_supported for non-2.0 version" {
+    const req = "{ \"jsonrpc\": \"1.0\", \"method\": \"eth_blockNumber\", \"params\": [] }";
+    const res = scan_and_validate_request_fields(req);
+    switch (res) {
+        .fields => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, code),
+    }
+}
+
+test "scan_and_validate_request_fields maps parser errors to parse_error" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\", \"params\": []";
+    const res = scan_and_validate_request_fields(req);
+    switch (res) {
+        .fields => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+    }
 }
 
 test "parse_top_level_request_kind classifies object input" {

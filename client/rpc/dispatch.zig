@@ -98,8 +98,10 @@ pub const ParseNamespaceResult = union(enum) {
 /// `.error(.method_not_found)`. If the field is missing or malformed,
 /// returns `.error(.invalid_request)` per EIP-1474.
 pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
-    const fields = scan.scan_request_fields(request) catch |err| return .{ .err = scan.scan_error_to_jsonrpc_error(err) };
-    if (scan.validate_jsonrpc_version_token(request, fields)) |code| return .{ .err = code };
+    const fields = switch (scan.scan_and_validate_request_fields(request)) {
+        .fields => |value| value,
+        .err => |code| return .{ .err = code },
+    };
 
     const method_span = fields.method orelse return .{ .err = .invalid_request };
     const method_token = request[method_span.start..method_span.end];

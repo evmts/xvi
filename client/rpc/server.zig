@@ -54,8 +54,10 @@ pub const RpcServerConfig = struct {
 /// Returns `null` when the version is exactly `"2.0"`, otherwise returns
 /// an EIP-1474-compatible error code.
 pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErrorCode {
-    const fields = scan.scan_request_fields(request) catch |err| return scan.scan_error_to_jsonrpc_error(err);
-    return scan.validate_jsonrpc_version_token(request, fields);
+    return switch (scan.scan_and_validate_request_fields(request)) {
+        .fields => null,
+        .err => |code| code,
+    };
 }
 
 /// Validate JSON-RPC batch size against server configuration.
