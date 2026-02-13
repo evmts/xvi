@@ -3,6 +3,7 @@ const primitives = @import("primitives");
 
 const TxPool = @import("pool.zig").TxPool;
 const AcceptTxResult = @import("accept_result.zig").AcceptTxResult;
+const TxHandlingOptions = @import("handling_options.zig").TxHandlingOptions;
 const TransactionHash = primitives.TransactionHash.TransactionHash;
 const TransactionType = primitives.Transaction.TransactionType;
 const Address = primitives.Address;
@@ -71,6 +72,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             self.contains_calls += 1;
             return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
         }
+
+        fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
+            return AcceptTxResult.accepted;
+        }
     };
 
     const known_hash: TransactionHash = [_]u8{0xAA} ** 32;
@@ -91,6 +96,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
 
@@ -148,6 +154,10 @@ test "precheck_duplicate matches typed containment semantics" {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
         }
+
+        fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
+            return AcceptTxResult.accepted;
+        }
     };
 
     const known_hash: TransactionHash = [_]u8{0x01} ** 32;
@@ -168,6 +178,7 @@ test "precheck_duplicate matches typed containment semantics" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
 
