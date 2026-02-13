@@ -1,4 +1,5 @@
 const std = @import("std");
+const Rlp = @import("primitives").Rlp;
 
 /// Size of the RLPx MAC (16 bytes).
 pub const MacSize: u16 = 16;
@@ -72,16 +73,6 @@ pub inline fn validate_total_packet_size(
     }
 }
 
-const RlpListBounds = struct {
-    payload_start: usize,
-    payload_end: usize,
-};
-
-const RlpUint = struct {
-    value: usize,
-    next: usize,
-};
-
 /// Decode header-data extension fields from decrypted RLPx header bytes.
 ///
 /// `header_data_with_padding` is the 13-byte header-data region:
@@ -92,31 +83,34 @@ pub fn decode_header_extensions(
     header_data_with_padding: []const u8,
     max_packet_size: usize,
 ) FrameHeaderDecodeError!FrameHeaderMetadata {
-    const list = try decode_rlp_list_bounds(header_data_with_padding);
-    var cursor = list.payload_start;
+    // Use Voltaire's canonical RLP decoder to parse list bounds/items and reject malformed
+    // encodings (e.g. non-minimal long-form lengths or leading-zero length-of-length).
+    var rlp_scratch: [512]u8 = undefined;
+    var rlp_fba = std.heap.FixedBufferAllocator.init(&rlp_scratch);
+    const rlp_decoded = Rlp.decode(rlp_fba.allocator(), header_data_with_padding, true) catch {
+        return error.InvalidHeaderData;
+    };
+    defer rlp_decoded.data.deinit(rlp_fba.allocator());
+
+    const list_items = switch (rlp_decoded.data) {
+        .List => |items| items,
+        else => return error.InvalidHeaderData,
+    };
+    if (list_items.len == 0 or list_items.len > 3) return error.InvalidHeaderData;
 
     // capability-id is currently always zero in RLPx, but parsed for forward compatibility.
-    const capability_id = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
-    _ = capability_id.value;
-    cursor = capability_id.next;
+    _ = try decode_rlp_uint(list_items[0]);
 
     var context_id: ?usize = null;
     var total_packet_size: ?usize = null;
 
-    if (cursor < list.payload_end) {
-        const context = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
-        context_id = context.value;
-        cursor = context.next;
+    if (list_items.len > 1) {
+        context_id = try decode_rlp_uint(list_items[1]);
     }
 
-    if (cursor < list.payload_end) {
-        const total = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
-        total_packet_size = total.value;
-        cursor = total.next;
+    if (list_items.len > 2) {
+        total_packet_size = try decode_rlp_uint(list_items[2]);
     }
-
-    // Keep parity with Nethermind's frame-header parsing: reject extra list items.
-    if (cursor != list.payload_end) return error.InvalidHeaderData;
 
     try validate_total_packet_size(frame_size, total_packet_size, max_packet_size);
 
@@ -132,71 +126,18 @@ pub fn decode_header_extensions(
     };
 }
 
-fn decode_rlp_list_bounds(input: []const u8) FrameHeaderDecodeError!RlpListBounds {
-    if (input.len == 0) return error.InvalidHeaderData;
-    const prefix = input[0];
-    if (prefix < 0xc0) return error.InvalidHeaderData;
-
-    if (prefix <= 0xf7) {
-        const payload_len = @as(usize, @intCast(prefix - 0xc0));
-        const payload_end = std.math.add(usize, 1, payload_len) catch return error.InvalidHeaderData;
-        if (payload_end > input.len) return error.InvalidHeaderData;
-        return .{ .payload_start = 1, .payload_end = payload_end };
-    }
-
-    const len_of_len = @as(usize, @intCast(prefix - 0xf7));
-    if (len_of_len == 0) return error.InvalidHeaderData;
-
-    const len_end = std.math.add(usize, 1, len_of_len) catch return error.InvalidHeaderData;
-    if (len_end > input.len) return error.InvalidHeaderData;
-
-    const payload_len = try parse_big_endian_usize(input[1..len_end]);
-    const payload_end = std.math.add(usize, len_end, payload_len) catch return error.InvalidHeaderData;
-    if (payload_end > input.len) return error.InvalidHeaderData;
-
-    return .{ .payload_start = len_end, .payload_end = payload_end };
-}
-
-fn decode_rlp_uint(
-    input: []const u8,
-    offset: usize,
-    payload_end: usize,
-) FrameHeaderDecodeError!RlpUint {
-    if (offset >= payload_end or payload_end > input.len) return error.InvalidHeaderData;
-
-    const prefix = input[offset];
-    if (prefix <= 0x7f) {
-        return .{ .value = @as(usize, prefix), .next = offset + 1 };
-    }
-
-    if (prefix <= 0xb7) {
-        const data_len = @as(usize, @intCast(prefix - 0x80));
-        const data_start = offset + 1;
-        const data_end = std.math.add(usize, data_start, data_len) catch return error.InvalidHeaderData;
-        if (data_end > payload_end) return error.InvalidHeaderData;
-        const value = try parse_big_endian_usize(input[data_start..data_end]);
-        return .{ .value = value, .next = data_end };
-    }
-
-    if (prefix <= 0xbf) {
-        const len_of_len = @as(usize, @intCast(prefix - 0xb7));
-        if (len_of_len == 0) return error.InvalidHeaderData;
-        const len_start = offset + 1;
-        const len_end = std.math.add(usize, len_start, len_of_len) catch return error.InvalidHeaderData;
-        if (len_end > payload_end) return error.InvalidHeaderData;
-
-        const data_len = try parse_big_endian_usize(input[len_start..len_end]);
-        const data_end = std.math.add(usize, len_end, data_len) catch return error.InvalidHeaderData;
-        if (data_end > payload_end) return error.InvalidHeaderData;
-
-        const value = try parse_big_endian_usize(input[len_end..data_end]);
-        return .{ .value = value, .next = data_end };
-    }
-
-    return error.InvalidHeaderData;
+fn decode_rlp_uint(item: Rlp.Data) FrameHeaderDecodeError!usize {
+    const bytes = switch (item) {
+        .String => |str| str,
+        else => return error.InvalidHeaderData,
+    };
+    if (bytes.len == 0) return 0;
+    if (bytes.len == 1) return @as(usize, bytes[0]);
+    return parse_big_endian_usize(bytes);
 }
 
 fn parse_big_endian_usize(bytes: []const u8) FrameHeaderDecodeError!usize {
+    if (bytes.len == 0) return error.InvalidHeaderData;
     var value: usize = 0;
     for (bytes) |byte| {
         const shifted = std.math.mul(usize, value, 256) catch return error.InvalidHeaderData;
