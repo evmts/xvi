@@ -586,6 +586,33 @@ test "Chain - common_ancestor_hash_local returns null for cyclic ancestry" {
     try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
 }
 
+test "Chain - common_ancestor_hash_local returns null for non-contiguous ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    // Malformed branches: height jumps directly to genesis as parent.
+    var h_a = primitives.BlockHeader.init();
+    h_a.number = 4;
+    h_a.parent_hash = genesis.hash;
+    h_a.timestamp = 1;
+    const a = try Block.from(&h_a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(a);
+
+    var h_b = primitives.BlockHeader.init();
+    h_b.number = 4;
+    h_b.parent_hash = genesis.hash;
+    h_b.timestamp = 2;
+    const b = try Block.from(&h_b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b);
+
+    try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+}
+
 test "Chain - has_canonical_divergence_local returns false for empty canonical chain" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -697,6 +724,25 @@ test "Chain - has_canonical_divergence_local returns false when ancestry missing
     try chain.putBlock(orphan);
 
     try std.testing.expect(!has_canonical_divergence_local(&chain, orphan.hash));
+}
+
+test "Chain - has_canonical_divergence_local returns false for non-contiguous candidate ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var malformed_h = primitives.BlockHeader.init();
+    malformed_h.number = 5;
+    malformed_h.parent_hash = genesis.hash;
+    malformed_h.timestamp = 5;
+    const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(malformed);
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, malformed.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns null for empty canonical chain" {
@@ -832,6 +878,25 @@ test "Chain - canonical_reorg_depth_local returns null when ancestry missing loc
     try chain.putBlock(orphan);
 
     try std.testing.expect(canonical_reorg_depth_local(&chain, orphan.hash) == null);
+}
+
+test "Chain - canonical_reorg_depth_local returns null for non-contiguous candidate ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var malformed_h = primitives.BlockHeader.init();
+    malformed_h.number = 5;
+    malformed_h.parent_hash = genesis.hash;
+    malformed_h.timestamp = 5;
+    const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(malformed);
+
+    try std.testing.expect(canonical_reorg_depth_local(&chain, malformed.hash) == null);
 }
 
 test "Chain - candidate_reorg_depth_local returns null for empty canonical chain" {
@@ -995,6 +1060,25 @@ test "Chain - candidate_reorg_depth_local returns null when ancestry missing loc
     try chain.putBlock(orphan);
 
     try std.testing.expect(candidate_reorg_depth_local(&chain, orphan.hash) == null);
+}
+
+test "Chain - candidate_reorg_depth_local returns null for non-contiguous candidate ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var malformed_h = primitives.BlockHeader.init();
+    malformed_h.number = 5;
+    malformed_h.parent_hash = genesis.hash;
+    malformed_h.timestamp = 5;
+    const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(malformed);
+
+    try std.testing.expect(candidate_reorg_depth_local(&chain, malformed.hash) == null);
 }
 
 /// Generic, comptime-injected head hash reader for any chain-like type.
