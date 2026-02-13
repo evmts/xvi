@@ -344,7 +344,7 @@ test "BlocksRequest.init_owned provisions response arena and deinit clears it" {
     try std.testing.expect(req.receipts == null);
 }
 
-test "max_bodies_per_request uses client-specific limits" {
+fn make_test_peer(name: []const u8) PeerInfo {
     const peer_id: primitives.PeerId.PeerId = [_]u8{0} ** 64;
     const caps = &[_][]const u8{};
     const network = PeerInfoModule.NetworkInfo{
@@ -355,7 +355,10 @@ test "max_bodies_per_request uses client-specific limits" {
         .static = false,
     };
     const protocols = PeerInfoModule.Protocols{ .eth = null };
+    return PeerInfoModule.init(peer_id, name, caps, network, protocols);
+}
 
+test "max_bodies_per_request uses client-specific limits" {
     const cases = [_]struct { name: []const u8, expected: usize }{
         .{ .name = "Besu/v23.4.0", .expected = 128 },
         .{ .name = "Geth/v1.13.0", .expected = 128 },
@@ -369,23 +372,12 @@ test "max_bodies_per_request uses client-specific limits" {
     };
 
     for (cases) |case| {
-        const peer = PeerInfoModule.init(peer_id, case.name, caps, network, protocols);
+        const peer = make_test_peer(case.name);
         try std.testing.expectEqual(case.expected, max_bodies_per_request(peer));
     }
 }
 
 test "max_receipts_per_request uses client-specific limits" {
-    const peer_id: primitives.PeerId.PeerId = [_]u8{0} ** 64;
-    const caps = &[_][]const u8{};
-    const network = PeerInfoModule.NetworkInfo{
-        .local_address = "",
-        .remote_address = "",
-        .inbound = false,
-        .trusted = false,
-        .static = false,
-    };
-    const protocols = PeerInfoModule.Protocols{ .eth = null };
-
     const cases = [_]struct { name: []const u8, expected: usize }{
         .{ .name = "Besu/v23.4.0", .expected = 256 },
         .{ .name = "Geth/v1.13.0", .expected = 256 },
@@ -399,23 +391,12 @@ test "max_receipts_per_request uses client-specific limits" {
     };
 
     for (cases) |case| {
-        const peer = PeerInfoModule.init(peer_id, case.name, caps, network, protocols);
+        const peer = make_test_peer(case.name);
         try std.testing.expectEqual(case.expected, max_receipts_per_request(peer));
     }
 }
 
 test "max_headers_per_request uses client-specific limits" {
-    const peer_id: primitives.PeerId.PeerId = [_]u8{0} ** 64;
-    const caps = &[_][]const u8{};
-    const network = PeerInfoModule.NetworkInfo{
-        .local_address = "",
-        .remote_address = "",
-        .inbound = false,
-        .trusted = false,
-        .static = false,
-    };
-    const protocols = PeerInfoModule.Protocols{ .eth = null };
-
     const cases = [_]struct { name: []const u8, expected: usize }{
         .{ .name = "Besu/v23.4.0", .expected = 512 },
         .{ .name = "Geth/v1.13.0", .expected = 192 },
@@ -429,7 +410,7 @@ test "max_headers_per_request uses client-specific limits" {
     };
 
     for (cases) |case| {
-        const peer = PeerInfoModule.init(peer_id, case.name, caps, network, protocols);
+        const peer = make_test_peer(case.name);
         try std.testing.expectEqual(case.expected, max_headers_per_request(peer));
     }
 }
