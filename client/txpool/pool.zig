@@ -22,18 +22,22 @@ pub const TxPoolConfig = struct {
         /// Persist blob transactions and retain reorg metadata.
         storage_with_reorgs,
 
+        /// Returns true when this mode stores blob txs durably (on disk/db).
         pub fn is_persistent_storage(self: BlobsSupportMode) bool {
             return self == .storage or self == .storage_with_reorgs;
         }
 
+        /// Returns true when blob transaction handling is enabled.
         pub fn is_enabled(self: BlobsSupportMode) bool {
             return self != .disabled;
         }
 
+        /// Returns true when blob transaction handling is disabled.
         pub fn is_disabled(self: BlobsSupportMode) bool {
             return self == .disabled;
         }
 
+        /// Returns true when blob reorg support is enabled.
         pub fn supports_reorgs(self: BlobsSupportMode) bool {
             return self == .storage_with_reorgs;
         }
