@@ -3,7 +3,7 @@ const std = @import("std");
 const bench = @import("bench_utils");
 const client_network = @import("client_network");
 
-fn benchDecode(iterations: usize) bench.BenchResult {
+fn bench_decode(iterations: usize) bench.BenchResult {
     var sum: usize = 0; // prevent optimization-out
     const bytes: [3]u8 = .{ 0x12, 0x34, 0x56 };
     const start = std.time.nanoTimestamp();
@@ -23,7 +23,7 @@ fn benchDecode(iterations: usize) bench.BenchResult {
     };
 }
 
-fn benchEncode(iterations: usize) bench.BenchResult {
+fn bench_encode(iterations: usize) bench.BenchResult {
     var sink: u8 = 0; // prevent optimization-out
     const size: usize = 0x12_34_56;
     const start = std.time.nanoTimestamp();
@@ -44,6 +44,7 @@ fn benchEncode(iterations: usize) bench.BenchResult {
     };
 }
 
+/// Runs RLPx frame helper micro-benchmarks.
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -53,10 +54,16 @@ pub fn main() !void {
     var iters: usize = 10_000_000;
     if (std.process.getEnvVarOwned(alloc, "RLPX_BENCH_ITERS")) |val| {
         defer alloc.free(val);
-        iters = std.fmt.parseInt(usize, val, 10) catch iters;
-    } else |_| {}
+        iters = std.fmt.parseInt(usize, val, 10) catch |err| blk: {
+            std.log.warn("ignoring invalid RLPX_BENCH_ITERS='{s}': {s}", .{ val, @errorName(err) });
+            break :blk iters;
+        };
+    } else |err| switch (err) {
+        error.EnvironmentVariableNotFound => {},
+        else => return err,
+    }
 
     std.debug.print("RLPx Frame Encode/Decode Benchmarks (iters={d})\n", .{iters});
-    bench.print_result(benchDecode(iters));
-    bench.print_result(benchEncode(iters));
+    bench.print_result(bench_decode(iters));
+    bench.print_result(bench_encode(iters));
 }
