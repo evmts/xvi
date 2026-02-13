@@ -54,7 +54,7 @@ fn bench_admission(n_per_type: usize) !bench.BenchResult {
     // Prepare a small mix of transactions
     var ops: usize = 0;
     var accepted_count: usize = 0;
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer = try std.time.Timer.start();
 
     // Legacy
     {
@@ -170,13 +170,13 @@ const FeeTuple = struct {
     max_priority: MaxPriorityFeePerGas,
 };
 
-fn bench_fee_compare_only(n: usize) bench.BenchResult {
+fn bench_fee_compare_only(n: usize) !bench.BenchResult {
     // Deterministic input set
     var rng = std.Random.DefaultPrng.init(0xC0FFEE);
     const random = rng.random();
 
     var tuples = std.ArrayList(FeeTuple).empty;
-    tuples.ensureTotalCapacityPrecise(std.heap.page_allocator, n) catch unreachable;
+    try tuples.ensureTotalCapacityPrecise(std.heap.page_allocator, n);
     defer tuples.deinit(std.heap.page_allocator);
 
     for (0..n) |_| {
@@ -188,7 +188,7 @@ fn bench_fee_compare_only(n: usize) bench.BenchResult {
     }
 
     const base_fee = BaseFeePerGas.from(15_000_000_000);
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer = try std.time.Timer.start();
     var cmp_count: usize = 0;
     var cmp_acc: i64 = 0;
     // Just slam comparator without sorting cost
@@ -220,12 +220,12 @@ fn bench_fee_compare_only(n: usize) bench.BenchResult {
     };
 }
 
-fn bench_fee_sort(n: usize) bench.BenchResult {
+fn bench_fee_sort(n: usize) !bench.BenchResult {
     var rng = std.Random.DefaultPrng.init(0xBADC0DE);
     const random = rng.random();
 
     var tuples = std.ArrayList(FeeTuple).empty;
-    tuples.ensureTotalCapacityPrecise(std.heap.page_allocator, n) catch unreachable;
+    try tuples.ensureTotalCapacityPrecise(std.heap.page_allocator, n);
     defer tuples.deinit(std.heap.page_allocator);
 
     for (0..n) |_| {
@@ -238,7 +238,7 @@ fn bench_fee_sort(n: usize) bench.BenchResult {
     }
 
     const base_fee = BaseFeePerGas.from(25_000_000_000);
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer = try std.time.Timer.start();
     std.sort.block(FeeTuple, tuples.items, base_fee, struct {
         fn lessThan(base: BaseFeePerGas, a: FeeTuple, b: FeeTuple) bool {
             const r = txpool.compare_fee_market_priority(
@@ -319,7 +319,7 @@ const LookupDummyPool = struct {
     }
 };
 
-fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contains_tx: bench.BenchResult } {
+fn bench_lookup_dispatch(n: usize) !struct { is_known: bench.BenchResult, contains_tx: bench.BenchResult } {
     var dummy = LookupDummyPool{
         .known_hash = [_]u8{0x11} ** 32,
         .known_type = .eip1559,
@@ -344,7 +344,7 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
     var known_hits: usize = 0;
     var contains_hits: usize = 0;
 
-    var timer_known = std.time.Timer.start() catch unreachable;
+    var timer_known = try std.time.Timer.start();
     for (0..n) |i| {
         const hash = if ((i & 1) == 0) known_hash else unknown_hash;
         if (pool.is_known(hash)) {
@@ -354,7 +354,7 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
     const known_elapsed = timer_known.read();
     std.mem.doNotOptimizeAway(known_hits);
 
-    var timer_contains = std.time.Timer.start() catch unreachable;
+    var timer_contains = try std.time.Timer.start();
     for (0..n) |i| {
         const hash = if ((i & 1) == 0) known_hash else unknown_hash;
         const tx_type: TransactionType = if ((i & 3) == 0) .eip1559 else .legacy;
@@ -407,10 +407,10 @@ pub fn main() !void {
     // Comparator-only and full sort
     std.debug.print("--- Fee Market Priority Sorting ---\n", .{});
     {
-        const r_cmp = bench_fee_compare_only(N_SORT);
+        const r_cmp = try bench_fee_compare_only(N_SORT);
         bench.print_result(r_cmp);
 
-        const r_sort = bench_fee_sort(N_SORT);
+        const r_sort = try bench_fee_sort(N_SORT);
         bench.print_result(r_sort);
     }
     std.debug.print("\n", .{});
@@ -418,7 +418,7 @@ pub fn main() !void {
     // TxPool vtable lookup dispatch hot path
     std.debug.print("--- TxPool Lookup Dispatch ---\n", .{});
     {
-        const r_lookup = bench_lookup_dispatch(N_LOOKUP);
+        const r_lookup = try bench_lookup_dispatch(N_LOOKUP);
         bench.print_result(r_lookup.is_known);
         bench.print_result(r_lookup.contains_tx);
     }
