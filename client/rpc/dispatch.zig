@@ -101,17 +101,25 @@ pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
         .err => |code| return .{ .err = code },
     };
 
-    const method_span = fields.method orelse return .{ .err = .invalid_request };
+    return parse_request_namespace_from_fields(request, fields);
+}
+
+/// Resolve request namespace from previously scanned request field spans.
+///
+/// This avoids reparsing the JSON payload when `scan_and_validate_request_fields`
+/// already ran in an upstream dispatch stage.
+pub fn parse_request_namespace_from_fields(request: []const u8, fields: scan.RequestFieldSpans) ParseNamespaceResult {
+    const method_span = fields.method orelse return .{ .err = errors.code.invalid_request };
     const method_token = request[method_span.start..method_span.end];
     if (method_token.len < 2 or method_token[0] != '"' or method_token[method_token.len - 1] != '"') {
-        return .{ .err = .invalid_request };
+        return .{ .err = errors.code.invalid_request };
     }
     const method_name = method_token[1 .. method_token.len - 1];
 
     if (resolve_namespace(method_name)) |tag| {
         return .{ .namespace = tag };
     } else {
-        return .{ .err = .method_not_found };
+        return .{ .err = errors.code.method_not_found };
     }
 }
 
@@ -139,7 +147,7 @@ test "parse_request_namespace returns invalid_request for batch array input" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
     }
 }
 
@@ -173,7 +181,7 @@ test "parse_request_namespace returns method_not_found for unknown method" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.method_not_found, code),
+        .err => |code| try std.testing.expectEqual(errors.code.method_not_found, code),
     }
 }
 
@@ -188,7 +196,7 @@ test "parse_request_namespace returns invalid_request when method missing" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
     }
 }
 
@@ -204,7 +212,7 @@ test "parse_request_namespace validates jsonrpc version before method resolution
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, code),
+        .err => |code| try std.testing.expectEqual(errors.code.jsonrpc_version_not_supported, code),
     }
 }
 
@@ -219,7 +227,7 @@ test "parse_request_namespace validates jsonrpc field before method handling" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
     }
 }
 
@@ -233,7 +241,7 @@ test "parse_request_namespace rejects malformed JSON after method extraction" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+        .err => |code| try std.testing.expectEqual(errors.code.parse_error, code),
     }
 }
 
@@ -243,6 +251,19 @@ test "parse_request_namespace rejects trailing non-json bytes" {
     const res = parse_request_namespace(req);
     switch (res) {
         .namespace => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+        .err => |code| try std.testing.expectEqual(errors.code.parse_error, code),
+    }
+}
+
+test "parse_request_namespace_from_fields resolves namespace without rescanning request" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"eth_blockNumber\", \"params\": [] }";
+    const fields = switch (scan.scan_and_validate_request_fields(req)) {
+        .fields => |value| value,
+        .err => |_| return error.UnexpectedError,
+    };
+    const res = parse_request_namespace_from_fields(req, fields);
+    switch (res) {
+        .namespace => |tag| try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).eth, tag),
+        .err => |_| return error.UnexpectedError,
     }
 }

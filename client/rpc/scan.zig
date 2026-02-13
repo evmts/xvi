@@ -21,6 +21,7 @@ pub const ValueSpan = struct {
 pub const RequestFieldSpans = struct {
     jsonrpc: ?ValueSpan = null,
     method: ?ValueSpan = null,
+    id: ?ValueSpan = null,
 };
 
 /// Parsed and JSON-RPC-version-validated request field scan result.
@@ -38,8 +39,8 @@ pub const TopLevelRequestKind = union(enum) {
 /// Maps scanner-level parse failures to EIP-1474 request-level error codes.
 pub fn scan_error_to_jsonrpc_error(err: ScanRequestError) errors.JsonRpcErrorCode {
     return switch (err) {
-        error.ParseError => .parse_error,
-        error.InvalidRequest => .invalid_request,
+        error.ParseError => errors.code.parse_error,
+        error.InvalidRequest => errors.code.invalid_request,
     };
 }
 
@@ -47,13 +48,13 @@ pub fn scan_error_to_jsonrpc_error(err: ScanRequestError) errors.JsonRpcErrorCod
 ///
 /// Returns `null` for a valid `"2.0"` token, otherwise an EIP-1474 error code.
 pub fn validate_jsonrpc_version_token(input: []const u8, fields: RequestFieldSpans) ?errors.JsonRpcErrorCode {
-    const jsonrpc_span = fields.jsonrpc orelse return .invalid_request;
+    const jsonrpc_span = fields.jsonrpc orelse return errors.code.invalid_request;
     const jsonrpc_token = input[jsonrpc_span.start..jsonrpc_span.end];
     if (jsonrpc_token.len < 2 or jsonrpc_token[0] != '"' or jsonrpc_token[jsonrpc_token.len - 1] != '"') {
-        return .invalid_request;
+        return errors.code.invalid_request;
     }
     if (!std.mem.eql(u8, jsonrpc_token[1 .. jsonrpc_token.len - 1], "2.0")) {
-        return .jsonrpc_version_not_supported;
+        return errors.code.jsonrpc_version_not_supported;
     }
     return null;
 }
@@ -361,6 +362,8 @@ pub fn scan_request_fields(input: []const u8) ScanRequestError!RequestFieldSpans
             fields.jsonrpc = .{ .start = value_start, .end = value_end };
         } else if (std.mem.eql(u8, key_token, "\"method\"")) {
             fields.method = .{ .start = value_start, .end = value_end };
+        } else if (std.mem.eql(u8, key_token, "\"id\"")) {
+            fields.id = .{ .start = value_start, .end = value_end };
         }
 
         skip_whitespace(input, &i);
@@ -413,8 +416,10 @@ test "scanRequestFields captures jsonrpc and method spans" {
     const out = try scan_request_fields(req);
     try std.testing.expect(out.jsonrpc != null);
     try std.testing.expect(out.method != null);
+    try std.testing.expect(out.id != null);
     try std.testing.expectEqualStrings("\"2.0\"", req[out.jsonrpc.?.start..out.jsonrpc.?.end]);
     try std.testing.expectEqualStrings("\"eth_blockNumber\"", req[out.method.?.start..out.method.?.end]);
+    try std.testing.expectEqualStrings("1", req[out.id.?.start..out.id.?.end]);
 }
 
 test "scanRequestFields uses last-wins semantics for duplicate top-level keys" {
@@ -454,8 +459,8 @@ test "scanRequestFields rejects invalid utf8 in string tokens" {
 }
 
 test "scan_error_to_jsonrpc_error maps parser errors to eip-1474 codes" {
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, scan_error_to_jsonrpc_error(error.ParseError));
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, scan_error_to_jsonrpc_error(error.InvalidRequest));
+    try std.testing.expectEqual(errors.code.parse_error, scan_error_to_jsonrpc_error(error.ParseError));
+    try std.testing.expectEqual(errors.code.invalid_request, scan_error_to_jsonrpc_error(error.InvalidRequest));
 }
 
 test "validate_jsonrpc_version_token accepts only jsonrpc 2.0 string token" {
@@ -465,7 +470,7 @@ test "validate_jsonrpc_version_token accepts only jsonrpc 2.0 string token" {
 
     const bad_req = "{ \"jsonrpc\": 2.0, \"method\": \"eth_blockNumber\" }";
     const bad_fields = try scan_request_fields(bad_req);
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_jsonrpc_version_token(bad_req, bad_fields).?);
+    try std.testing.expectEqual(errors.code.invalid_request, validate_jsonrpc_version_token(bad_req, bad_fields).?);
 }
 
 test "scan_and_validate_request_fields returns fields for valid request" {
@@ -485,7 +490,7 @@ test "scan_and_validate_request_fields returns jsonrpc_version_not_supported for
     const res = scan_and_validate_request_fields(req);
     switch (res) {
         .fields => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, code),
+        .err => |code| try std.testing.expectEqual(errors.code.jsonrpc_version_not_supported, code),
     }
 }
 
@@ -494,7 +499,7 @@ test "scan_and_validate_request_fields maps parser errors to parse_error" {
     const res = scan_and_validate_request_fields(req);
     switch (res) {
         .fields => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+        .err => |code| try std.testing.expectEqual(errors.code.parse_error, code),
     }
 }
 

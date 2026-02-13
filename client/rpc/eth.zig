@@ -38,26 +38,37 @@ pub fn EthApi(comptime Provider: type) type {
 
         provider: *const Provider,
 
-        /// Handle `eth_chainId` request.
+        /// Handle `eth_chainId` for an already extracted request-id.
         ///
-        /// - Extracts the request `id` allocation-free.
+        /// - Uses pre-parsed request id from the dispatch pipeline.
+        /// - Notifications (`id` missing) do not emit any response.
         /// - On success, returns QUANTITY(u64) per EIP-1474.
-        /// - On malformed/unsupported envelope, returns an EIP-1474 error with id=null.
-        pub fn handle_chain_id(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
+        pub fn handle_chain_id(self: *const Self, writer: anytype, request_id: envelope.RequestId) !void {
             // Keep shapes aligned with Voltaire types for eth_chainId
             const EthMethod = jsonrpc.eth.EthMethod;
             const ChainIdShape = @FieldType(EthMethod, "eth_chainId"); // { params, result }
             _ = ChainIdShape; // referenced to ensure compile-time coupling
 
-            const id_res = envelope.extract_request_id(request_bytes);
-            switch (id_res) {
-                .id => |id| {
+            switch (request_id) {
+                .missing => return, // JSON-RPC notification: no response
+                .present => |id| {
                     const chain_id: u64 = self.provider.getChainId();
                     try Response.write_success_quantity_u64(writer, id, chain_id);
                 },
+            }
+        }
+
+        /// Convenience wrapper that extracts request id from raw request bytes.
+        ///
+        /// Prefer using `handle_chain_id` with a pre-parsed id to avoid reparsing
+        /// in the hot request path.
+        pub fn handle_chain_id_from_request(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
+            const id_res = envelope.extract_request_id(request_bytes);
+            switch (id_res) {
+                .id => |rid| try self.handle_chain_id(writer, rid),
                 .err => |code| {
                     // Per EIP-1474, when id cannot be determined, respond with id:null
-                    try Response.write_error(writer, .null, code, code.default_message(), null);
+                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
                 },
             }
         }
@@ -88,7 +99,7 @@ test "EthApi.handleChainId: number id -> QUANTITY result" {
 
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id(buf.writer(), req);
+    try api.handle_chain_id_from_request(buf.writer(), req);
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1\"}",
         buf.items,
@@ -115,7 +126,7 @@ test "EthApi.handleChainId: string id preserved; QUANTITY encoding" {
 
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id(buf.writer(), req);
+    try api.handle_chain_id_from_request(buf.writer(), req);
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":\"abc-123\",\"result\":\"0x1a\"}",
         buf.items,
@@ -137,11 +148,66 @@ test "EthApi.handleChainId: invalid envelope -> EIP-1474 error with id:null" {
 
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id(buf.writer(), bad);
+    try api.handle_chain_id_from_request(buf.writer(), bad);
 
-    const code = errors.JsonRpcErrorCode.invalid_request;
+    const code = errors.code.invalid_request;
     var expect_buf: [256]u8 = undefined;
     var fba = std.io.fixedBufferStream(&expect_buf);
-    try Response.write_error(fba.writer(), .null, code, code.default_message(), null);
+    try Response.write_error(fba.writer(), .null, code, errors.default_message(code), null);
     try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
+}
+
+test "EthApi.handleChainId: notification id missing emits no response" {
+    const Provider = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const Api = EthApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_chain_id(buf.writer(), .missing);
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
+}
+
+test "EthApi.handleChainIdFromRequest: explicit id null emits response with id:null" {
+    const Provider = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const Api = EthApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": null, \"method\": \"eth_chainId\", \"params\": [] }";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_chain_id_from_request(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":\"0x1\"}",
+        buf.items,
+    );
+}
+
+test "EthApi.handleChainIdFromRequest: missing id notification emits no response" {
+    const Provider = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const Api = EthApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_chainId\", \"params\": [] }";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_chain_id_from_request(buf.writer(), req);
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }

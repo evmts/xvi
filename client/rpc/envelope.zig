@@ -11,16 +11,25 @@ const scan = @import("scan.zig");
 /// Zero-copy representation of a JSON-RPC request id.
 /// - `.string` returns the raw, unescaped string contents (between quotes).
 /// - `.number` returns the raw decimal token (no quotes, may include leading `-`).
-/// - `.null` when the request carries `id: null` or the id field is absent.
+/// - `.null` when the request carries `id: null`.
 pub const Id = union(enum) {
     string: []const u8,
     number: []const u8,
     null,
 };
 
+/// Request-id presence for distinguishing JSON-RPC notifications.
+///
+/// - `.missing` means the request has no top-level `id` field (notification).
+/// - `.present` means the request carries an explicit `id` value.
+pub const RequestId = union(enum) {
+    missing,
+    present: Id,
+};
+
 /// Result of ID extraction: either an `Id` or an EIP-1474 error code.
 pub const ExtractIdResult = union(enum) {
-    id: Id,
+    id: RequestId,
     err: errors.JsonRpcErrorCode,
 };
 
@@ -28,7 +37,7 @@ pub const ExtractIdResult = union(enum) {
 ///
 /// Rules (JSON-RPC 2.0 + EIP-1474):
 /// - Batch (top-level array) is not handled here → `.err = .invalid_request`.
-/// - Missing `id` yields `.id = .null` (error responses must carry `null`).
+/// - Missing `id` yields `.id = .missing` (JSON-RPC notification).
 /// - `id` must be string, number (integer), or null → otherwise `.err = .invalid_request`.
 pub fn extract_request_id(input: []const u8) ExtractIdResult {
     // Skip UTF-8 BOM
@@ -36,25 +45,25 @@ pub fn extract_request_id(input: []const u8) ExtractIdResult {
     if (input.len >= 3 and input[0] == 0xEF and input[1] == 0xBB and input[2] == 0xBF) i = 3;
     // Skip leading whitespace
     while (i < input.len and std.ascii.isWhitespace(input[i])) : (i += 1) {}
-    if (i >= input.len) return .{ .err = .parse_error };
+    if (i >= input.len) return .{ .err = errors.code.parse_error };
 
     const first = input[i];
-    if (first == '[') return .{ .err = .invalid_request }; // batch not handled here
-    if (first != '{') return .{ .err = .invalid_request };
+    if (first == '[') return .{ .err = errors.code.invalid_request }; // batch not handled here
+    if (first != '{') return .{ .err = errors.code.invalid_request };
 
     const key = "\"id\"";
     const key_idx = scan.find_top_level_key(input[i..], key);
-    if (key_idx == null) return .{ .id = .null }; // id not present → treat as null
+    if (key_idx == null) return .{ .id = .missing }; // id not present → notification
 
     // Move to ':' after the key
     var j: usize = i + key_idx.? + key.len;
     while (j < input.len and std.ascii.isWhitespace(input[j])) : (j += 1) {}
-    if (j >= input.len or input[j] != ':') return .{ .err = .invalid_request };
+    if (j >= input.len or input[j] != ':') return .{ .err = errors.code.invalid_request };
     j += 1; // past ':'
 
     // Skip whitespace to the value
     while (j < input.len and std.ascii.isWhitespace(input[j])) : (j += 1) {}
-    if (j >= input.len) return .{ .err = .parse_error };
+    if (j >= input.len) return .{ .err = errors.code.parse_error };
 
     const v0 = input[j];
     // String id
@@ -73,18 +82,18 @@ pub fn extract_request_id(input: []const u8) ExtractIdResult {
             }
             if (ch == '"') break;
         }
-        if (end >= input.len or input[end] != '"') return .{ .err = .parse_error };
+        if (end >= input.len or input[end] != '"') return .{ .err = errors.code.parse_error };
         // Return string contents without quotes (raw, possibly with escapes)
-        return .{ .id = .{ .string = input[(j + 1)..end] } };
+        return .{ .id = .{ .present = .{ .string = input[(j + 1)..end] } } };
     }
 
     // Null id
     if (v0 == 'n') {
         const rem = input[j..];
         if (rem.len >= 4 and std.mem.eql(u8, rem[0..4], "null")) {
-            return .{ .id = .null };
+            return .{ .id = .{ .present = .null } };
         } else {
-            return .{ .err = .invalid_request };
+            return .{ .err = errors.code.invalid_request };
         }
     }
 
@@ -94,19 +103,47 @@ pub fn extract_request_id(input: []const u8) ExtractIdResult {
         if (input[k] == '-') k += 1;
         const start = k;
         while (k < input.len and std.ascii.isDigit(input[k])) : (k += 1) {}
-        if (k == start) return .{ .err = .invalid_request }; // '-' not followed by digits
+        if (k == start) return .{ .err = errors.code.invalid_request }; // '-' not followed by digits
         // Ensure the token ends at a valid delimiter for JSON (ws, ',', '}')
         if (k < input.len) {
             const term = input[k];
             if (!(std.ascii.isWhitespace(term) or term == ',' or term == '}')) {
-                return .{ .err = .invalid_request };
+                return .{ .err = errors.code.invalid_request };
             }
         }
-        return .{ .id = .{ .number = input[j..k] } };
+        return .{ .id = .{ .present = .{ .number = input[j..k] } } };
     }
 
     // Any other type (true/false/object/array/float) is invalid for id.
-    return .{ .err = .invalid_request };
+    return .{ .err = errors.code.invalid_request };
+}
+
+/// Extract request id from previously scanned top-level field spans.
+///
+/// This avoids reparsing the full JSON object when request fields were already
+/// scanned in the dispatch pipeline.
+pub fn extract_request_id_from_fields(input: []const u8, fields: scan.RequestFieldSpans) ExtractIdResult {
+    const id_span = fields.id orelse return .{ .id = .missing };
+    return parse_id_value_token(input[id_span.start..id_span.end]);
+}
+
+fn parse_id_value_token(token: []const u8) ExtractIdResult {
+    if (token.len == 4 and std.mem.eql(u8, token, "null")) {
+        return .{ .id = .{ .present = .null } };
+    }
+
+    if (token.len >= 2 and token[0] == '"' and token[token.len - 1] == '"') {
+        return .{ .id = .{ .present = .{ .string = token[1 .. token.len - 1] } } };
+    }
+
+    if (token.len == 0) return .{ .err = errors.code.invalid_request };
+    var i: usize = 0;
+    if (token[i] == '-') i += 1;
+    if (i >= token.len) return .{ .err = errors.code.invalid_request };
+    while (i < token.len) : (i += 1) {
+        if (!std.ascii.isDigit(token[i])) return .{ .err = errors.code.invalid_request };
+    }
+    return .{ .id = .{ .present = .{ .number = token } } };
 }
 
 // ============================================================================
@@ -123,8 +160,11 @@ test "extractRequestId: numeric id" {
         "}";
     const r = extract_request_id(req);
     switch (r) {
-        .id => |id| switch (id) {
-            .number => |tok| try std.testing.expectEqualStrings("42", tok),
+        .id => |rid| switch (rid) {
+            .present => |id| switch (id) {
+                .number => |tok| try std.testing.expectEqualStrings("42", tok),
+                else => return error.UnexpectedVariant,
+            },
             else => return error.UnexpectedVariant,
         },
         .err => |_| return error.UnexpectedError,
@@ -141,8 +181,11 @@ test "extractRequestId: string id" {
         "}";
     const r = extract_request_id(req);
     switch (r) {
-        .id => |id| switch (id) {
-            .string => |s| try std.testing.expectEqualStrings("abc-123", s),
+        .id => |rid| switch (rid) {
+            .present => |id| switch (id) {
+                .string => |s| try std.testing.expectEqualStrings("abc-123", s),
+                else => return error.UnexpectedVariant,
+            },
             else => return error.UnexpectedVariant,
         },
         .err => |_| return error.UnexpectedError,
@@ -159,12 +202,15 @@ test "extractRequestId: null id" {
         "}";
     const r = extract_request_id(req);
     switch (r) {
-        .id => |id| try std.testing.expect(id == .null),
+        .id => |rid| switch (rid) {
+            .present => |id| try std.testing.expect(id == .null),
+            else => return error.UnexpectedVariant,
+        },
         .err => |_| return error.UnexpectedError,
     }
 }
 
-test "extractRequestId: missing id -> null" {
+test "extractRequestId: missing id -> notification marker" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
@@ -173,7 +219,7 @@ test "extractRequestId: missing id -> null" {
         "}";
     const r = extract_request_id(req);
     switch (r) {
-        .id => |id| try std.testing.expect(id == .null),
+        .id => |rid| try std.testing.expect(rid == .missing),
         .err => |_| return error.UnexpectedError,
     }
 }
@@ -183,7 +229,7 @@ test "extractRequestId: batch input invalid_request" {
     const r = extract_request_id(req);
     switch (r) {
         .id => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
     }
 }
 
@@ -198,6 +244,29 @@ test "extractRequestId: invalid id type (object) -> invalid_request" {
     const r = extract_request_id(req);
     switch (r) {
         .id => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
+    }
+}
+
+test "extractRequestIdFromFields: extracts explicit null id" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": null, \"method\": \"eth_chainId\", \"params\": [] }";
+    const fields = try scan.scan_request_fields(req);
+    const out = extract_request_id_from_fields(req, fields);
+    switch (out) {
+        .id => |rid| switch (rid) {
+            .present => |id| try std.testing.expect(id == .null),
+            else => return error.UnexpectedVariant,
+        },
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "extractRequestIdFromFields: missing id returns notification marker" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_chainId\", \"params\": [] }";
+    const fields = try scan.scan_request_fields(req);
+    const out = extract_request_id_from_fields(req, fields);
+    switch (out) {
+        .id => |rid| try std.testing.expect(rid == .missing),
+        .err => |_| return error.UnexpectedError,
     }
 }

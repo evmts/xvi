@@ -26,7 +26,7 @@ pub const Response = struct {
     pub fn write_error(writer: anytype, id: envelope.Id, code: errors.JsonRpcErrorCode, message: []const u8, data_raw: ?[]const u8) !void {
         try write_response_prefix(writer, id);
         try writer.writeAll(",\"error\":{\"code\":");
-        try std.fmt.format(writer, "{}", .{@as(i32, @intFromEnum(code))});
+        try std.fmt.format(writer, "{}", .{code});
         try writer.writeAll(",\"message\":");
         try write_json_string(writer, message);
         if (data_raw) |d| {
@@ -161,8 +161,8 @@ test "response.write_success_raw: id null" {
 test "response.write_error: basic (string id)" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    const code = errors.JsonRpcErrorCode.invalid_request;
-    try Response.write_error(buf.writer(), .{ .string = "x" }, code, code.default_message(), null);
+    const code = errors.code.invalid_request;
+    try Response.write_error(buf.writer(), .{ .string = "x" }, code, errors.default_message(code), null);
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"error\":{\"code\":-32600,\"message\":\"Invalid request\"}}",
         buf.items,
@@ -172,8 +172,8 @@ test "response.write_error: basic (string id)" {
 test "response.write_error: with data (number id)" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    const code = errors.JsonRpcErrorCode.method_not_found;
-    try Response.write_error(buf.writer(), .{ .number = "7" }, code, code.default_message(), "{\"foo\":1}");
+    const code = errors.code.method_not_found;
+    try Response.write_error(buf.writer(), .{ .number = "7" }, code, errors.default_message(code), "{\"foo\":1}");
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32601,\"message\":\"Method not found\",\"data\":{\"foo\":1}}}",
         buf.items,

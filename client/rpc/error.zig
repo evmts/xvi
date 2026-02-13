@@ -1,82 +1,84 @@
 const std = @import("std");
+const primitives = @import("primitives");
 
-/// JSON-RPC error codes per EIP-1474 with Nethermind extensions.
+/// JSON-RPC error code primitive (Voltaire Int32).
+pub const JsonRpcErrorCode = primitives.Int32.Int32;
+
+/// JSON-RPC / Nethermind-compatible error code constants.
 ///
-/// Notes:
-/// - Underlying type is `i32` to match EIP-1474 and Nethermind codes.
-/// - This is a local definition until Voltaire exposes this enum; callers
-///   should import it via `client/rpc/root.zig` re-export.
-pub const JsonRpcErrorCode = enum(i32) {
+/// Using primitive-backed constants avoids introducing a local enum type while
+/// keeping the codes centralized and shared across the RPC module.
+pub const code = struct {
     // EIP-1474 Standard Errors
-    parse_error = -32700,
-    invalid_request = -32600,
-    method_not_found = -32601,
-    invalid_params = -32602,
-    internal_error = -32603,
-    invalid_input = -32000,
-    resource_not_found = -32001,
-    resource_unavailable = -32002,
-    transaction_rejected = -32003,
-    method_not_supported = -32004,
-    limit_exceeded = -32005,
-    jsonrpc_version_not_supported = -32006,
+    pub const parse_error: JsonRpcErrorCode = -32700;
+    pub const invalid_request: JsonRpcErrorCode = -32600;
+    pub const method_not_found: JsonRpcErrorCode = -32601;
+    pub const invalid_params: JsonRpcErrorCode = -32602;
+    pub const internal_error: JsonRpcErrorCode = -32603;
+    pub const invalid_input: JsonRpcErrorCode = -32000;
+    pub const resource_not_found: JsonRpcErrorCode = -32001;
+    pub const resource_unavailable: JsonRpcErrorCode = -32002;
+    pub const transaction_rejected: JsonRpcErrorCode = -32003;
+    pub const method_not_supported: JsonRpcErrorCode = -32004;
+    pub const limit_exceeded: JsonRpcErrorCode = -32005;
+    pub const jsonrpc_version_not_supported: JsonRpcErrorCode = -32006;
 
     // Nethermind Extensions (used in downstream tooling/tests)
-    execution_reverted = 3,
-    tx_sync_timeout = 4,
-    transaction_rejected_nethermind = -32010,
-    execution_error = -32015,
-    timeout = -32016,
-    module_timeout = -32017,
-    account_locked = -32020,
-    unknown_block = -39001,
-    nonce_too_low = -38010,
-    nonce_too_high = -38011,
-    insufficient_intrinsic_gas = -38013,
-    invalid_transaction = -38014,
-    block_gas_limit_reached = -38015,
-    invalid_input_blocks_out_of_order = -38020,
-    block_timestamp_not_increased = -38021,
-    sender_is_not_eoa = -38024,
-    max_init_code_size_exceeded = -38025,
-    invalid_input_too_many_blocks = -38026,
-    pruned_history_unavailable = 4444,
-
-    /// Returns the default, human-readable message for a given error code.
-    pub fn default_message(self: JsonRpcErrorCode) []const u8 {
-        return switch (self) {
-            .parse_error => "Parse error",
-            .invalid_request => "Invalid request",
-            .method_not_found => "Method not found",
-            .invalid_params => "Invalid params",
-            .internal_error => "Internal error",
-            .invalid_input => "Invalid input",
-            .resource_not_found => "Resource not found",
-            .resource_unavailable => "Resource unavailable",
-            .transaction_rejected, .transaction_rejected_nethermind => "Transaction rejected",
-            .method_not_supported => "Method not supported",
-            .limit_exceeded => "Limit exceeded",
-            .jsonrpc_version_not_supported => "JSON-RPC version not supported",
-            .execution_reverted => "Execution reverted",
-            .timeout, .module_timeout => "Timeout",
-            .account_locked => "Account locked",
-            else => "Internal error",
-        };
-    }
+    pub const execution_reverted: JsonRpcErrorCode = 3;
+    pub const tx_sync_timeout: JsonRpcErrorCode = 4;
+    pub const transaction_rejected_nethermind: JsonRpcErrorCode = -32010;
+    pub const execution_error: JsonRpcErrorCode = -32015;
+    pub const timeout: JsonRpcErrorCode = -32016;
+    pub const module_timeout: JsonRpcErrorCode = -32017;
+    pub const account_locked: JsonRpcErrorCode = -32020;
+    pub const unknown_block: JsonRpcErrorCode = -39001;
+    pub const nonce_too_low: JsonRpcErrorCode = -38010;
+    pub const nonce_too_high: JsonRpcErrorCode = -38011;
+    pub const insufficient_intrinsic_gas: JsonRpcErrorCode = -38013;
+    pub const invalid_transaction: JsonRpcErrorCode = -38014;
+    pub const block_gas_limit_reached: JsonRpcErrorCode = -38015;
+    pub const invalid_input_blocks_out_of_order: JsonRpcErrorCode = -38020;
+    pub const block_timestamp_not_increased: JsonRpcErrorCode = -38021;
+    pub const sender_is_not_eoa: JsonRpcErrorCode = -38024;
+    pub const max_init_code_size_exceeded: JsonRpcErrorCode = -38025;
+    pub const invalid_input_too_many_blocks: JsonRpcErrorCode = -38026;
+    pub const pruned_history_unavailable: JsonRpcErrorCode = 4444;
 };
+
+/// Returns the default, human-readable message for a given error code.
+pub fn default_message(err_code: JsonRpcErrorCode) []const u8 {
+    return switch (err_code) {
+        code.parse_error => "Parse error",
+        code.invalid_request => "Invalid request",
+        code.method_not_found => "Method not found",
+        code.invalid_params => "Invalid params",
+        code.internal_error => "Internal error",
+        code.invalid_input => "Invalid input",
+        code.resource_not_found => "Resource not found",
+        code.resource_unavailable => "Resource unavailable",
+        code.transaction_rejected, code.transaction_rejected_nethermind => "Transaction rejected",
+        code.method_not_supported => "Method not supported",
+        code.limit_exceeded => "Limit exceeded",
+        code.jsonrpc_version_not_supported => "JSON-RPC version not supported",
+        code.execution_reverted => "Execution reverted",
+        code.timeout, code.module_timeout => "Timeout",
+        code.account_locked => "Account locked",
+        else => "Internal error",
+    };
+}
 
 // Aliases / Legacy mappings (Nethermind compatibility)
 pub const Legacy = struct {
-    pub const resource_not_found_legacy: JsonRpcErrorCode = .invalid_input;
-    pub const default: JsonRpcErrorCode = .invalid_input;
-    pub const reverted_simulate: JsonRpcErrorCode = .invalid_input;
-    pub const vm_error: JsonRpcErrorCode = .execution_error;
-    pub const intrinsic_gas: JsonRpcErrorCode = .insufficient_intrinsic_gas;
-    pub const insufficient_funds: JsonRpcErrorCode = .invalid_transaction;
-    pub const block_number_invalid: JsonRpcErrorCode = .invalid_input_blocks_out_of_order;
-    pub const block_timestamp_invalid: JsonRpcErrorCode = .block_timestamp_not_increased;
-    pub const client_limit_exceeded_error: JsonRpcErrorCode = .invalid_input_too_many_blocks;
-    pub const client_limit_exceeded: JsonRpcErrorCode = .invalid_input_too_many_blocks;
+    pub const resource_not_found_legacy: JsonRpcErrorCode = code.invalid_input;
+    pub const default: JsonRpcErrorCode = code.invalid_input;
+    pub const reverted_simulate: JsonRpcErrorCode = code.invalid_input;
+    pub const vm_error: JsonRpcErrorCode = code.execution_error;
+    pub const intrinsic_gas: JsonRpcErrorCode = code.insufficient_intrinsic_gas;
+    pub const insufficient_funds: JsonRpcErrorCode = code.invalid_transaction;
+    pub const block_number_invalid: JsonRpcErrorCode = code.invalid_input_blocks_out_of_order;
+    pub const block_timestamp_invalid: JsonRpcErrorCode = code.block_timestamp_not_increased;
+    pub const client_limit_exceeded_error: JsonRpcErrorCode = code.invalid_input_too_many_blocks;
+    pub const client_limit_exceeded: JsonRpcErrorCode = code.invalid_input_too_many_blocks;
 };
 
 // ============================================================================
@@ -84,70 +86,70 @@ pub const Legacy = struct {
 // ============================================================================
 
 test "jsonrpc error codes match eip-1474" {
-    try std.testing.expectEqual(@as(i32, -32700), @intFromEnum(JsonRpcErrorCode.parse_error));
-    try std.testing.expectEqual(@as(i32, -32600), @intFromEnum(JsonRpcErrorCode.invalid_request));
-    try std.testing.expectEqual(@as(i32, -32601), @intFromEnum(JsonRpcErrorCode.method_not_found));
-    try std.testing.expectEqual(@as(i32, -32602), @intFromEnum(JsonRpcErrorCode.invalid_params));
-    try std.testing.expectEqual(@as(i32, -32603), @intFromEnum(JsonRpcErrorCode.internal_error));
-    try std.testing.expectEqual(@as(i32, -32000), @intFromEnum(JsonRpcErrorCode.invalid_input));
-    try std.testing.expectEqual(@as(i32, -32001), @intFromEnum(JsonRpcErrorCode.resource_not_found));
-    try std.testing.expectEqual(@as(i32, -32002), @intFromEnum(JsonRpcErrorCode.resource_unavailable));
-    try std.testing.expectEqual(@as(i32, -32003), @intFromEnum(JsonRpcErrorCode.transaction_rejected));
-    try std.testing.expectEqual(@as(i32, -32004), @intFromEnum(JsonRpcErrorCode.method_not_supported));
-    try std.testing.expectEqual(@as(i32, -32005), @intFromEnum(JsonRpcErrorCode.limit_exceeded));
-    try std.testing.expectEqual(@as(i32, -32006), @intFromEnum(JsonRpcErrorCode.jsonrpc_version_not_supported));
+    try std.testing.expectEqual(@as(i32, -32700), code.parse_error);
+    try std.testing.expectEqual(@as(i32, -32600), code.invalid_request);
+    try std.testing.expectEqual(@as(i32, -32601), code.method_not_found);
+    try std.testing.expectEqual(@as(i32, -32602), code.invalid_params);
+    try std.testing.expectEqual(@as(i32, -32603), code.internal_error);
+    try std.testing.expectEqual(@as(i32, -32000), code.invalid_input);
+    try std.testing.expectEqual(@as(i32, -32001), code.resource_not_found);
+    try std.testing.expectEqual(@as(i32, -32002), code.resource_unavailable);
+    try std.testing.expectEqual(@as(i32, -32003), code.transaction_rejected);
+    try std.testing.expectEqual(@as(i32, -32004), code.method_not_supported);
+    try std.testing.expectEqual(@as(i32, -32005), code.limit_exceeded);
+    try std.testing.expectEqual(@as(i32, -32006), code.jsonrpc_version_not_supported);
 }
 
 test "jsonrpc error default messages follow eip-1474" {
-    try std.testing.expectEqualStrings("Parse error", JsonRpcErrorCode.parse_error.default_message());
-    try std.testing.expectEqualStrings("Invalid request", JsonRpcErrorCode.invalid_request.default_message());
-    try std.testing.expectEqualStrings("Method not found", JsonRpcErrorCode.method_not_found.default_message());
-    try std.testing.expectEqualStrings("Invalid params", JsonRpcErrorCode.invalid_params.default_message());
-    try std.testing.expectEqualStrings("Internal error", JsonRpcErrorCode.internal_error.default_message());
-    try std.testing.expectEqualStrings("Invalid input", JsonRpcErrorCode.invalid_input.default_message());
-    try std.testing.expectEqualStrings("Resource not found", JsonRpcErrorCode.resource_not_found.default_message());
-    try std.testing.expectEqualStrings("Resource unavailable", JsonRpcErrorCode.resource_unavailable.default_message());
-    try std.testing.expectEqualStrings("Transaction rejected", JsonRpcErrorCode.transaction_rejected.default_message());
-    try std.testing.expectEqualStrings("Method not supported", JsonRpcErrorCode.method_not_supported.default_message());
-    try std.testing.expectEqualStrings("Limit exceeded", JsonRpcErrorCode.limit_exceeded.default_message());
-    try std.testing.expectEqualStrings("JSON-RPC version not supported", JsonRpcErrorCode.jsonrpc_version_not_supported.default_message());
+    try std.testing.expectEqualStrings("Parse error", default_message(code.parse_error));
+    try std.testing.expectEqualStrings("Invalid request", default_message(code.invalid_request));
+    try std.testing.expectEqualStrings("Method not found", default_message(code.method_not_found));
+    try std.testing.expectEqualStrings("Invalid params", default_message(code.invalid_params));
+    try std.testing.expectEqualStrings("Internal error", default_message(code.internal_error));
+    try std.testing.expectEqualStrings("Invalid input", default_message(code.invalid_input));
+    try std.testing.expectEqualStrings("Resource not found", default_message(code.resource_not_found));
+    try std.testing.expectEqualStrings("Resource unavailable", default_message(code.resource_unavailable));
+    try std.testing.expectEqualStrings("Transaction rejected", default_message(code.transaction_rejected));
+    try std.testing.expectEqualStrings("Method not supported", default_message(code.method_not_supported));
+    try std.testing.expectEqualStrings("Limit exceeded", default_message(code.limit_exceeded));
+    try std.testing.expectEqualStrings("JSON-RPC version not supported", default_message(code.jsonrpc_version_not_supported));
 }
 
 test "jsonrpc error codes include nethermind extensions" {
-    try std.testing.expectEqual(@as(i32, 3), @intFromEnum(JsonRpcErrorCode.execution_reverted));
-    try std.testing.expectEqual(@as(i32, 4), @intFromEnum(JsonRpcErrorCode.tx_sync_timeout));
-    try std.testing.expectEqual(@as(i32, -32010), @intFromEnum(JsonRpcErrorCode.transaction_rejected_nethermind));
-    try std.testing.expectEqual(@as(i32, -32015), @intFromEnum(JsonRpcErrorCode.execution_error));
-    try std.testing.expectEqual(@as(i32, -32016), @intFromEnum(JsonRpcErrorCode.timeout));
-    try std.testing.expectEqual(@as(i32, -32017), @intFromEnum(JsonRpcErrorCode.module_timeout));
-    try std.testing.expectEqual(@as(i32, -32020), @intFromEnum(JsonRpcErrorCode.account_locked));
-    try std.testing.expectEqual(@as(i32, -39001), @intFromEnum(JsonRpcErrorCode.unknown_block));
-    try std.testing.expectEqual(@as(i32, -38010), @intFromEnum(JsonRpcErrorCode.nonce_too_low));
-    try std.testing.expectEqual(@as(i32, -38011), @intFromEnum(JsonRpcErrorCode.nonce_too_high));
-    try std.testing.expectEqual(@as(i32, -38013), @intFromEnum(JsonRpcErrorCode.insufficient_intrinsic_gas));
-    try std.testing.expectEqual(@as(i32, -38014), @intFromEnum(JsonRpcErrorCode.invalid_transaction));
-    try std.testing.expectEqual(@as(i32, -38015), @intFromEnum(JsonRpcErrorCode.block_gas_limit_reached));
-    try std.testing.expectEqual(@as(i32, -38020), @intFromEnum(JsonRpcErrorCode.invalid_input_blocks_out_of_order));
-    try std.testing.expectEqual(@as(i32, -38021), @intFromEnum(JsonRpcErrorCode.block_timestamp_not_increased));
-    try std.testing.expectEqual(@as(i32, -38024), @intFromEnum(JsonRpcErrorCode.sender_is_not_eoa));
-    try std.testing.expectEqual(@as(i32, -38025), @intFromEnum(JsonRpcErrorCode.max_init_code_size_exceeded));
-    try std.testing.expectEqual(@as(i32, -38026), @intFromEnum(JsonRpcErrorCode.invalid_input_too_many_blocks));
-    try std.testing.expectEqual(@as(i32, 4444), @intFromEnum(JsonRpcErrorCode.pruned_history_unavailable));
+    try std.testing.expectEqual(@as(i32, 3), code.execution_reverted);
+    try std.testing.expectEqual(@as(i32, 4), code.tx_sync_timeout);
+    try std.testing.expectEqual(@as(i32, -32010), code.transaction_rejected_nethermind);
+    try std.testing.expectEqual(@as(i32, -32015), code.execution_error);
+    try std.testing.expectEqual(@as(i32, -32016), code.timeout);
+    try std.testing.expectEqual(@as(i32, -32017), code.module_timeout);
+    try std.testing.expectEqual(@as(i32, -32020), code.account_locked);
+    try std.testing.expectEqual(@as(i32, -39001), code.unknown_block);
+    try std.testing.expectEqual(@as(i32, -38010), code.nonce_too_low);
+    try std.testing.expectEqual(@as(i32, -38011), code.nonce_too_high);
+    try std.testing.expectEqual(@as(i32, -38013), code.insufficient_intrinsic_gas);
+    try std.testing.expectEqual(@as(i32, -38014), code.invalid_transaction);
+    try std.testing.expectEqual(@as(i32, -38015), code.block_gas_limit_reached);
+    try std.testing.expectEqual(@as(i32, -38020), code.invalid_input_blocks_out_of_order);
+    try std.testing.expectEqual(@as(i32, -38021), code.block_timestamp_not_increased);
+    try std.testing.expectEqual(@as(i32, -38024), code.sender_is_not_eoa);
+    try std.testing.expectEqual(@as(i32, -38025), code.max_init_code_size_exceeded);
+    try std.testing.expectEqual(@as(i32, -38026), code.invalid_input_too_many_blocks);
+    try std.testing.expectEqual(@as(i32, 4444), code.pruned_history_unavailable);
 
-    try std.testing.expectEqual(@as(i32, -32000), @intFromEnum(Legacy.resource_not_found_legacy));
-    try std.testing.expectEqual(@as(i32, -32000), @intFromEnum(Legacy.default));
-    try std.testing.expectEqual(@as(i32, -32000), @intFromEnum(Legacy.reverted_simulate));
-    try std.testing.expectEqual(@as(i32, -32015), @intFromEnum(Legacy.vm_error));
-    try std.testing.expectEqual(@as(i32, -38013), @intFromEnum(Legacy.intrinsic_gas));
-    try std.testing.expectEqual(@as(i32, -38014), @intFromEnum(Legacy.insufficient_funds));
-    try std.testing.expectEqual(@as(i32, -38020), @intFromEnum(Legacy.block_number_invalid));
-    try std.testing.expectEqual(@as(i32, -38021), @intFromEnum(Legacy.block_timestamp_invalid));
-    try std.testing.expectEqual(@as(i32, -38026), @intFromEnum(Legacy.client_limit_exceeded_error));
-    try std.testing.expectEqual(@as(i32, -38026), @intFromEnum(Legacy.client_limit_exceeded));
+    try std.testing.expectEqual(@as(i32, -32000), Legacy.resource_not_found_legacy);
+    try std.testing.expectEqual(@as(i32, -32000), Legacy.default);
+    try std.testing.expectEqual(@as(i32, -32000), Legacy.reverted_simulate);
+    try std.testing.expectEqual(@as(i32, -32015), Legacy.vm_error);
+    try std.testing.expectEqual(@as(i32, -38013), Legacy.intrinsic_gas);
+    try std.testing.expectEqual(@as(i32, -38014), Legacy.insufficient_funds);
+    try std.testing.expectEqual(@as(i32, -38020), Legacy.block_number_invalid);
+    try std.testing.expectEqual(@as(i32, -38021), Legacy.block_timestamp_invalid);
+    try std.testing.expectEqual(@as(i32, -38026), Legacy.client_limit_exceeded_error);
+    try std.testing.expectEqual(@as(i32, -38026), Legacy.client_limit_exceeded);
 }
 
 test "jsonrpc error default messages include nethermind extensions" {
-    try std.testing.expectEqualStrings("Execution reverted", JsonRpcErrorCode.execution_reverted.default_message());
-    try std.testing.expectEqualStrings("Timeout", JsonRpcErrorCode.timeout.default_message());
-    try std.testing.expectEqualStrings("Account locked", JsonRpcErrorCode.account_locked.default_message());
+    try std.testing.expectEqualStrings("Execution reverted", default_message(code.execution_reverted));
+    try std.testing.expectEqualStrings("Timeout", default_message(code.timeout));
+    try std.testing.expectEqualStrings("Account locked", default_message(code.account_locked));
 }

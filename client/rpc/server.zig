@@ -3,7 +3,10 @@
 /// Mirrors core settings from Nethermind's JsonRpcConfig needed for
 /// HTTP and WebSocket transports.
 const std = @import("std");
+const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
+const envelope = @import("envelope.zig");
+const dispatch = @import("dispatch.zig");
 const scan = @import("scan.zig");
 
 const default_enabled = false;
@@ -68,7 +71,7 @@ pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErro
 /// Returns `null` when accepted, otherwise `.limit_exceeded`.
 pub fn validate_batch_size(config: RpcServerConfig, batch_size: usize, is_authenticated: bool) ?errors.JsonRpcErrorCode {
     if (is_authenticated) return null;
-    if (batch_size > config.max_batch_size) return .limit_exceeded;
+    if (batch_size > config.max_batch_size) return errors.code.limit_exceeded;
     return null;
 }
 
@@ -84,22 +87,72 @@ pub const ParseRequestKindResult = union(enum) {
     err: errors.JsonRpcErrorCode,
 };
 
+/// Parsed single-request dispatch metadata produced from one scan pass.
+pub const ParsedSingleRequest = struct {
+    namespace: std.meta.Tag(jsonrpc.JsonRpcMethod),
+    id: envelope.RequestId,
+};
+
+/// Single-request parse result (namespace + request id), or EIP-1474 error code.
+pub const ParseSingleRequestResult = union(enum) {
+    request: ParsedSingleRequest,
+    err: errors.JsonRpcErrorCode,
+};
+
 /// Parse top-level request shape and enforce batch limits before dispatch.
 ///
 /// Mirrors Nethermind's object-vs-array split in `JsonRpcProcessor`:
 /// - object: routed to single-request method dispatch
 /// - array: count entries and enforce `max_batch_size` for unauthenticated calls
 pub fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const u8, is_authenticated: bool) ParseRequestKindResult {
-    const kind = scan.parse_top_level_request_kind(request) catch |err| return .{ .err = scan.scan_error_to_jsonrpc_error(err) };
-    return switch (kind) {
-        .object => .{ .request = .object },
-        .array => |batch_size| blk: {
-            if (validate_batch_size(config, batch_size, is_authenticated)) |code| {
-                break :blk .{ .err = code };
+    var i: usize = 0;
+    if (request.len >= 3 and request[0] == 0xEF and request[1] == 0xBB and request[2] == 0xBF) i = 3;
+    while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
+    if (i >= request.len) return .{ .err = errors.code.parse_error };
+
+    return switch (request[i]) {
+        '{' => .{ .request = .object },
+        '[' => blk: {
+            const kind = scan.parse_top_level_request_kind(request) catch |err| break :blk .{ .err = scan.scan_error_to_jsonrpc_error(err) };
+            switch (kind) {
+                .object => unreachable,
+                .array => |batch_size| {
+                    if (validate_batch_size(config, batch_size, is_authenticated)) |code| {
+                        break :blk .{ .err = code };
+                    }
+                    break :blk .{ .request = .{ .batch = batch_size } };
+                },
             }
-            break :blk .{ .request = .{ .batch = batch_size } };
         },
+        else => .{ .err = errors.code.invalid_request },
     };
+}
+
+/// Parse a single JSON-RPC request once and return routing metadata.
+///
+/// This combines:
+/// - top-level `jsonrpc` validation
+/// - method namespace resolution
+/// - request-id extraction (including notification detection)
+///
+/// ...without reparsing the same payload in dispatch and handler stages.
+pub fn parse_single_request_for_dispatch(request: []const u8) ParseSingleRequestResult {
+    const fields = switch (scan.scan_and_validate_request_fields(request)) {
+        .fields => |value| value,
+        .err => |code| return .{ .err = code },
+    };
+
+    const ns = switch (dispatch.parse_request_namespace_from_fields(request, fields)) {
+        .namespace => |tag| tag,
+        .err => |code| return .{ .err = code },
+    };
+
+    const request_id = switch (envelope.extract_request_id_from_fields(request, fields)) {
+        .id => |rid| rid,
+        .err => |code| return .{ .err = code },
+    };
+
+    return .{ .request = .{ .namespace = ns, .id = request_id } };
 }
 
 // ============================================================================
@@ -157,11 +210,11 @@ test "validate_request_jsonrpc_version rejects missing jsonrpc field" {
         "  \"method\": \"eth_chainId\",\n" ++
         "  \"params\": []\n" ++
         "}";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.invalid_request, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_request_jsonrpc_version rejects empty request object" {
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version("{}").?);
+    try std.testing.expectEqual(errors.code.invalid_request, validate_request_jsonrpc_version("{}").?);
 }
 
 test "validate_request_jsonrpc_version rejects unsupported version" {
@@ -172,7 +225,7 @@ test "validate_request_jsonrpc_version rejects unsupported version" {
         "  \"method\": \"eth_chainId\",\n" ++
         "  \"params\": []\n" ++
         "}";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_request_jsonrpc_version applies last-wins semantics for duplicate jsonrpc keys" {
@@ -184,7 +237,7 @@ test "validate_request_jsonrpc_version applies last-wins semantics for duplicate
         "  \"method\": \"eth_chainId\",\n" ++
         "  \"params\": []\n" ++
         "}";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_request_jsonrpc_version accepts duplicate jsonrpc when final value is 2.0" {
@@ -207,7 +260,7 @@ test "validate_request_jsonrpc_version rejects non-string version token" {
         "  \"method\": \"eth_chainId\",\n" ++
         "  \"params\": []\n" ++
         "}";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.invalid_request, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_request_jsonrpc_version returns parse_error on unterminated version string" {
@@ -218,12 +271,12 @@ test "validate_request_jsonrpc_version returns parse_error on unterminated versi
         "  \"method\": \"eth_chainId\",\n" ++
         "  \"params\": []\n" ++
         "}";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.parse_error, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_request_jsonrpc_version returns parse_error on invalid utf8 json" {
     const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"\x80\" }";
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
+    try std.testing.expectEqual(errors.code.parse_error, validate_request_jsonrpc_version(req).?);
 }
 
 test "validate_batch_size accepts batches at configured limit" {
@@ -233,7 +286,7 @@ test "validate_batch_size accepts batches at configured limit" {
 
 test "validate_batch_size rejects oversized unauthenticated batches" {
     const cfg = RpcServerConfig{ .max_batch_size = 4 };
-    try std.testing.expectEqual(errors.JsonRpcErrorCode.limit_exceeded, validate_batch_size(cfg, 5, false).?);
+    try std.testing.expectEqual(errors.code.limit_exceeded, validate_batch_size(cfg, 5, false).?);
 }
 
 test "validate_batch_size allows oversized authenticated batches" {
@@ -278,7 +331,7 @@ test "parse_request_kind_for_dispatch rejects oversized unauthenticated batch" {
     const res = parse_request_kind_for_dispatch(cfg, req, false);
     switch (res) {
         .request => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.limit_exceeded, code),
+        .err => |code| try std.testing.expectEqual(errors.code.limit_exceeded, code),
     }
 }
 
@@ -304,7 +357,7 @@ test "parse_request_kind_for_dispatch rejects non-object non-array request roots
     const res = parse_request_kind_for_dispatch(cfg, "\"hello\"", false);
     switch (res) {
         .request => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
     }
 }
 
@@ -313,7 +366,7 @@ test "parse_request_kind_for_dispatch returns parse_error for malformed json" {
     const res = parse_request_kind_for_dispatch(cfg, "[{\"jsonrpc\":\"2.0\"}", false);
     switch (res) {
         .request => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+        .err => |code| try std.testing.expectEqual(errors.code.parse_error, code),
     }
 }
 
@@ -322,6 +375,42 @@ test "parse_request_kind_for_dispatch rejects empty batches as invalid_request" 
     const res = parse_request_kind_for_dispatch(cfg, "[]", false);
     switch (res) {
         .request => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+        .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
+    }
+}
+
+test "parse_single_request_for_dispatch returns namespace and numeric id in one pass" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"eth_chainId\", \"params\": [] }";
+    const out = parse_single_request_for_dispatch(req);
+    switch (out) {
+        .request => |parsed| {
+            try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).eth, parsed.namespace);
+            switch (parsed.id) {
+                .present => |id| switch (id) {
+                    .number => |tok| try std.testing.expectEqualStrings("7", tok),
+                    else => return error.UnexpectedVariant,
+                },
+                else => return error.UnexpectedVariant,
+            }
+        },
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "parse_single_request_for_dispatch marks notifications when id is missing" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_chainId\", \"params\": [] }";
+    const out = parse_single_request_for_dispatch(req);
+    switch (out) {
+        .request => |parsed| try std.testing.expect(parsed.id == .missing),
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "parse_single_request_for_dispatch rejects unknown method" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"foo_bar\", \"params\": [] }";
+    const out = parse_single_request_for_dispatch(req);
+    switch (out) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.code.method_not_found, code),
     }
 }
