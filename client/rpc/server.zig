@@ -219,6 +219,11 @@ test "validate_request_jsonrpc_version returns parse_error on unterminated versi
     try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
 }
 
+test "validate_request_jsonrpc_version returns parse_error on invalid utf8 json" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"\x80\" }";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
+}
+
 test "validate_batch_size accepts batches at configured limit" {
     const cfg = RpcServerConfig{ .max_batch_size = 4 };
     try std.testing.expect(validate_batch_size(cfg, 4, false) == null);

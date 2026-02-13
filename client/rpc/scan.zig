@@ -120,13 +120,16 @@ const max_json_nesting_depth: usize = 64;
 fn parse_json_string(input: []const u8, index: *usize) ScanRequestError!void {
     if (index.* >= input.len or input[index.*] != '"') return error.ParseError;
     index.* += 1;
-    while (index.* < input.len) : (index.* += 1) {
+    var utf8_chunk_start = index.*;
+    while (index.* < input.len) {
         const ch = input[index.*];
         if (ch == '"') {
+            if (!std.unicode.utf8ValidateSlice(input[utf8_chunk_start..index.*])) return error.ParseError;
             index.* += 1;
             return;
         }
         if (ch == '\\') {
+            if (!std.unicode.utf8ValidateSlice(input[utf8_chunk_start..index.*])) return error.ParseError;
             index.* += 1;
             if (index.* >= input.len) return error.ParseError;
             const esc = input[index.*];
@@ -142,9 +145,12 @@ fn parse_json_string(input: []const u8, index: *usize) ScanRequestError!void {
                 },
                 else => return error.ParseError,
             }
+            index.* += 1;
+            utf8_chunk_start = index.*;
             continue;
         }
         if (ch < 0x20) return error.ParseError;
+        index.* += 1;
     }
     return error.ParseError;
 }
@@ -424,6 +430,11 @@ test "scanRequestFields rejects empty request objects as invalid_request" {
 
 test "scanRequestFields rejects invalid JSON with trailing tokens" {
     const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\" } garbage";
+    try std.testing.expectError(error.ParseError, scan_request_fields(req));
+}
+
+test "scanRequestFields rejects invalid utf8 in string tokens" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"\x80\" }";
     try std.testing.expectError(error.ParseError, scan_request_fields(req));
 }
 
