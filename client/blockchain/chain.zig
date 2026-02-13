@@ -1243,8 +1243,42 @@ test "Chain - candidate_reorg_depth_local returns typed error for non-contiguous
 
 /// Generic, comptime-injected head hash reader for any chain-like type.
 pub fn head_hash_of(chain: anytype) !?Hash.Hash {
-    // Reuse the snapshot logic in `head_block_of` to avoid duplication.
-    const maybe_block = try head_block_of(chain);
+    return head_hash_of_with_policy(chain, 2);
+}
+
+/// Generic, comptime-injected head hash reader with configurable retry policy.
+///
+/// Parameters:
+/// - `max_attempts`: number of reads allowed when head changes during read.
+///   Uses canonical number->hash mapping when available to avoid full block
+///   reads on hot hash-only paths.
+pub fn head_hash_of_with_policy(chain: anytype, max_attempts: usize) !?Hash.Hash {
+    const attempts = @max(max_attempts, 1);
+    var attempt: usize = 0;
+    while (attempt < attempts) : (attempt += 1) {
+        const before = chain.getHeadBlockNumber() orelse return null;
+        const maybe_hash = try head_hash_at_number(chain, before);
+        const hh = maybe_hash orelse return null;
+        const after = chain.getHeadBlockNumber() orelse return null;
+        if (after == before) return hh;
+        if (attempt + 1 == attempts) return hh; // return 'before' snapshot
+    }
+    return null; // defensive
+}
+
+fn head_hash_at_number(chain: anytype, number: u64) !?Hash.Hash {
+    const ChainType = switch (@typeInfo(@TypeOf(chain))) {
+        .pointer => |ptr| ptr.child,
+        else => @TypeOf(chain),
+    };
+
+    // Prefer hash-only lookup to avoid full block reads on hot paths.
+    if (@hasDecl(ChainType, "getCanonicalHash")) {
+        return chain.getCanonicalHash(number);
+    }
+
+    // Fallback for chain-like types that expose only block-by-number.
+    const maybe_block = try chain.getBlockByNumber(number);
     return if (maybe_block) |b| b.hash else null;
 }
 
@@ -1366,6 +1400,14 @@ const RacingHeadChain = struct {
 
     pub fn getHeadBlockNumber(self: *@This()) ?u64 {
         return self.head_number.load(.acquire);
+    }
+
+    pub fn getCanonicalHash(self: *@This(), number: u64) ?Hash.Hash {
+        return switch (number) {
+            1 => self.first_block.hash,
+            2 => self.second_block.hash,
+            else => null,
+        };
     }
 
     pub fn getBlockByNumber(self: *@This(), number: u64) !?Block.Block {
@@ -2014,6 +2056,37 @@ test "Chain - head snapshot helpers tolerate concurrent head movement" {
         try std.testing.expect(hh != null);
         try std.testing.expectEqualSlices(u8, &b1.hash, &hh.?);
     }
+}
+
+test "Chain - head_hash_of uses canonical hash path when available" {
+    const allocator = std.testing.allocator;
+    const genesis = try Block.genesis(1, allocator);
+
+    const MockHashOnlyChain = struct {
+        head_number: ?u64 = 0,
+        canonical_hash: Hash.Hash,
+        block_lookup_calls: usize = 0,
+
+        pub fn getHeadBlockNumber(self: *@This()) ?u64 {
+            return self.head_number;
+        }
+
+        pub fn getCanonicalHash(self: *@This(), number: u64) ?Hash.Hash {
+            if (number != 0) return null;
+            return self.canonical_hash;
+        }
+
+        pub fn getBlockByNumber(self: *@This(), _: u64) error{UnexpectedBlockLookup}!?Block.Block {
+            self.block_lookup_calls += 1;
+            return error.UnexpectedBlockLookup;
+        }
+    };
+
+    var mock = MockHashOnlyChain{ .canonical_hash = genesis.hash };
+    const hh = try head_hash_of(&mock);
+    try std.testing.expect(hh != null);
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hh.?);
+    try std.testing.expectEqual(@as(usize, 0), mock.block_lookup_calls);
 }
 
 test "Chain - head_block_of_with_policy returns head snapshot" {
