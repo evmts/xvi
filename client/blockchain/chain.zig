@@ -403,6 +403,7 @@ fn canonical_head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
     return canonical;
 }
 
+/// Returns whether `candidate_head` diverges from the current canonical head.
 pub fn has_canonical_divergence_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
@@ -415,6 +416,26 @@ pub fn has_canonical_divergence_local(
     if (Hash.equals(&ancestor, &canonical_head)) return false; // candidate extends current head
     if (Hash.equals(&ancestor, &candidate_head)) return false; // candidate is an older canonical ancestor
     return true;
+}
+
+const ReorgDepthContext = struct {
+    canonical_head_number: u64,
+    candidate_head_number: u64,
+    ancestor_number: u64,
+};
+
+fn reorg_depth_context_local(chain: *Chain, candidate_head: Hash.Hash) ?ReorgDepthContext {
+    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return null;
+    const canonical_head_block = get_block_local(chain, canonical_head) orelse return null;
+    const candidate_head_block = get_block_local(chain, candidate_head) orelse return null;
+    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return null;
+    const ancestor_block = get_block_local(chain, ancestor) orelse return null;
+
+    return .{
+        .canonical_head_number = canonical_head_block.header.number,
+        .candidate_head_number = candidate_head_block.header.number,
+        .ancestor_number = ancestor_block.header.number,
+    };
 }
 
 /// Returns local-only reorg depth from canonical head to common ancestor.
@@ -432,13 +453,10 @@ pub fn canonical_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
 ) ?u64 {
-    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return null;
-    const canonical_head_block = get_block_local(chain, canonical_head) orelse return null;
-    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return null;
-    const ancestor_block = get_block_local(chain, ancestor) orelse return null;
+    const ctx = reorg_depth_context_local(chain, candidate_head) orelse return null;
 
-    if (ancestor_block.header.number > canonical_head_block.header.number) return null;
-    return canonical_head_block.header.number - ancestor_block.header.number;
+    if (ctx.ancestor_number > ctx.canonical_head_number) return null;
+    return ctx.canonical_head_number - ctx.ancestor_number;
 }
 
 /// Returns local-only candidate-branch depth from candidate head to common ancestor.
@@ -456,13 +474,10 @@ pub fn candidate_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
 ) ?u64 {
-    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return null;
-    const candidate_head_block = get_block_local(chain, candidate_head) orelse return null;
-    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return null;
-    const ancestor_block = get_block_local(chain, ancestor) orelse return null;
+    const ctx = reorg_depth_context_local(chain, candidate_head) orelse return null;
 
-    if (ancestor_block.header.number > candidate_head_block.header.number) return null;
-    return candidate_head_block.header.number - ancestor_block.header.number;
+    if (ctx.ancestor_number > ctx.candidate_head_number) return null;
+    return ctx.candidate_head_number - ctx.ancestor_number;
 }
 
 test "Chain - common_ancestor_hash_local returns null when either missing" {
