@@ -19,16 +19,20 @@ const txpool = @import("root.zig");
 
 const Address = primitives.Address;
 const Tx = primitives.Transaction;
+const TransactionHash = primitives.TransactionHash.TransactionHash;
+const TransactionType = primitives.Transaction.TransactionType;
 const GasPrice = primitives.GasPrice;
 const MaxFeePerGas = primitives.MaxFeePerGas;
 const MaxPriorityFeePerGas = primitives.MaxPriorityFeePerGas;
 const BaseFeePerGas = primitives.BaseFeePerGas;
 const VersionedHash = primitives.Blob.VersionedHash;
+const TxPool = txpool.TxPool;
 
 // Workloads
 const N_ADMISSION_SMALL: usize = 5_000; // Per-type sample size
 const N_ADMISSION_MED: usize = 20_000; // Per-type sample size
 const N_SORT: usize = 50_000; // Fee tuples for sort bench
+const N_LOOKUP: usize = 50_000_000; // Interface lookups for is_known/contains_tx
 
 fn mk_addr(byte: u8) Address {
     return .{ .bytes = [_]u8{byte} ++ [_]u8{0} ** 19 };
@@ -36,6 +40,11 @@ fn mk_addr(byte: u8) Address {
 
 fn mk_vhash(byte: u8) VersionedHash {
     return .{ .bytes = [_]u8{byte} ++ [_]u8{0} ** 31 };
+}
+
+noinline fn fits_size_limits_ok(tx: anytype, cfg: txpool.TxPoolConfig) bool {
+    txpool.fits_size_limits(tx, cfg) catch return false;
+    return true;
 }
 
 fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
@@ -46,6 +55,7 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
 
     // Prepare a small mix of transactions
     var ops: usize = 0;
+    var accepted_count: usize = 0;
     var timer = std.time.Timer.start() catch unreachable;
 
     // Legacy
@@ -62,7 +72,7 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{0} ** 32,
         };
         for (0..n_per_type) |_| {
-            txpool.fits_size_limits(tx, cfg) catch unreachable;
+            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
         }
         ops += n_per_type;
     }
@@ -84,7 +94,7 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{2} ** 32,
         };
         for (0..n_per_type) |_| {
-            txpool.fits_size_limits(tx, cfg) catch unreachable;
+            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
         }
         ops += n_per_type;
     }
@@ -111,7 +121,7 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{4} ** 32,
         };
         for (0..n_per_type) |_| {
-            txpool.fits_size_limits(tx, cfg) catch unreachable;
+            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
         }
         ops += n_per_type;
     }
@@ -135,12 +145,13 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{0} ** 32,
         };
         for (0..n_per_type) |_| {
-            txpool.fits_size_limits(tx, cfg) catch unreachable;
+            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
         }
         ops += n_per_type;
     }
 
     const elapsed = timer.read();
+    std.mem.doNotOptimizeAway(accepted_count);
     const per_op = if (ops > 0) elapsed / ops else 0;
     return .{
         .name = "txpool.admission: fits_size_limits (mixed types)",
@@ -177,11 +188,12 @@ fn bench_fee_compare_only(n: usize) bench.BenchResult {
     const base_fee = BaseFeePerGas.from(15_000_000_000);
     var timer = std.time.Timer.start() catch unreachable;
     var cmp_count: usize = 0;
+    var cmp_acc: i64 = 0;
     // Just slam comparator without sorting cost
     for (tuples.items, 0..) |x, i| {
         const j = (i * 17 + 13) % tuples.items.len;
         const y = tuples.items[j];
-        _ = txpool.compare_fee_market_priority(
+        const cmp = txpool.compare_fee_market_priority(
             x.gas_price,
             x.max_fee,
             x.max_priority,
@@ -191,9 +203,11 @@ fn bench_fee_compare_only(n: usize) bench.BenchResult {
             base_fee,
             true,
         );
+        cmp_acc +%= cmp;
         cmp_count += 1;
     }
     const elapsed = timer.read();
+    std.mem.doNotOptimizeAway(cmp_acc);
     const per = if (cmp_count > 0) elapsed / cmp_count else 0;
     return .{
         .name = "txpool.sort: fee comparator only (EIP-1559)",
@@ -240,6 +254,12 @@ fn bench_fee_sort(n: usize) bench.BenchResult {
         }
     }.lessThan);
     const elapsed = timer.read();
+    var checksum: u64 = 0;
+    if (tuples.items.len > 0) {
+        checksum ^= std.hash.Wyhash.hash(0, std.mem.asBytes(&tuples.items[0]));
+        checksum ^= std.hash.Wyhash.hash(1, std.mem.asBytes(&tuples.items[tuples.items.len - 1]));
+    }
+    std.mem.doNotOptimizeAway(checksum);
 
     // Approximate comparator calls upper bound ~ n log2 n * C; we just report time/op by n
     const per = if (n > 0) elapsed / n else 0;
@@ -249,6 +269,95 @@ fn bench_fee_sort(n: usize) bench.BenchResult {
         .elapsed_ns = elapsed,
         .per_op_ns = per,
         .ops_per_sec = if (elapsed > 0) @as(f64, @floatFromInt(n)) / (@as(f64, @floatFromInt(elapsed)) / 1e9) else 0,
+    };
+}
+
+const LookupDummyPool = struct {
+    known_hash: TransactionHash,
+    known_type: TransactionType,
+
+    fn pending_count(_: *anyopaque) u32 {
+        return 0;
+    }
+
+    fn pending_blob_count(_: *anyopaque) u32 {
+        return 0;
+    }
+
+    fn get_pending_count_for_sender(_: *anyopaque, _: Address) u32 {
+        return 0;
+    }
+
+    fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
+        const self: *LookupDummyPool = @ptrCast(@alignCast(ptr));
+        return std.mem.eql(u8, &self.known_hash, &tx_hash);
+    }
+
+    fn contains_tx(ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool {
+        const self: *LookupDummyPool = @ptrCast(@alignCast(ptr));
+        return std.mem.eql(u8, &self.known_hash, &tx_hash) and self.known_type == tx_type;
+    }
+};
+
+fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contains_tx: bench.BenchResult } {
+    var dummy = LookupDummyPool{
+        .known_hash = [_]u8{0x11} ** 32,
+        .known_type = .eip1559,
+    };
+    const vtable = TxPool.VTable{
+        .pending_count = LookupDummyPool.pending_count,
+        .pending_blob_count = LookupDummyPool.pending_blob_count,
+        .get_pending_count_for_sender = LookupDummyPool.get_pending_count_for_sender,
+        .is_known = LookupDummyPool.is_known,
+        .contains_tx = LookupDummyPool.contains_tx,
+    };
+    const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
+
+    const known_hash: TransactionHash = [_]u8{0x11} ** 32;
+    const unknown_hash: TransactionHash = [_]u8{0x22} ** 32;
+
+    var known_hits: usize = 0;
+    var contains_hits: usize = 0;
+
+    var timer_known = std.time.Timer.start() catch unreachable;
+    for (0..n) |i| {
+        const hash = if ((i & 1) == 0) known_hash else unknown_hash;
+        if (pool.is_known(hash)) {
+            known_hits +%= 1;
+        }
+    }
+    const known_elapsed = timer_known.read();
+    std.mem.doNotOptimizeAway(known_hits);
+
+    var timer_contains = std.time.Timer.start() catch unreachable;
+    for (0..n) |i| {
+        const hash = if ((i & 1) == 0) known_hash else unknown_hash;
+        const tx_type: TransactionType = if ((i & 3) == 0) .eip1559 else .legacy;
+        if (pool.contains_tx(hash, tx_type)) {
+            contains_hits +%= 1;
+        }
+    }
+    const contains_elapsed = timer_contains.read();
+    std.mem.doNotOptimizeAway(contains_hits);
+
+    const known_per = if (n > 0) known_elapsed / n else 0;
+    const contains_per = if (n > 0) contains_elapsed / n else 0;
+
+    return .{
+        .is_known = .{
+            .name = "txpool.lookup: TxPool.is_known vtable dispatch",
+            .ops = n,
+            .elapsed_ns = known_elapsed,
+            .per_op_ns = known_per,
+            .ops_per_sec = if (known_elapsed > 0) @as(f64, @floatFromInt(n)) / (@as(f64, @floatFromInt(known_elapsed)) / 1e9) else 0,
+        },
+        .contains_tx = .{
+            .name = "txpool.lookup: TxPool.contains_tx vtable dispatch",
+            .ops = n,
+            .elapsed_ns = contains_elapsed,
+            .per_op_ns = contains_per,
+            .ops_per_sec = if (contains_elapsed > 0) @as(f64, @floatFromInt(n)) / (@as(f64, @floatFromInt(contains_elapsed)) / 1e9) else 0,
+        },
     };
 }
 
@@ -301,6 +410,15 @@ pub fn main() !void {
 
         const r_sort = bench_fee_sort(N_SORT);
         bench.print_result(r_sort);
+    }
+    std.debug.print("\n", .{});
+
+    // TxPool vtable lookup dispatch hot path
+    std.debug.print("--- TxPool Lookup Dispatch ---\n", .{});
+    {
+        const r_lookup = bench_lookup_dispatch(N_LOOKUP);
+        bench.print_result(r_lookup.is_known);
+        bench.print_result(r_lookup.contains_tx);
     }
 
     std.debug.print("\n" ++ "=" ** 100 ++ "\n\n", .{});
