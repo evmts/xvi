@@ -276,6 +276,44 @@ test "decode_header_extensions: rejects invalid header data and extra extension 
     );
 }
 
+test "decode_header_extensions: rejects non-canonical RLP header encodings" {
+    const non_minimal_long_list = [_]u8{ 0xF8, 0x03, 0x80, 0x80, 0x01 } ++ [_]u8{0} ** 8;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &non_minimal_long_list, 16 * 1024 * 1024),
+    );
+
+    const leading_zero_list_len_of_len = [_]u8{ 0xF8, 0x00 } ++ [_]u8{0} ** 11;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &leading_zero_list_len_of_len, 16 * 1024 * 1024),
+    );
+
+    const non_canonical_integer_short_form = [_]u8{ 0xC3, 0x80, 0x81, 0x01 } ++ [_]u8{0} ** 9;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &non_canonical_integer_short_form, 16 * 1024 * 1024),
+    );
+
+    const non_minimal_long_integer_len = [_]u8{ 0xC4, 0x80, 0xB8, 0x01, 0x80 } ++ [_]u8{0} ** 8;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &non_minimal_long_integer_len, 16 * 1024 * 1024),
+    );
+
+    const leading_zero_integer_len_of_len = [_]u8{ 0xC5, 0x80, 0xB9, 0x00, 0x01, 0x80 } ++ [_]u8{0} ** 7;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &leading_zero_integer_len_of_len, 16 * 1024 * 1024),
+    );
+
+    const leading_zero_integer_payload = [_]u8{ 0xC4, 0x80, 0x82, 0x00, 0x01 } ++ [_]u8{0} ** 8;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &leading_zero_integer_payload, 16 * 1024 * 1024),
+    );
+}
+
 test "decode_header_extensions: propagates total packet size validation errors" {
     const zero_total = [_]u8{ 0xC3, 0x80, 0x01, 0x80 } ++ [_]u8{0} ** 9;
     try std.testing.expectError(
