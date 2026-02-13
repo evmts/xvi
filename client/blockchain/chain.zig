@@ -295,6 +295,7 @@ pub const RecentBlockHashesError = error{
     MalformedAncestorBlock,
 };
 
+/// Collects up to 256 recent block hashes from local storage in spec order.
 pub fn last_256_block_hashes_local(
     chain: *Chain,
     tip_hash: Hash.Hash,

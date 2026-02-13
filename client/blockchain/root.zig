@@ -12,13 +12,17 @@ const blockchain = @import("blockchain");
 pub const Chain = chain.Chain;
 /// Direct re-exports for consumers needing raw Voltaire types.
 pub const Blockchain = blockchain.Blockchain;
+/// Re-export of Voltaire fork-cache primitive for remote block lookups.
 pub const ForkBlockCache = blockchain.ForkBlockCache;
 /// Canonical head helpers.
 pub const head_hash = chain.head_hash;
+/// Canonical head block lookup helper.
 pub const head_block = chain.head_block;
+/// Canonical head number lookup helper.
 pub const head_number = chain.head_number;
 /// Canonicality checks.
 pub const is_canonical = chain.is_canonical;
+/// Canonicality check that may use fork-cache backed fetches.
 pub const is_canonical_or_fetch = chain.is_canonical_or_fetch;
 /// Existence check (local or fork-cache).
 pub const has_block = chain.has_block;
@@ -46,13 +50,19 @@ pub const canonical_reorg_depth_local = chain.canonical_reorg_depth_local;
 pub const candidate_reorg_depth_local = chain.candidate_reorg_depth_local;
 /// Generic comptime DI helpers for head reads.
 pub const head_hash_of = chain.head_hash_of;
+/// Generic comptime DI helper for head block reads.
 pub const head_block_of = chain.head_block_of;
+/// Generic comptime DI helper for head block reads with retry policy.
 pub const head_block_of_with_policy = chain.head_block_of_with_policy;
+/// Generic comptime DI helper for head number reads.
 pub const head_number_of = chain.head_number_of;
 /// Safe/finalized head helpers (local-only).
 pub const safe_head_hash_of = chain.safe_head_hash_of;
+/// Local-only finalized head hash helper.
 pub const finalized_head_hash_of = chain.finalized_head_hash_of;
+/// Local-only safe head block helper.
 pub const safe_head_block_of = chain.safe_head_block_of;
+/// Local-only finalized head block helper.
 pub const finalized_head_block_of = chain.finalized_head_block_of;
 /// Shared header validation errors.
 pub const ValidationError = validator.ValidationError;
