@@ -156,7 +156,7 @@ pub const GetBlobsV1Result = runtime_voltaire_type(GetBlobsV1VoltaireResult);
 pub const GetBlobsV2Params = runtime_voltaire_type(GetBlobsV2VoltaireParams);
 pub const GetBlobsV2Result = runtime_voltaire_type(GetBlobsV2VoltaireResult);
 
-fn DispatchResult(comptime Method: type) type {
+fn dispatch_result(comptime Method: type) type {
     if (Method == ExchangeCapabilitiesMethod) return ExchangeCapabilitiesResult;
     if (Method == ExchangeTransitionConfigurationV1Method) return ExchangeTransitionConfigurationV1Result;
     if (Method == NewPayloadV1Method) return NewPayloadV1Result;
@@ -617,7 +617,7 @@ pub const EngineApi = struct {
         self: EngineApi,
         comptime Method: type,
         params: anytype,
-    ) Error!DispatchResult(Method) {
+    ) Error!dispatch_result(Method) {
         if (comptime Method == ExchangeCapabilitiesMethod) {
             return self.exchange_capabilities(params);
         } else if (comptime Method == ExchangeTransitionConfigurationV1Method) {
