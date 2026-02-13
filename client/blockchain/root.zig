@@ -36,6 +36,8 @@ pub const get_parent_block_local = chain.get_parent_block_local;
 pub const parent_header_local = chain.parent_header_local;
 /// Canonical hash lookup by number (local-only read).
 pub const canonical_hash = chain.canonical_hash;
+/// Canonical head update helper (local-only mutation).
+pub const set_canonical_head = chain.set_canonical_head;
 /// Local-only BLOCKHASH-style lookup by block number.
 pub const block_hash_by_number_local = chain.block_hash_by_number_local;
 /// Local-only collection of up-to-256 recent block hashes (spec order).

@@ -95,6 +95,17 @@ pub fn canonical_hash(chain: *Chain, number: u64) ?Hash.Hash {
     return chain.getCanonicalHash(number);
 }
 
+/// Sets the canonical head to `head_hash` using Voltaire's chain store logic.
+///
+/// Semantics:
+/// - Mutates local canonical mappings only (no fork-cache reads/writes).
+/// - Propagates underlying storage errors (e.g. `error.BlockNotFound`,
+///   `error.CannotSetOrphanAsHead`, `error.OutOfMemory`) without suppression.
+/// - Mirrors Nethermind's explicit head-update boundary (`UpdateHeadBlock`).
+pub fn set_canonical_head(chain: *Chain, head_hash: Hash.Hash) !void {
+    try chain.setCanonicalHead(head_hash);
+}
+
 /// Returns true if the given `(number, hash)` pair is canonical (local-only).
 ///
 /// Semantics:
@@ -1427,6 +1438,29 @@ test "Chain - canonical_hash returns hash for canonical block" {
 
     const h = canonical_hash(&chain, 0) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &genesis.hash, &h);
+}
+
+test "Chain - set_canonical_head updates canonical head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    try set_canonical_head(&chain, genesis.hash);
+
+    try std.testing.expectEqual(@as(?u64, 0), head_number(&chain));
+    const canonical = canonical_hash(&chain, 0) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &canonical);
+}
+
+test "Chain - set_canonical_head propagates missing block error" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expectError(error.BlockNotFound, set_canonical_head(&chain, Hash.ZERO));
 }
 
 test "Chain - is_canonical_at uses local canonical map" {
