@@ -411,7 +411,7 @@ fn validate_new_payload_v1_result(
     result: NewPayloadV1Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    if (result.value.value != .object) return invalid_err;
+    try validate_payload_status_v1_json(result.value.value, invalid_err, is_payload_status_v1_status);
 }
 
 fn validate_forkchoice_updated_v1_params(
@@ -433,14 +433,58 @@ fn validate_forkchoice_updated_v1_result(
     const obj = result.value.value.object;
 
     const payload_status = obj.get("payloadStatus") orelse return invalid_err;
-    if (payload_status != .object) return invalid_err;
+    try validate_payload_status_v1_json(payload_status, invalid_err, is_restricted_payload_status_v1_status);
 
-    const payload_id = obj.get("payloadId") orelse return invalid_err;
-    switch (payload_id) {
-        .null => {},
-        .string => |s| _ = primitives.Hex.assertSize(s, 8) catch return invalid_err,
-        else => return invalid_err,
+    if (obj.get("payloadId")) |payload_id| {
+        switch (payload_id) {
+            .null => {},
+            .string => |s| _ = primitives.Hex.assertSize(s, 8) catch return invalid_err,
+            else => return invalid_err,
+        }
     }
+}
+
+fn validate_payload_status_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+    comptime status_pred: fn ([]const u8) bool,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    const status = obj.get("status") orelse return invalid_err;
+    if (status != .string) return invalid_err;
+    if (!status_pred(status.string)) return invalid_err;
+
+    if (obj.get("latestValidHash")) |latest_valid_hash| {
+        switch (latest_valid_hash) {
+            .null => {},
+            .string => |s| _ = primitives.Hex.assertSize(s, 32) catch return invalid_err,
+            else => return invalid_err,
+        }
+    }
+
+    if (obj.get("validationError")) |validation_error| {
+        switch (validation_error) {
+            .null => {},
+            .string => {},
+            else => return invalid_err,
+        }
+    }
+}
+
+fn is_payload_status_v1_status(status: []const u8) bool {
+    return std.mem.eql(u8, status, "VALID") or
+        std.mem.eql(u8, status, "INVALID") or
+        std.mem.eql(u8, status, "SYNCING") or
+        std.mem.eql(u8, status, "ACCEPTED") or
+        std.mem.eql(u8, status, "INVALID_BLOCK_HASH");
+}
+
+fn is_restricted_payload_status_v1_status(status: []const u8) bool {
+    return std.mem.eql(u8, status, "VALID") or
+        std.mem.eql(u8, status, "INVALID") or
+        std.mem.eql(u8, status, "SYNCING");
 }
 
 fn is_slice_of_byte_slices(comptime T: type) bool {
@@ -1144,6 +1188,107 @@ test "engine api rejects invalid forkchoiceUpdatedV1 params" {
 
     try std.testing.expectError(EngineApi.Error.InvalidParams, api.forkchoice_updated_v1(params));
     try std.testing.expect(!dummy.forkchoice_updated_called);
+}
+
+test "engine api accepts forkchoiceUpdatedV1 response without payloadId" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000022" });
+    try state_obj.put("safeBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000021" });
+    try state_obj.put("finalizedBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000020" });
+
+    const params = ForkchoiceUpdatedV1Params{
+        .forkchoice_state = Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = Quantity{ .value = .{ .null = {} } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000022" });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+
+    const result_value = ForkchoiceUpdatedV1Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .forkchoice_updated_result = result_value };
+    const api = make_api(&dummy);
+
+    _ = try api.forkchoice_updated_v1(params);
+    try std.testing.expect(dummy.forkchoice_updated_called);
+}
+
+test "engine api rejects forkchoiceUpdatedV1 response with non-restricted payload status" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000022" });
+    try state_obj.put("safeBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000021" });
+    try state_obj.put("finalizedBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000020" });
+
+    const params = ForkchoiceUpdatedV1Params{
+        .forkchoice_state = Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = Quantity{ .value = .{ .null = {} } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "ACCEPTED" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+    try response_obj.put("payloadId", .{ .null = {} });
+
+    const result_value = ForkchoiceUpdatedV1Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .forkchoice_updated_result = result_value };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.forkchoice_updated_v1(params));
+    try std.testing.expect(dummy.forkchoice_updated_called);
+}
+
+test "engine api rejects newPayloadV1 response with unknown payload status" {
+    const alloc = std.testing.allocator;
+
+    var payload_obj = std.json.ObjectMap.init(alloc);
+    defer payload_obj.deinit();
+    try payload_obj.put("parentHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000000" });
+    const params = NewPayloadV1Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "PENDING" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    const result_value = NewPayloadV1Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_result = result_value };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.new_payload_v1(params));
+    try std.testing.expect(dummy.new_payload_called);
 }
 
 test "engine api generic dispatcher routes forkchoiceUpdatedV1" {
