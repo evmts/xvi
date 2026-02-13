@@ -328,7 +328,7 @@ fn validate_string_list(list: anytype, comptime invalid_err: EngineApi.Error, co
 }
 
 fn validate_capabilities(list: anytype, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
-    return validate_string_list(list, invalid_err, method_name.isEngineVersionedMethodName);
+    return validate_string_list(list, invalid_err, method_name.is_engine_versioned_method_name);
 }
 
 /// Validate a JSON array of strings using a predicate .
@@ -354,7 +354,7 @@ fn validate_json_capabilities(value: std.json.Value, comptime invalid_err: Engin
 }
 
 fn validate_response_capabilities(list: anytype, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
-    return validate_string_list(list, invalid_err, method_name.isValidAdvertisableEngineMethodName);
+    return validate_string_list(list, invalid_err, method_name.is_valid_advertisable_engine_method_name);
 }
 
 fn validate_json_response_capabilities(value: std.json.Value, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {

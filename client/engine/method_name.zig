@@ -7,7 +7,7 @@
 const std = @import("std");
 
 /// Return true iff `name` is an advertisable Engine API method name per spec.
-pub fn isValidAdvertisableEngineMethodName(name: []const u8) bool {
+pub fn is_valid_advertisable_engine_method_name(name: []const u8) bool {
     if (!std.mem.startsWith(u8, name, "engine_")) return false;
     if (std.mem.eql(u8, name, "engine_exchangeCapabilities")) return false;
     return hasVersionSuffix(name);
@@ -15,9 +15,9 @@ pub fn isValidAdvertisableEngineMethodName(name: []const u8) bool {
 
 /// Return true iff `name` belongs to the `engine_` namespace and carries a
 /// trailing `V<digits>` suffix. Unlike
-/// `isValidAdvertisableEngineMethodName`, this does not special-case
+/// `is_valid_advertisable_engine_method_name`, this does not special-case
 /// `engine_exchangeCapabilities`. Use for validating consensus requests.
-pub fn isEngineVersionedMethodName(name: []const u8) bool {
+pub fn is_engine_versioned_method_name(name: []const u8) bool {
     if (!std.mem.startsWith(u8, name, "engine_")) return false;
     return hasVersionSuffix(name);
 }
@@ -36,25 +36,25 @@ fn hasVersionSuffix(name: []const u8) bool {
 // Tests
 // ==================
 
-test "isValidAdvertisableEngineMethodName - valid" {
-    try std.testing.expect(isValidAdvertisableEngineMethodName("engine_newPayloadV1"));
-    try std.testing.expect(isValidAdvertisableEngineMethodName("engine_getPayloadV6"));
-    try std.testing.expect(isValidAdvertisableEngineMethodName("engine_forkchoiceUpdatedV3"));
+test "is_valid_advertisable_engine_method_name - valid" {
+    try std.testing.expect(is_valid_advertisable_engine_method_name("engine_newPayloadV1"));
+    try std.testing.expect(is_valid_advertisable_engine_method_name("engine_getPayloadV6"));
+    try std.testing.expect(is_valid_advertisable_engine_method_name("engine_forkchoiceUpdatedV3"));
 }
 
-test "isValidAdvertisableEngineMethodName - rejects unversioned or wrong ns" {
-    try std.testing.expect(!isValidAdvertisableEngineMethodName("engine_newPayload"));
-    try std.testing.expect(!isValidAdvertisableEngineMethodName("eth_getBlockByNumberV1"));
+test "is_valid_advertisable_engine_method_name - rejects unversioned or wrong ns" {
+    try std.testing.expect(!is_valid_advertisable_engine_method_name("engine_newPayload"));
+    try std.testing.expect(!is_valid_advertisable_engine_method_name("eth_getBlockByNumberV1"));
 }
 
-test "isValidAdvertisableEngineMethodName - rejects exchangeCapabilities" {
-    try std.testing.expect(!isValidAdvertisableEngineMethodName("engine_exchangeCapabilities"));
+test "is_valid_advertisable_engine_method_name - rejects exchangeCapabilities" {
+    try std.testing.expect(!is_valid_advertisable_engine_method_name("engine_exchangeCapabilities"));
 }
 
-test "isEngineVersionedMethodName - basic" {
-    try std.testing.expect(isEngineVersionedMethodName("engine_newPayloadV1"));
-    try std.testing.expect(isEngineVersionedMethodName("engine_getPayloadV6"));
-    try std.testing.expect(!isEngineVersionedMethodName("engine_newPayload"));
-    try std.testing.expect(!isEngineVersionedMethodName("eth_getBlockByNumberV1"));
-    try std.testing.expect(!isEngineVersionedMethodName("engine_exchangeCapabilities"));
+test "is_engine_versioned_method_name - basic" {
+    try std.testing.expect(is_engine_versioned_method_name("engine_newPayloadV1"));
+    try std.testing.expect(is_engine_versioned_method_name("engine_getPayloadV6"));
+    try std.testing.expect(!is_engine_versioned_method_name("engine_newPayload"));
+    try std.testing.expect(!is_engine_versioned_method_name("eth_getBlockByNumberV1"));
+    try std.testing.expect(!is_engine_versioned_method_name("engine_exchangeCapabilities"));
 }
