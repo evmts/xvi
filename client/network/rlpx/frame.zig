@@ -14,6 +14,11 @@ pub const DefaultMaxFrameSize: u16 = BlockSize * 64;
 pub const FrameError = error{
     InvalidFrameSize,
 };
+/// Public, stable error set for frame-header packet length validation.
+pub const FrameHeaderError = error{
+    InvalidTotalPacketSize,
+    FrameSizeExceedsTotalPacketSize,
+};
 
 /// Returns the zero-fill padding required to align to the AES block size.
 pub inline fn calculate_padding(size: usize) usize {
@@ -36,6 +41,22 @@ pub inline fn encode_frame_size_24(size: usize) FrameError![3]u8 {
 pub inline fn decode_frame_size_24(bytes: [3]u8) usize {
     const v: u24 = std.mem.readInt(u24, &bytes, .big);
     return @as(usize, @intCast(v));
+}
+
+/// Validates optional total packet size from frame header extension data.
+///
+/// - `total_packet_size = null` is valid for non-chunked frames.
+/// - When present, `total_packet_size` must be in `1..=max_packet_size`.
+/// - `frame_size` cannot exceed `total_packet_size`.
+pub inline fn validate_total_packet_size(
+    frame_size: usize,
+    total_packet_size: ?usize,
+    max_packet_size: usize,
+) FrameHeaderError!void {
+    if (total_packet_size) |total| {
+        if (total == 0 or total > max_packet_size) return error.InvalidTotalPacketSize;
+        if (frame_size > total) return error.FrameSizeExceedsTotalPacketSize;
+    }
 }
 
 test "calculate padding returns zero for aligned sizes" {
@@ -87,4 +108,35 @@ test "decode_frame_size_24: roundtrips representative values" {
         const dec = decode_frame_size_24(enc);
         try std.testing.expectEqual(v, dec);
     }
+}
+
+test "validate_total_packet_size: accepts null for non-chunked frame" {
+    try validate_total_packet_size(1024, null, 16 * 1024 * 1024);
+}
+
+test "validate_total_packet_size: accepts valid bounded totals" {
+    try validate_total_packet_size(1, 1, 16 * 1024 * 1024);
+    try validate_total_packet_size(1024, 4096, 16 * 1024 * 1024);
+    try validate_total_packet_size(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+}
+
+test "validate_total_packet_size: rejects zero total size" {
+    try std.testing.expectError(
+        error.InvalidTotalPacketSize,
+        validate_total_packet_size(1, 0, 16 * 1024 * 1024),
+    );
+}
+
+test "validate_total_packet_size: rejects totals above max bound" {
+    try std.testing.expectError(
+        error.InvalidTotalPacketSize,
+        validate_total_packet_size(1, (16 * 1024 * 1024) + 1, 16 * 1024 * 1024),
+    );
+}
+
+test "validate_total_packet_size: rejects frame larger than declared total" {
+    try std.testing.expectError(
+        error.FrameSizeExceedsTotalPacketSize,
+        validate_total_packet_size(1025, 1024, 16 * 1024 * 1024),
+    );
 }
