@@ -126,23 +126,7 @@ fn validate_post_merge_header(
 
     const parent_header = ctx.parent_header orelse return ValidationError.MissingParentHeader;
 
-    // Enforce EIP-4844 header fields presence/absence across forks
-    if (ctx.hardfork.hasEIP4844()) {
-        // Cancun+: both blob_gas_used and excess_blob_gas must be present
-        _ = header.blob_gas_used orelse return ValidationError.MissingBlobGasUsed;
-        const header_excess_blob_gas = header.excess_blob_gas orelse return ValidationError.MissingExcessBlobGas;
-        const parent_excess_blob_gas = parent_header.excess_blob_gas orelse 0;
-        const parent_blob_gas_used = parent_header.blob_gas_used orelse 0;
-        const expected_excess_blob_gas = Blob.calculateExcessBlobGas(parent_excess_blob_gas, parent_blob_gas_used);
-        if (header_excess_blob_gas != expected_excess_blob_gas) {
-            return ValidationError.InvalidExcessBlobGas;
-        }
-    } else {
-        // Pre-Cancun: no 4844 fields must be present
-        if (header.blob_gas_used != null or header.excess_blob_gas != null or header.parent_beacon_block_root != null) {
-            return ValidationError.UnexpectedBlobFieldsPreCancun;
-        }
-    }
+    try validate_blob_fields_for_hardfork(header, parent_header, ctx.hardfork);
 
     if (header.gas_used > header.gas_limit) return ValidationError.InvalidGasUsed;
 
@@ -166,6 +150,35 @@ fn validate_post_merge_header(
 
     const parent_hash = try BlockHeader.hash(parent_header, ctx.allocator);
     if (!Hash.equals(&header.parent_hash, &parent_hash)) return ValidationError.InvalidParentHash;
+}
+
+/// Validates blob-related header fields according to fork activation.
+///
+/// - Cancun+: `blob_gas_used` and `excess_blob_gas` must be present and
+///   `excess_blob_gas` must match the expected value derived from the parent.
+/// - Pre-Cancun: 4844-related fields must be absent.
+fn validate_blob_fields_for_hardfork(
+    header: *const BlockHeader.BlockHeader,
+    parent_header: *const BlockHeader.BlockHeader,
+    hardfork: Hardfork,
+) ValidationError!void {
+    if (hardfork.hasEIP4844()) {
+        // Cancun+: both blob_gas_used and excess_blob_gas must be present.
+        _ = header.blob_gas_used orelse return ValidationError.MissingBlobGasUsed;
+        const header_excess_blob_gas = header.excess_blob_gas orelse return ValidationError.MissingExcessBlobGas;
+        const parent_excess_blob_gas = parent_header.excess_blob_gas orelse 0;
+        const parent_blob_gas_used = parent_header.blob_gas_used orelse 0;
+        const expected_excess_blob_gas = Blob.calculateExcessBlobGas(parent_excess_blob_gas, parent_blob_gas_used);
+        if (header_excess_blob_gas != expected_excess_blob_gas) {
+            return ValidationError.InvalidExcessBlobGas;
+        }
+        return;
+    }
+
+    // Pre-Cancun: no 4844 fields must be present.
+    if (header.blob_gas_used != null or header.excess_blob_gas != null or header.parent_beacon_block_root != null) {
+        return ValidationError.UnexpectedBlobFieldsPreCancun;
+    }
 }
 
 /// Ensures `header.timestamp` is strictly greater than `parent.timestamp`.
