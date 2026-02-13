@@ -6,7 +6,9 @@ const std = @import("std");
 
 /// Subset of sync configuration used to decide which feeds are started.
 pub const SyncManagerStartConfig = struct {
-    /// Global synchronization enable switch.
+    /// Global networking enable switch.
+    networking_enabled: bool = true,
+    /// Synchronization enable switch (effective only when networking is enabled).
     synchronization_enabled: bool = true,
     /// Enable fast-sync stages.
     fast_sync: bool = false,
@@ -42,7 +44,7 @@ pub const SyncStartupFeed = struct {
 /// - Fast headers always start under fast-sync.
 /// - Fast bodies/receipts start only when `download_headers_in_fast_sync`.
 pub fn startup_feed_mask(config: SyncManagerStartConfig) u32 {
-    if (!config.synchronization_enabled) return SyncStartupFeed.none;
+    if (!(config.networking_enabled and config.synchronization_enabled)) return SyncStartupFeed.none;
 
     var mask: u32 = SyncStartupFeed.full;
     const fast_sync_enabled = config.fast_sync or config.snap_sync;
@@ -191,7 +193,18 @@ fn call_feed_start(feed_ptr: anytype) anyerror!void {
 
 test "startup_feed_mask: disabled synchronization starts no feeds" {
     const mask = startup_feed_mask(.{
+        .networking_enabled = true,
         .synchronization_enabled = false,
+        .fast_sync = true,
+        .snap_sync = true,
+    });
+    try std.testing.expectEqual(SyncStartupFeed.none, mask);
+}
+
+test "startup_feed_mask: networking disabled starts no feeds" {
+    const mask = startup_feed_mask(.{
+        .networking_enabled = false,
+        .synchronization_enabled = true,
         .fast_sync = true,
         .snap_sync = true,
     });
