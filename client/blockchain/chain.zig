@@ -50,6 +50,17 @@ pub fn head_number(chain: *Chain) ?u64 {
     return chain.getHeadBlockNumber();
 }
 
+/// Returns the pending block hash as the current canonical head hash (local-only).
+///
+/// Semantics:
+/// - Mirrors Nethermind's `PendingHash` behavior where pending defaults to head.
+/// - Uses only local canonical mappings and block store reads; never fetches
+///   from the fork cache and never allocates.
+/// - Returns `null` when no consistent canonical-head snapshot is available.
+pub fn pending_hash(chain: *Chain) ?Hash.Hash {
+    return canonical_head_hash_snapshot_local(chain);
+}
+
 /// Returns true if the given hash is canonical at its block number (local-only).
 ///
 /// Follows Nethermind semantics: compare the hash against the canonical mapping
@@ -1366,6 +1377,27 @@ test "Chain - head_number returns canonical number and updates after reorg" {
     const n1 = head_number(&chain);
     try std.testing.expect(n1 != null);
     try std.testing.expectEqual(@as(u64, 1), n1.?);
+}
+
+test "Chain - pending_hash returns null for empty chain" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expect(pending_hash(&chain) == null);
+}
+
+test "Chain - pending_hash returns canonical head hash" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    const hash = pending_hash(&chain) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hash);
 }
 
 test "Chain - head_number_of forwards to underlying getter" {

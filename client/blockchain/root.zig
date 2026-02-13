@@ -20,6 +20,8 @@ pub const head_hash = chain.head_hash;
 pub const head_block = chain.head_block;
 /// Canonical head number lookup helper.
 pub const head_number = chain.head_number;
+/// Pending hash helper (defaults to canonical head hash, local-only).
+pub const pending_hash = chain.pending_hash;
 /// Canonicality checks.
 pub const is_canonical = chain.is_canonical;
 /// Canonicality check that may use fork-cache backed fetches.
