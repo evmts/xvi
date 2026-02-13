@@ -331,9 +331,8 @@ fn validate_capabilities(list: anytype, comptime invalid_err: EngineApi.Error) E
     return validate_string_list(list, invalid_err, method_name.is_engine_versioned_method_name);
 }
 
-/// Validate a JSON array of strings using a predicate .
-/// Returns  if the JSON shape is not an array of strings or if any
-/// string fails the predicate.
+/// Validate a JSON array of strings using `pred`.
+/// Returns `invalid_err` if the JSON shape is invalid or any entry fails `pred`.
 fn validate_json_string_array(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
@@ -349,16 +348,8 @@ fn validate_json_string_array(
     }
 }
 
-fn validate_json_capabilities(value: std.json.Value, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
-    return validate_json_string_array(value, invalid_err, method_name.isEngineVersionedMethodName);
-}
-
 fn validate_response_capabilities(list: anytype, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
     return validate_string_list(list, invalid_err, method_name.is_valid_advertisable_engine_method_name);
-}
-
-fn validate_json_response_capabilities(value: std.json.Value, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
-    return validate_json_string_array(value, invalid_err, method_name.isValidAdvertisableEngineMethodName);
 }
 
 fn validate_client_version_v1_params(params: ClientVersionV1Params, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
