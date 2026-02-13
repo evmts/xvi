@@ -1,19 +1,27 @@
-# Context - [pass 2/5] Phase 4: Block Chain Management
+# [Pass 2/5] Phase 4: Block Chain Management - Context
 
-## 1) Phase Goal (from `prd/GUILLOTINE_CLIENT_PLAN.md`)
-- Goal: manage blockchain structure and block validation.
-- Planned components:
-  - `client/blockchain/chain.zig` - chain management (canonical mapping, head updates, reorg handling).
-  - `client/blockchain/validator.zig` - block/header/body validation.
-- Architecture references:
-  - `nethermind/src/Nethermind/Nethermind.Blockchain/`
-  - `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/`
-- Primary fixture root: `ethereum-tests/BlockchainTests/`
+## Goal (from `prd/GUILLOTINE_CLIENT_PLAN.md`)
 
-## 2) Spec References (from `prd/ETHEREUM_SPECS_REFERENCE.md` + direct spec files)
+Phase: `phase-4-blockchain`
 
-### 2.1 Execution-specs block processing entrypoints
-These are the canonical validation entrypoints to mirror:
+Primary goal: manage chain structure and block validation.
+
+Planned components:
+- `client/blockchain/chain.zig` - canonical chain management, head updates, and reorg handling.
+- `client/blockchain/validator.zig` - block/header/body validation.
+
+Reference anchors:
+- `nethermind/src/Nethermind/Nethermind.Blockchain/`
+- `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/`
+
+Primary fixture root:
+- `ethereum-tests/BlockchainTests/`
+
+## Relevant Specs (from `prd/ETHEREUM_SPECS_REFERENCE.md` + direct file reads)
+
+### Execution-specs (authoritative EL behavior)
+
+Fork files for block transition and header validation:
 - `execution-specs/src/ethereum/forks/frontier/fork.py`
 - `execution-specs/src/ethereum/forks/london/fork.py`
 - `execution-specs/src/ethereum/forks/paris/fork.py`
@@ -22,136 +30,137 @@ These are the canonical validation entrypoints to mirror:
 - `execution-specs/src/ethereum/forks/prague/fork.py`
 - `execution-specs/src/ethereum/forks/osaka/fork.py`
 
-Common function anchors across fork specs:
+Key function anchors found across these fork files:
 - `state_transition(chain, block)`
 - `validate_header(chain, header)`
 - `apply_body(...)`
-- `get_last_256_block_hashes(chain)`
-- `calculate_base_fee_per_gas(...)` (post-London forks)
+- `process_transaction(...)`
+- `process_withdrawals(...)` (post-Shanghai)
+- `validate_proof_of_work(...)` and `validate_ommers(...)` (pre-Paris)
 
-### 2.2 EIPs relevant to chain/header validation
-- `EIPs/EIPS/eip-1559.md` - base fee and London header rules.
-- `EIPs/EIPS/eip-3675.md` - Merge transition constraints.
-- `EIPs/EIPS/eip-4399.md` - `PREVRANDAO` semantics in post-Merge headers/env.
-- `EIPs/EIPS/eip-4844.md` - blob gas accounting and Cancun block/header fields.
-- `EIPs/EIPS/eip-4788.md` - beacon root system contract integration.
+### Yellow Paper
 
-### 2.3 devp2p relevance for chain management context
-- `devp2p/caps/eth.md`
-  - Header/body sync flows (`GetBlockHeaders`, `GetBlockBodies`, receipts).
-  - Header-chain validity constraints (parent linkage, gas/time bounds, fork-specific header fields).
-  - Useful for external sync assumptions; local validation remains execution-specs authoritative.
+- `yellowpaper/Paper.tex`
+  - `\\section{Block Finalisation}` (`label{ch:finalisation}`)
+  - Block-level state root consistency constraints and post-transaction finalization model.
 
-## 3) Nethermind Reference Inventory
+### EIPs relevant to phase-4 block/header validation
 
-### 3.1 `nethermind/src/Nethermind/Nethermind.Db/` key files
-Core abstractions and providers:
-- `IDb.cs`, `IColumnsDb.cs`, `IReadOnlyDb.cs`
-- `IDbProvider.cs`, `DbProvider.cs`, `ReadOnlyDbProvider.cs`
-- `DbNames.cs`, `DbExtensions.cs`
+- `EIPs/EIPS/eip-1559.md` - base fee and London header constraints.
+- `EIPs/EIPS/eip-2718.md` - typed transaction envelope impacts on block body decoding.
+- `EIPs/EIPS/eip-2930.md` - access-list tx inclusion semantics.
+- `EIPs/EIPS/eip-3675.md` - Merge transition and post-PoW header rules.
+- `EIPs/EIPS/eip-4399.md` - `PREVRANDAO` / `mixHash` semantics post-Merge.
+- `EIPs/EIPS/eip-4895.md` - withdrawals payload/header root post-Shanghai.
+- `EIPs/EIPS/eip-4788.md` - beacon root exposure in execution payload context.
+- `EIPs/EIPS/eip-4844.md` - blob gas fields and Cancun header/body rules.
+- `EIPs/EIPS/eip-6110.md` - deposit requests integration.
+- `EIPs/EIPS/eip-7002.md` - EL triggerable withdrawals requests.
+- `EIPs/EIPS/eip-7251.md` - consolidation requests.
 
-In-memory/testing implementations:
-- `MemDb.cs`, `MemColumnsDb.cs`, `MemDbFactory.cs`
-- `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
-- `NullDb.cs`
+### devp2p files with phase-4 relevance
 
-Operational concerns:
-- `CompressingDb.cs`
-- `PruningConfig.cs`, `PruningMode.cs`, `IPruningConfig.cs`
-- `FullPruning/` (triggering and full-prune workflows)
-- `Metrics.cs`
+- `devp2p/caps/eth.md` - block/header/body wire exchanges for sync assumptions.
+- `devp2p/caps/snap.md` - state sync context (adjacent concern to chain progression).
+- `devp2p/rlpx.md` - transport envelope when integrating chain sync later.
 
-Domain DB columns:
-- `BlobTxsColumns.cs`
-- `ReceiptsColumns.cs`
-- `MetadataDbKeys.cs`
+## Nethermind References
 
-### 3.2 `nethermind/src/Nethermind/Nethermind.Blockchain/` key files
-Chain structure and canonicality:
+### Requested listing: `nethermind/src/Nethermind/Nethermind.Db/`
+
+Key files noted:
+- `nethermind/src/Nethermind/Nethermind.Db/IDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/IColumnsDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/IReadOnlyDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/IDbProvider.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/DbProvider.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/DbNames.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/PruningConfig.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/PruningMode.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/CompressingDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/MemDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/MemColumnsDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/ReadOnlyDb.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/ReadOnlyDbProvider.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/BlobTxsColumns.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/ReceiptsColumns.cs`
+- `nethermind/src/Nethermind/Nethermind.Db/MetadataDbKeys.cs`
+
+### Structural reference for this phase
+
+Key blockchain files noted in `nethermind/src/Nethermind/Nethermind.Blockchain/`:
 - `BlockTree.cs`
 - `BlockTree.Initializer.cs`
 - `BlockTreeOverlay.cs`
-- `ReadOnlyBlockTree.cs`
 - `IBlockTree.cs`
-- `AddBlockResult.cs`
-
-Stores and caches:
-- `Blocks/BlockStore.cs`
-- `Headers/HeaderStore.cs`
+- `ReadOnlyBlockTree.cs`
 - `BlockhashCache.cs`
-- `BlockhashProvider.cs`
-
-Genesis/finalization/pruning integration:
 - `GenesisBuilder.cs`
 - `IBlockFinalizationManager.cs`
 - `ManualFinalizationManager.cs`
 - `ReceiptCanonicalityMonitor.cs`
-- `FullPruning/FullPruner.cs`
 
-## 4) Voltaire Zig APIs (`/Users/williamcory/voltaire/packages/voltaire-zig/src/`)
-Top-level modules present:
-- `blockchain/`, `state-manager/`, `evm/`, `primitives/`, `jsonrpc/`, `crypto/`, `precompiles/`, `c_api.zig`
+## Voltaire APIs to Reuse (no custom duplicate types)
 
-Phase-4 relevant blockchain APIs:
-- `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/Blockchain.zig`
-  - Unified read flow: local `BlockStore` then optional `ForkBlockCache`.
-  - Write flow: local store only (`putBlock`, `setCanonicalHead`).
-- `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/BlockStore.zig`
-  - Canonical chain mapping and orphan handling primitives.
-- `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/ForkBlockCache.zig`
-  - Remote fetch/caching for forked historical reads.
-- `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/root.zig`
-  - Re-exports: `BlockStore`, `ForkBlockCache`, `Blockchain`.
+From `/Users/williamcory/voltaire/packages/voltaire-zig/src/blockchain/`:
+- `blockchain.root.BlockStore` (`root.zig` export)
+- `blockchain.root.Blockchain` (`root.zig` export)
+- `blockchain.root.ForkBlockCache` (`root.zig` export)
+- `blockchain.BlockStore` (`BlockStore.zig`)
+- `blockchain.Blockchain` (`Blockchain.zig`)
+- `blockchain.ForkBlockCache` (`ForkBlockCache.zig`)
+- `blockchain.PendingRequest` (`ForkBlockCache.zig`)
 
-Relevant primitive modules to rely on (no custom types):
-- `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/`
-  - `Block`, `BlockHeader`, `Hash`, `Address`, transaction/body-related primitives.
+Voltaire primitives used by those APIs:
+- `primitives.Block.Block`
+- `primitives.BlockHeader`
+- `primitives.BlockBody`
+- `primitives.Hash.Hash`
+- `primitives.Address`
+- `primitives.Hex`
 
-## 5) Existing guillotine-mini Host Interface (`src/host.zig`)
-`HostInterface` provides vtable accessors for:
+## Existing Zig Host Interface
+
+Resolved path in this workspace:
+- `guillotine-mini/src/host.zig`
+
+`HostInterface` currently exposes:
 - `getBalance` / `setBalance`
 - `getCode` / `setCode`
 - `getStorage` / `setStorage`
 - `getNonce` / `setNonce`
 
 Important note in file:
-- Nested call execution is handled by `EVM.inner_call`; `HostInterface` is for external state access.
+- nested calls are handled inside EVM call flow (`inner_call`), not via this host interface.
 
-Phase-4 implication:
-- Keep chain/header validation decoupled from host internals; integrate execution/state transitions through existing EVM/state services, not direct host hacks.
+## Test Fixture Paths
 
-## 6) Test Fixture Paths
+### Ethereum tests (present)
 
-Primary blockchain fixtures:
 - `ethereum-tests/BlockchainTests/ValidBlocks/`
-  - `bcBlockGasLimitTest`
-  - `bcEIP1559`
-  - `bcEIP3675`
-  - `bcEIP4844-blobtransactions`
-  - `bcStateTests`
-  - `bcForkStressTest`
-  - `bcRandomBlockhashTest`
 - `ethereum-tests/BlockchainTests/InvalidBlocks/`
-  - `bcBlockGasLimitTest`
-  - `bcEIP1559`
-  - `bcEIP3675`
-  - `bcInvalidHeaderTest`
-  - `bcMultiChainTest`
-  - `bcStateTests`
-  - `bcUncleHeaderValidity`
-  - `bcUncleSpecialTests`
-  - `bcUncleTest`
-  - `bc4895-withdrawals`
-
-Filler source roots:
 - `ethereum-tests/src/BlockchainTestsFiller/ValidBlocks/`
 - `ethereum-tests/src/BlockchainTestsFiller/InvalidBlocks/`
 
-Execution-spec-tests status in this checkout:
-- `execution-spec-tests/fixtures/` exists, but no `blockchain_tests` directory is currently present here.
-- Continue using `ethereum-tests/BlockchainTests/` as primary block-chain fixture source for this phase.
+Notable phase-4 directories:
+- `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP1559/`
+- `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP3675/`
+- `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP4844-blobtransactions/`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/bcEIP1559/`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/bcEIP3675/`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/bc4895-withdrawals/`
 
-## 7) Implementation Guidance for Next Step
-- Mirror Nethermind boundaries (`chain` orchestration vs `validator`) but implement idiomatically for this codebase.
-- Use Voltaire blockchain primitives/modules for block storage and canonical chain operations instead of inventing new storage semantics.
-- Treat execution-specs `fork.py` functions as behavioral source of truth for header/body validation logic.
+### execution-spec-tests status in this checkout
+
+- `execution-spec-tests/fixtures/` exists but is empty in this workspace.
+- Available blockchain-oriented tests currently visible under `execution-spec-tests/tests/` include:
+  - `execution-spec-tests/tests/osaka/eip7934_block_rlp_limit/`
+  - `execution-spec-tests/tests/prague/eip2935_historical_block_hashes_from_state/`
+  - `execution-spec-tests/tests/amsterdam/eip7928_block_level_access_lists/`
+
+## Implementation Guidance for Next Step
+
+- Mirror Nethermind boundaries (`chain` orchestration vs `validator`) but keep Zig-idiomatic ownership and error paths.
+- Reuse Voltaire `blockchain` and `primitives` modules directly; do not add duplicate block/header/cache types.
+- Treat `execution-specs` `fork.py` behavior as source of truth for block import/validation.
+- Keep validation fork-aware (pre-Paris PoW rules vs post-Paris constraints, plus Shanghai/Cancun/Prague additions).
