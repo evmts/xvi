@@ -301,6 +301,8 @@ const LookupDummyPool = struct {
         return std.mem.eql(u8, &self.known_hash, &tx_hash);
     }
 
+    fn mark_known_for_current_scope(_: *anyopaque, _: TransactionHash) void {}
+
     fn contains_tx(ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool {
         const self: *LookupDummyPool = @ptrCast(@alignCast(ptr));
         return std.mem.eql(u8, &self.known_hash, &tx_hash) and self.known_type == tx_type;
@@ -319,6 +321,7 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
         .get_pending_count_for_sender = LookupDummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = LookupDummyPool.get_pending_transactions_by_sender,
         .is_known = LookupDummyPool.is_known,
+        .mark_known_for_current_scope = LookupDummyPool.mark_known_for_current_scope,
         .contains_tx = LookupDummyPool.contains_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };

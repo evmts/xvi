@@ -113,6 +113,8 @@ pub const TxPool = struct {
         get_pending_transactions_by_sender: *const fn (ptr: *anyopaque, sender: Address) []const PendingTransactionRef,
         /// Returns whether this transaction hash is known by the pool/hash cache.
         is_known: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) bool,
+        /// Marks a hash as known in the current block/scope cache.
+        mark_known_for_current_scope: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) void,
         /// Returns whether the pool already contains this hash and tx type.
         contains_tx: *const fn (ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool,
     };
@@ -153,6 +155,14 @@ pub const TxPool = struct {
     /// Returns true when `tx_hash` is already known by the pool/hash cache.
     pub fn is_known(self: TxPool, tx_hash: TransactionHash) bool {
         return self.vtable.is_known(self.ptr, tx_hash);
+    }
+
+    /// Marks `tx_hash` as known in the current block/scope hash cache.
+    ///
+    /// This mirrors Nethermind `HashCache.SetForCurrentBlock` behavior used by
+    /// `AlreadyKnownTxFilter` to suppress duplicate analysis in the same scope.
+    pub fn mark_known_for_current_scope(self: TxPool, tx_hash: TransactionHash) void {
+        self.vtable.mark_known_for_current_scope(self.ptr, tx_hash);
     }
 
     /// Returns true when `tx_hash` with `tx_type` already exists in the pool.
@@ -212,6 +222,8 @@ test "txpool interface dispatches pending counts" {
             return std.mem.eql(u8, &self.known_hash, &tx_hash);
         }
 
+        fn mark_known_for_current_scope(_: *anyopaque, _: TransactionHash) void {}
+
         fn contains_tx(ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
@@ -237,6 +249,7 @@ test "txpool interface dispatches pending counts" {
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
         .is_known = DummyPool.is_known,
+        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
     };
 
@@ -289,6 +302,8 @@ test "txpool interface dispatches pending transactions by sender" {
             return false;
         }
 
+        fn mark_known_for_current_scope(_: *anyopaque, _: TransactionHash) void {}
+
         fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
             return false;
         }
@@ -311,6 +326,7 @@ test "txpool interface dispatches pending transactions by sender" {
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
         .is_known = DummyPool.is_known,
+        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
