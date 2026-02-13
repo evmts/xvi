@@ -173,6 +173,30 @@ test "validate_request_jsonrpc_version rejects unsupported version" {
     try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
 }
 
+test "validate_request_jsonrpc_version applies last-wins semantics for duplicate jsonrpc keys" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"jsonrpc\": \"1.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.jsonrpc_version_not_supported, validate_request_jsonrpc_version(req).?);
+}
+
+test "validate_request_jsonrpc_version accepts duplicate jsonrpc when final value is 2.0" {
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"1.0\",\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+    try std.testing.expect(validate_request_jsonrpc_version(req) == null);
+}
+
 test "validate_request_jsonrpc_version rejects non-string version token" {
     const req =
         "{\n" ++

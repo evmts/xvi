@@ -336,9 +336,9 @@ pub fn scan_request_fields(input: []const u8) ScanRequestError!RequestFieldSpans
         try parse_json_value(input, &i, 2);
         const value_end = i;
 
-        if (fields.jsonrpc == null and std.mem.eql(u8, key_token, "\"jsonrpc\"")) {
+        if (std.mem.eql(u8, key_token, "\"jsonrpc\"")) {
             fields.jsonrpc = .{ .start = value_start, .end = value_end };
-        } else if (fields.method == null and std.mem.eql(u8, key_token, "\"method\"")) {
+        } else if (std.mem.eql(u8, key_token, "\"method\"")) {
             fields.method = .{ .start = value_start, .end = value_end };
         }
 
@@ -394,6 +394,19 @@ test "scanRequestFields captures jsonrpc and method spans" {
     try std.testing.expect(out.method != null);
     try std.testing.expectEqualStrings("\"2.0\"", req[out.jsonrpc.?.start..out.jsonrpc.?.end]);
     try std.testing.expectEqualStrings("\"eth_blockNumber\"", req[out.method.?.start..out.method.?.end]);
+}
+
+test "scanRequestFields uses last-wins semantics for duplicate top-level keys" {
+    const req =
+        "{\n" ++
+        "  \"method\": \"eth_chainId\",\n" ++
+        "  \"method\": \"eth_blockNumber\",\n" ++
+        "  \"jsonrpc\": \"1.0\",\n" ++
+        "  \"jsonrpc\": \"2.0\"\n" ++
+        "}";
+    const out = try scan_request_fields(req);
+    try std.testing.expectEqualStrings("\"eth_blockNumber\"", req[out.method.?.start..out.method.?.end]);
+    try std.testing.expectEqualStrings("\"2.0\"", req[out.jsonrpc.?.start..out.jsonrpc.?.end]);
 }
 
 test "scanRequestFields rejects malformed object" {
