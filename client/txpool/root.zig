@@ -9,6 +9,7 @@ const handling_options = @import("handling_options.zig");
 const sorter = @import("sorter.zig");
 const limits = @import("limits.zig");
 const policy = @import("policy.zig");
+const admission = @import("admission.zig");
 
 /// Transaction pool interface (vtable-based). Mirrors Nethermind's ITxPool minimal surface.
 /// Consumers should depend on this alias, not on `pool.zig` internals.
@@ -32,6 +33,7 @@ pub const fits_size_limits = limits.fits_size_limits;
 pub const fits_gas_limit = limits.fits_gas_limit;
 pub const enforce_min_priority_fee_for_blobs = limits.enforce_min_priority_fee_for_blobs;
 pub const enforce_nonce_gap = limits.enforce_nonce_gap;
+pub const precheck_duplicate = admission.precheck_duplicate;
 
 test {
     std.testing.refAllDecls(@This());
