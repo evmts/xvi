@@ -13,6 +13,7 @@ const ExchangeTransitionConfigurationV1Method =
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
 const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
 const GetPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
+const GetPayloadV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV2");
 
 fn voltaire_runtime_type(comptime T: type) type {
     // Voltaire's generated EngineMethod params/results currently expose shared
@@ -34,6 +35,8 @@ const ForkchoiceUpdatedV1VoltaireParams = @FieldType(ForkchoiceUpdatedV1Method, 
 const ForkchoiceUpdatedV1VoltaireResult = @FieldType(ForkchoiceUpdatedV1Method, "result");
 const GetPayloadV1VoltaireParams = @FieldType(GetPayloadV1Method, "params");
 const GetPayloadV1VoltaireResult = @FieldType(GetPayloadV1Method, "result");
+const GetPayloadV2VoltaireParams = @FieldType(GetPayloadV2Method, "params");
+const GetPayloadV2VoltaireResult = @FieldType(GetPayloadV2Method, "result");
 
 const Quantity = voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods"));
 
@@ -92,6 +95,14 @@ pub const GetPayloadV1Params = struct {
 pub const GetPayloadV1Result = struct {
     value: voltaire_runtime_type(@FieldType(GetPayloadV1VoltaireResult, "value")),
 };
+/// Parameters for `engine_getPayloadV2` requests.
+pub const GetPayloadV2Params = struct {
+    payload_id: voltaire_runtime_type(@FieldType(GetPayloadV2VoltaireParams, "payload_id")),
+};
+/// Result payload for `engine_getPayloadV2` responses.
+pub const GetPayloadV2Result = struct {
+    value: voltaire_runtime_type(@FieldType(GetPayloadV2VoltaireResult, "value")),
+};
 
 fn DispatchResult(comptime Method: type) type {
     if (Method == ExchangeCapabilitiesMethod) return ExchangeCapabilitiesResult;
@@ -99,6 +110,7 @@ fn DispatchResult(comptime Method: type) type {
     if (Method == NewPayloadV1Method) return NewPayloadV1Result;
     if (Method == ForkchoiceUpdatedV1Method) return ForkchoiceUpdatedV1Result;
     if (Method == GetPayloadV1Method) return GetPayloadV1Result;
+    if (Method == GetPayloadV2Method) return GetPayloadV2Result;
     return @FieldType(Method, "result");
 }
 
@@ -207,6 +219,11 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: GetPayloadV1Params,
         ) Error!GetPayloadV1Result,
+        /// Returns a built execution payload plus block value by payload ID (V2).
+        get_payload_v2: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV2Params,
+        ) Error!GetPayloadV2Result,
     };
 
     /// Exchange list of supported Engine API methods.
@@ -286,11 +303,24 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Retrieves an execution payload response object by 8-byte `payloadId` (V2).
+    ///
+    /// This stage performs request/response shape checks only.
+    pub fn get_payload_v2(
+        self: EngineApi,
+        params: GetPayloadV2Params,
+    ) Error!GetPayloadV2Result {
+        try validate_get_payload_v2_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v2(self.ptr, params);
+        try validate_get_payload_v2_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Generic dispatcher for EngineMethod calls using Voltaire's EngineMethod schema.
     ///
     /// Partial coverage: currently handles `engine_exchangeCapabilities`,
     /// `engine_exchangeTransitionConfigurationV1`, `engine_newPayloadV1`,
-    /// `engine_forkchoiceUpdatedV1`, and `engine_getPayloadV1`.
+    /// `engine_forkchoiceUpdatedV1`, `engine_getPayloadV1`, and `engine_getPayloadV2`.
     /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
@@ -310,6 +340,8 @@ pub const EngineApi = struct {
             return self.forkchoice_updated_v1(params);
         } else if (comptime Method == GetPayloadV1Method) {
             return self.get_payload_v1(params);
+        } else if (comptime Method == GetPayloadV2Method) {
+            return self.get_payload_v2(params);
         } else {
             return Error.MethodNotFound;
         }
@@ -501,6 +533,67 @@ fn validate_get_payload_v1_result(
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
     try validate_execution_payload_v1_json(result.value.value, invalid_err);
+}
+
+fn validate_get_payload_v2_params(
+    params: GetPayloadV2Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const payload_id = params.payload_id.value;
+    switch (payload_id) {
+        .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_get_payload_v2_result(
+    result: GetPayloadV2Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (result.value.value != .object) return invalid_err;
+    const obj = result.value.value.object;
+
+    const execution_payload = obj.get("executionPayload") orelse return invalid_err;
+    try validate_execution_payload_v1_or_v2_json(execution_payload, invalid_err);
+
+    const block_value = obj.get("blockValue") orelse return invalid_err;
+    switch (block_value) {
+        .string => |s| _ = try parse_quantity_hex_u256(s, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_execution_payload_v1_or_v2_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v1_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+
+    const withdrawals = value.object.get("withdrawals") orelse return;
+    try validate_withdrawals_v1_json(withdrawals, invalid_err);
+}
+
+fn validate_withdrawals_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+    for (value.array.items) |withdrawal| {
+        try validate_withdrawal_v1_json(withdrawal, invalid_err);
+    }
+}
+
+fn validate_withdrawal_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+    try validate_json_quantity_u64_field(obj, "index", invalid_err);
+    try validate_json_quantity_u64_field(obj, "validatorIndex", invalid_err);
+    try validate_json_fixed_data_field(obj, "address", 20, invalid_err);
+    try validate_json_quantity_u64_field(obj, "amount", invalid_err);
 }
 
 fn validate_execution_payload_v1_json(
@@ -774,12 +867,14 @@ const DummyEngine = struct {
     new_payload_result: NewPayloadV1Result = undefined,
     forkchoice_updated_result: ForkchoiceUpdatedV1Result = undefined,
     get_payload_result: GetPayloadV1Result = undefined,
+    get_payload_v2_result: GetPayloadV2Result = undefined,
     called: bool = false,
     client_version_called: bool = false,
     transition_called: bool = false,
     new_payload_called: bool = false,
     forkchoice_updated_called: bool = false,
     get_payload_called: bool = false,
+    get_payload_v2_called: bool = false,
 
     fn exchange_capabilities(
         ptr: *anyopaque,
@@ -840,6 +935,16 @@ const DummyEngine = struct {
         self.get_payload_called = true;
         return self.get_payload_result;
     }
+
+    fn get_payload_v2(
+        ptr: *anyopaque,
+        params: GetPayloadV2Params,
+    ) EngineApi.Error!GetPayloadV2Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_v2_called = true;
+        return self.get_payload_v2_result;
+    }
 };
 
 const dummy_vtable = EngineApi.VTable{
@@ -849,6 +954,7 @@ const dummy_vtable = EngineApi.VTable{
     .new_payload_v1 = DummyEngine.new_payload_v1,
     .forkchoice_updated_v1 = DummyEngine.forkchoice_updated_v1,
     .get_payload_v1 = DummyEngine.get_payload_v1,
+    .get_payload_v2 = DummyEngine.get_payload_v2,
 };
 
 fn make_api(dummy: *DummyEngine) EngineApi {
@@ -1170,6 +1276,26 @@ fn make_execution_payload_v1_object(allocator: std.mem.Allocator) !struct {
     return .{
         .transactions = transactions,
         .object = obj,
+    };
+}
+
+fn make_execution_payload_v2_object(allocator: std.mem.Allocator) !struct {
+    transactions: std.json.Array,
+    withdrawals: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var payload = try make_execution_payload_v1_object(allocator);
+    errdefer payload.transactions.deinit();
+    errdefer payload.object.deinit();
+
+    var withdrawals = std.json.Array.init(allocator);
+    errdefer withdrawals.deinit();
+    try payload.object.put("withdrawals", .{ .array = withdrawals });
+
+    return .{
+        .transactions = payload.transactions,
+        .withdrawals = withdrawals,
+        .object = payload.object,
     };
 }
 
@@ -1559,6 +1685,108 @@ test "engine api generic dispatcher routes getPayloadV1" {
     try std.testing.expect(dummy.get_payload_called);
 }
 
+test "engine api dispatches getPayloadV2" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV2Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000004" } },
+    };
+
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x10" });
+
+    const result_value = GetPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v2_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_v2(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_v2_called);
+}
+
+test "engine api rejects invalid getPayloadV2 params" {
+    const params = GetPayloadV2Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x01" } },
+    };
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.get_payload_v2(params));
+    try std.testing.expect(!dummy.get_payload_v2_called);
+}
+
+test "engine api rejects invalid getPayloadV2 response" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV2Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000005" } },
+    };
+
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    try payload.object.put("withdrawals", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x10" });
+
+    const bad_result = GetPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v2_result = bad_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.get_payload_v2(params));
+    try std.testing.expect(dummy.get_payload_v2_called);
+}
+
+test "engine api generic dispatcher routes getPayloadV2" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV2Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000006" } },
+    };
+
+    var payload = try make_execution_payload_v2_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x11" });
+
+    const result_value = GetPayloadV2Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v2_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.dispatch(GetPayloadV2Method, params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_v2_called);
+}
+
 test "engine api dispatches forkchoiceUpdatedV1" {
     const alloc = std.testing.allocator;
 
@@ -1821,15 +2049,15 @@ test "engine api generic dispatcher routes forkchoiceUpdatedV1" {
 }
 
 test "engine api generic dispatcher rejects unknown method" {
-    const GetPayloadV2 = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV2");
-    const GetPayloadV2Params = @FieldType(GetPayloadV2, "params");
-    const params: GetPayloadV2Params = undefined;
+    const GetPayloadV3 = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV3");
+    const GetPayloadV3Params = @FieldType(GetPayloadV3, "params");
+    const params: GetPayloadV3Params = undefined;
     const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
 
     var dummy = DummyEngine{ .result = exchange_result };
     const api = make_api(&dummy);
 
-    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(GetPayloadV2, params));
+    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(GetPayloadV3, params));
 }
 
 test "engine api rejects invalid client version params" {
