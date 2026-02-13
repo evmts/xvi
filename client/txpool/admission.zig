@@ -45,6 +45,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return 0;
         }
 
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
+            return &[_]TxPool.PendingTransactionRef{};
+        }
+
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.is_known_calls += 1;
@@ -71,6 +75,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
         .pending_blob_count = DummyPool.pending_blob_count,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
     };
@@ -104,6 +109,10 @@ test "precheck_duplicate matches typed containment semantics" {
             return 0;
         }
 
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
+            return &[_]TxPool.PendingTransactionRef{};
+        }
+
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             return std.mem.eql(u8, &self.known_hash, &tx_hash);
@@ -128,6 +137,7 @@ test "precheck_duplicate matches typed containment semantics" {
         .pending_blob_count = DummyPool.pending_blob_count,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
     };

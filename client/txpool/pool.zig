@@ -88,6 +88,12 @@ pub const TxPoolConfig = struct {
 /// This mirrors the HostInterface pattern used by the EVM and allows
 /// compile-time wiring of concrete pool implementations.
 pub const TxPool = struct {
+    /// Lightweight pending transaction view item used by sender-scoped queries.
+    pub const PendingTransactionRef = struct {
+        tx_hash: TransactionHash,
+        tx_type: TransactionType,
+    };
+
     /// Type-erased pointer to the concrete txpool implementation.
     ptr: *anyopaque,
     /// Pointer to the static vtable for the concrete txpool implementation.
@@ -103,6 +109,8 @@ pub const TxPool = struct {
         supports_blobs: *const fn (ptr: *anyopaque) bool,
         /// Number of pending transactions for a specific sender address.
         get_pending_count_for_sender: *const fn (ptr: *anyopaque, sender: Address) u32,
+        /// Pending transactions for a specific sender, ordered by nonce and pool policy.
+        get_pending_transactions_by_sender: *const fn (ptr: *anyopaque, sender: Address) []const PendingTransactionRef,
         /// Returns whether this transaction hash is known by the pool/hash cache.
         is_known: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) bool,
         /// Returns whether the pool already contains this hash and tx type.
@@ -132,6 +140,14 @@ pub const TxPool = struct {
     /// through this vtable in a future pass.
     pub fn get_pending_count_for_sender(self: TxPool, sender: Address) u32 {
         return self.vtable.get_pending_count_for_sender(self.ptr, sender);
+    }
+
+    /// Pending transactions currently tracked for `sender`.
+    ///
+    /// Mirrors Nethermind's `GetPendingTransactionsBySender(Address)` shape,
+    /// but returns a lightweight typed view (hash + transaction type).
+    pub fn get_pending_transactions_by_sender(self: TxPool, sender: Address) []const PendingTransactionRef {
+        return self.vtable.get_pending_transactions_by_sender(self.ptr, sender);
     }
 
     /// Returns true when `tx_hash` is already known by the pool/hash cache.
@@ -186,6 +202,10 @@ test "txpool interface dispatches pending counts" {
                 0;
         }
 
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
+            return &[_]TxPool.PendingTransactionRef{};
+        }
+
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
@@ -215,6 +235,7 @@ test "txpool interface dispatches pending counts" {
         .pending_blob_count = DummyPool.pending_blob_count,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
     };
@@ -233,6 +254,75 @@ test "txpool interface dispatches pending counts" {
 
     dummy.blobs_enabled = false;
     try std.testing.expect(!pool.supports_blobs());
+}
+
+test "txpool interface dispatches pending transactions by sender" {
+    const DummyPool = struct {
+        match_sender: Address,
+        sender_pending: []const TxPool.PendingTransactionRef,
+
+        fn pending_count(_: *anyopaque) u32 {
+            return 0;
+        }
+
+        fn pending_blob_count(_: *anyopaque) u32 {
+            return 0;
+        }
+
+        fn supports_blobs(_: *anyopaque) bool {
+            return true;
+        }
+
+        fn get_pending_count_for_sender(ptr: *anyopaque, sender: Address) u32 {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (!Address.equals(self.match_sender, sender)) return 0;
+            return @intCast(self.sender_pending.len);
+        }
+
+        fn get_pending_transactions_by_sender(ptr: *anyopaque, sender: Address) []const TxPool.PendingTransactionRef {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (Address.equals(self.match_sender, sender)) return self.sender_pending;
+            return &[_]TxPool.PendingTransactionRef{};
+        }
+
+        fn is_known(_: *anyopaque, _: TransactionHash) bool {
+            return false;
+        }
+
+        fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
+            return false;
+        }
+    };
+
+    const target = Address{ .bytes = [_]u8{0xC1} ++ [_]u8{0} ** 19 };
+    const expected = [_]TxPool.PendingTransactionRef{
+        .{ .tx_hash = [_]u8{0x31} ** 32, .tx_type = .legacy },
+        .{ .tx_hash = [_]u8{0x32} ** 32, .tx_type = .eip1559 },
+    };
+
+    var dummy = DummyPool{
+        .match_sender = target,
+        .sender_pending = &expected,
+    };
+    const vtable = TxPool.VTable{
+        .pending_count = DummyPool.pending_count,
+        .pending_blob_count = DummyPool.pending_blob_count,
+        .supports_blobs = DummyPool.supports_blobs,
+        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
+        .is_known = DummyPool.is_known,
+        .contains_tx = DummyPool.contains_tx,
+    };
+    const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
+
+    const got_target = pool.get_pending_transactions_by_sender(target);
+    try std.testing.expectEqual(@as(usize, expected.len), got_target.len);
+    try std.testing.expectEqualDeep(expected[0], got_target[0]);
+    try std.testing.expectEqualDeep(expected[1], got_target[1]);
+
+    const other = Address{ .bytes = [_]u8{0xC2} ++ [_]u8{0} ** 19 };
+    const got_other = pool.get_pending_transactions_by_sender(other);
+    try std.testing.expectEqual(@as(usize, 0), got_other.len);
 }
 
 test "blobs support mode helpers mirror nethermind semantics" {

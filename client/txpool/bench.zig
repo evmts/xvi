@@ -292,6 +292,10 @@ const LookupDummyPool = struct {
         return 0;
     }
 
+    fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
+        return &[_]TxPool.PendingTransactionRef{};
+    }
+
     fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
         const self: *LookupDummyPool = @ptrCast(@alignCast(ptr));
         return std.mem.eql(u8, &self.known_hash, &tx_hash);
@@ -313,6 +317,7 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
         .pending_blob_count = LookupDummyPool.pending_blob_count,
         .supports_blobs = LookupDummyPool.supports_blobs,
         .get_pending_count_for_sender = LookupDummyPool.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = LookupDummyPool.get_pending_transactions_by_sender,
         .is_known = LookupDummyPool.is_known,
         .contains_tx = LookupDummyPool.contains_tx,
     };
