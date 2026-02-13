@@ -12,6 +12,7 @@ const ExchangeTransitionConfigurationV1Method =
     @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeTransitionConfigurationV1");
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
 const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
+const GetPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
 const Quantity = jsonrpc.types.Quantity.Quantity;
 
 /// Parameters for `engine_exchangeCapabilities` requests.
@@ -61,12 +62,21 @@ pub const ForkchoiceUpdatedV1Params = struct {
 pub const ForkchoiceUpdatedV1Result = struct {
     value: Quantity,
 };
+/// Parameters for `engine_getPayloadV1` requests.
+pub const GetPayloadV1Params = struct {
+    payload_id: Quantity,
+};
+/// Result payload for `engine_getPayloadV1` responses.
+pub const GetPayloadV1Result = struct {
+    value: Quantity,
+};
 
 fn DispatchResult(comptime Method: type) type {
     if (Method == ExchangeCapabilitiesMethod) return ExchangeCapabilitiesResult;
     if (Method == ExchangeTransitionConfigurationV1Method) return ExchangeTransitionConfigurationV1Result;
     if (Method == NewPayloadV1Method) return NewPayloadV1Result;
     if (Method == ForkchoiceUpdatedV1Method) return ForkchoiceUpdatedV1Result;
+    if (Method == GetPayloadV1Method) return GetPayloadV1Result;
     return @FieldType(Method, "result");
 }
 
@@ -170,6 +180,11 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: ForkchoiceUpdatedV1Params,
         ) Error!ForkchoiceUpdatedV1Result,
+        /// Returns a built execution payload by payload ID (V1).
+        get_payload_v1: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV1Params,
+        ) Error!GetPayloadV1Result,
     };
 
     /// Exchange list of supported Engine API methods.
@@ -236,11 +251,24 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Retrieves an `ExecutionPayloadV1` by 8-byte `payloadId`.
+    ///
+    /// This stage performs request/response shape checks only.
+    pub fn get_payload_v1(
+        self: EngineApi,
+        params: GetPayloadV1Params,
+    ) Error!GetPayloadV1Result {
+        try validate_get_payload_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v1(self.ptr, params);
+        try validate_get_payload_v1_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Generic dispatcher for EngineMethod calls using Voltaire's EngineMethod schema.
     ///
     /// Partial coverage: currently handles `engine_exchangeCapabilities`,
     /// `engine_exchangeTransitionConfigurationV1`, `engine_newPayloadV1`,
-    /// and `engine_forkchoiceUpdatedV1`.
+    /// `engine_forkchoiceUpdatedV1`, and `engine_getPayloadV1`.
     /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
@@ -258,6 +286,8 @@ pub const EngineApi = struct {
             return self.new_payload_v1(params);
         } else if (comptime Method == ForkchoiceUpdatedV1Method) {
             return self.forkchoice_updated_v1(params);
+        } else if (comptime Method == GetPayloadV1Method) {
+            return self.get_payload_v1(params);
         } else {
             return Error.MethodNotFound;
         }
@@ -444,6 +474,118 @@ fn validate_forkchoice_updated_v1_result(
     }
 }
 
+fn validate_get_payload_v1_params(
+    params: GetPayloadV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const payload_id = params.payload_id.value;
+    switch (payload_id) {
+        .string => |s| _ = primitives.Hex.assertSize(s, 8) catch return invalid_err,
+        else => return invalid_err,
+    }
+}
+
+fn validate_get_payload_v1_result(
+    result: GetPayloadV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v1_json(result.value.value, invalid_err);
+}
+
+fn validate_execution_payload_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    // Required fields per execution-apis Paris ExecutionPayloadV1
+    try validate_json_fixed_data_field(obj, "parentHash", 32, invalid_err);
+    try validate_json_fixed_data_field(obj, "feeRecipient", 20, invalid_err);
+    try validate_json_fixed_data_field(obj, "stateRoot", 32, invalid_err);
+    try validate_json_fixed_data_field(obj, "receiptsRoot", 32, invalid_err);
+    try validate_json_fixed_data_field(obj, "logsBloom", 256, invalid_err);
+    try validate_json_fixed_data_field(obj, "prevRandao", 32, invalid_err);
+    try validate_json_quantity_u64_field(obj, "blockNumber", invalid_err);
+    try validate_json_quantity_u64_field(obj, "gasLimit", invalid_err);
+    try validate_json_quantity_u64_field(obj, "gasUsed", invalid_err);
+    try validate_json_quantity_u64_field(obj, "timestamp", invalid_err);
+    try validate_json_data_max_size_field(obj, "extraData", 32, invalid_err);
+    try validate_json_quantity_u256_field(obj, "baseFeePerGas", invalid_err);
+    try validate_json_fixed_data_field(obj, "blockHash", 32, invalid_err);
+
+    const txs = obj.get("transactions") orelse return invalid_err;
+    if (txs != .array) return invalid_err;
+    for (txs.array.items) |tx| {
+        if (tx != .string) return invalid_err;
+        try validate_data_hex_max_size(tx.string, std.math.maxInt(usize) / 2, invalid_err);
+    }
+}
+
+fn validate_json_fixed_data_field(
+    obj: std.json.ObjectMap,
+    field_name: []const u8,
+    size_bytes: usize,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const value = obj.get(field_name) orelse return invalid_err;
+    switch (value) {
+        .string => |s| _ = primitives.Hex.assertSize(s, size_bytes) catch return invalid_err,
+        else => return invalid_err,
+    }
+}
+
+fn validate_json_data_max_size_field(
+    obj: std.json.ObjectMap,
+    field_name: []const u8,
+    max_size_bytes: usize,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const value = obj.get(field_name) orelse return invalid_err;
+    switch (value) {
+        .string => |s| try validate_data_hex_max_size(s, max_size_bytes, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_json_quantity_u64_field(
+    obj: std.json.ObjectMap,
+    field_name: []const u8,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const value = obj.get(field_name) orelse return invalid_err;
+    switch (value) {
+        .string => |s| {
+            const parsed = primitives.Hex.hexToU256(s) catch return invalid_err;
+            if (parsed > std.math.maxInt(u64)) return invalid_err;
+        },
+        else => return invalid_err,
+    }
+}
+
+fn validate_json_quantity_u256_field(
+    obj: std.json.ObjectMap,
+    field_name: []const u8,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    const value = obj.get(field_name) orelse return invalid_err;
+    switch (value) {
+        .string => |s| _ = primitives.Hex.hexToU256(s) catch return invalid_err,
+        else => return invalid_err,
+    }
+}
+
+fn validate_data_hex_max_size(
+    data: []const u8,
+    max_size_bytes: usize,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    _ = primitives.Hex.validate(data) catch return invalid_err;
+    const hex_digits_len = data.len - 2;
+    if (hex_digits_len % 2 != 0) return invalid_err;
+    if (hex_digits_len > max_size_bytes * 2) return invalid_err;
+}
+
 fn validate_payload_status_v1_json(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
@@ -568,11 +710,13 @@ const DummyEngine = struct {
     transition_result: ExchangeTransitionConfigurationV1Result = undefined,
     new_payload_result: NewPayloadV1Result = undefined,
     forkchoice_updated_result: ForkchoiceUpdatedV1Result = undefined,
+    get_payload_result: GetPayloadV1Result = undefined,
     called: bool = false,
     client_version_called: bool = false,
     transition_called: bool = false,
     new_payload_called: bool = false,
     forkchoice_updated_called: bool = false,
+    get_payload_called: bool = false,
 
     fn exchange_capabilities(
         ptr: *anyopaque,
@@ -623,6 +767,16 @@ const DummyEngine = struct {
         self.forkchoice_updated_called = true;
         return self.forkchoice_updated_result;
     }
+
+    fn get_payload_v1(
+        ptr: *anyopaque,
+        params: GetPayloadV1Params,
+    ) EngineApi.Error!GetPayloadV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_called = true;
+        return self.get_payload_result;
+    }
 };
 
 const dummy_vtable = EngineApi.VTable{
@@ -631,6 +785,7 @@ const dummy_vtable = EngineApi.VTable{
     .exchange_transition_configuration_v1 = DummyEngine.exchange_transition_configuration_v1,
     .new_payload_v1 = DummyEngine.new_payload_v1,
     .forkchoice_updated_v1 = DummyEngine.forkchoice_updated_v1,
+    .get_payload_v1 = DummyEngine.get_payload_v1,
 };
 
 fn make_api(dummy: *DummyEngine) EngineApi {
@@ -920,6 +1075,41 @@ fn make_transition_config_object(
     return obj;
 }
 
+const zero_hash32_hex = "0x" ++ ("00" ** 32);
+const zero_address20_hex = "0x" ++ ("00" ** 20);
+const zero_logs_bloom256_hex = "0x" ++ ("00" ** 256);
+
+fn make_execution_payload_v1_object(allocator: std.mem.Allocator) !struct {
+    transactions: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var transactions = std.json.Array.init(allocator);
+    errdefer transactions.deinit();
+    try transactions.append(.{ .string = "0x01" });
+
+    var obj = std.json.ObjectMap.init(allocator);
+    errdefer obj.deinit();
+    try obj.put("parentHash", .{ .string = zero_hash32_hex });
+    try obj.put("feeRecipient", .{ .string = zero_address20_hex });
+    try obj.put("stateRoot", .{ .string = zero_hash32_hex });
+    try obj.put("receiptsRoot", .{ .string = zero_hash32_hex });
+    try obj.put("logsBloom", .{ .string = zero_logs_bloom256_hex });
+    try obj.put("prevRandao", .{ .string = zero_hash32_hex });
+    try obj.put("blockNumber", .{ .string = "0x1" });
+    try obj.put("gasLimit", .{ .string = "0x1" });
+    try obj.put("gasUsed", .{ .string = "0x0" });
+    try obj.put("timestamp", .{ .string = "0x1" });
+    try obj.put("extraData", .{ .string = "0x" });
+    try obj.put("baseFeePerGas", .{ .string = "0x7" });
+    try obj.put("blockHash", .{ .string = zero_hash32_hex });
+    try obj.put("transactions", .{ .array = transactions });
+
+    return .{
+        .transactions = transactions,
+        .object = obj,
+    };
+}
+
 test "engine api dispatches exchangeTransitionConfigurationV1" {
     const allocator = std.testing.allocator;
     var obj = try make_transition_config_object(
@@ -1129,6 +1319,89 @@ test "engine api generic dispatcher routes newPayloadV1" {
     const out = try api.dispatch(NewPayloadV1Method, params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.new_payload_called);
+}
+
+test "engine api dispatches getPayloadV1" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV1Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000001" } },
+    };
+
+    var payload = try make_execution_payload_v1_object(alloc);
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    const result_value = GetPayloadV1Result{
+        .value = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_called);
+}
+
+test "engine api rejects invalid getPayloadV1 params" {
+    const params = GetPayloadV1Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x01" } },
+    };
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.get_payload_v1(params));
+    try std.testing.expect(!dummy.get_payload_called);
+}
+
+test "engine api rejects invalid getPayloadV1 response" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV1Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000002" } },
+    };
+
+    var payload = try make_execution_payload_v1_object(alloc);
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    try payload.object.put("blockHash", .{ .string = "0x1234" });
+
+    const bad_result = GetPayloadV1Result{
+        .value = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_result = bad_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.get_payload_v1(params));
+    try std.testing.expect(dummy.get_payload_called);
+}
+
+test "engine api generic dispatcher routes getPayloadV1" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV1Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000003" } },
+    };
+
+    var payload = try make_execution_payload_v1_object(alloc);
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+    const result_value = GetPayloadV1Result{
+        .value = Quantity{ .value = .{ .object = payload.object } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.dispatch(GetPayloadV1Method, params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_called);
 }
 
 test "engine api dispatches forkchoiceUpdatedV1" {
@@ -1341,15 +1614,15 @@ test "engine api generic dispatcher routes forkchoiceUpdatedV1" {
 }
 
 test "engine api generic dispatcher rejects unknown method" {
-    const GetPayloadV1 = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
-    const GetPayloadV1Params = @FieldType(GetPayloadV1, "params");
-    const params: GetPayloadV1Params = undefined;
+    const GetPayloadV2 = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV2");
+    const GetPayloadV2Params = @FieldType(GetPayloadV2, "params");
+    const params: GetPayloadV2Params = undefined;
     const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
 
     var dummy = DummyEngine{ .result = exchange_result };
     const api = make_api(&dummy);
 
-    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(GetPayloadV1, params));
+    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(GetPayloadV2, params));
 }
 
 test "engine api rejects invalid client version params" {
