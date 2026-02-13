@@ -5,11 +5,13 @@ const rlpx = @import("rlpx/root.zig");
 
 /// Snappy framing limits for RLPx compressed payloads.
 pub const SnappyParameters = rlpx.SnappyParameters;
+/// Stable error set for Snappy pre-decompression metadata guards.
+pub const SnappyGuardError = rlpx.SnappyGuardError;
 /// RLPx frame constants and padding helper.
 pub const Frame = rlpx.Frame;
 
 /// Validates inbound compressed DEVp2p payload metadata before decompression.
-pub fn guard_inbound_snappy_payload(frame_data: []const u8) @TypeOf(rlpx.SnappyParameters.guard_before_decompression(frame_data)) {
+pub fn guard_inbound_snappy_payload(frame_data: []const u8) SnappyGuardError!usize {
     return rlpx.SnappyParameters.guard_before_decompression(frame_data);
 }
 

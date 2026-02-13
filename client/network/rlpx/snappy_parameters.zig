@@ -6,19 +6,22 @@ const Uint32 = primitives.Uint32;
 /// Snappy compressed payload size limit for RLPx payloads.
 /// Mirrors Nethermind's SnappyParameters.MaxSnappyLength.
 pub const MaxSnappyLength: usize = 16 * 1024 * 1024;
-
-// Snappy length headers are varints of an unsigned 32-bit value.
-const MaxLengthVarintBytes: usize = (Uint32.BITS + 6) / 7;
-
-/// Parses the Snappy length preamble and enforces the RLPx 16 MiB cap.
-/// The preamble is a little-endian base-128 varint as per Snappy framing.
-pub fn validate_uncompressed_length(frame_data: []const u8) error{
+/// Public, stable error set used by Snappy metadata guards.
+pub const SnappyGuardError = error{
     MissingLengthHeader,
     LengthVarintTooLong,
     UncompressedLengthTooLarge,
     CompressedLengthTooLarge,
-}!usize {
-    if (frame_data.len > @as(usize, @intCast(frame.ProtocolMaxFrameSize))) return error.CompressedLengthTooLarge;
+};
+
+// Snappy length headers are varints of an unsigned 32-bit value.
+const MaxLengthVarintBytes: usize = (Uint32.BITS + 6) / 7;
+const ProtocolMaxCompressedLength: usize = @as(usize, @intCast(frame.ProtocolMaxFrameSize));
+
+/// Parses the Snappy length preamble and enforces the RLPx 16 MiB cap.
+/// The preamble is a little-endian base-128 varint as per Snappy framing.
+pub fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
+    if (frame_data.len > ProtocolMaxCompressedLength) return error.CompressedLengthTooLarge;
     if (frame_data.len == 0) return error.MissingLengthHeader;
 
     var value: usize = 0;
@@ -45,12 +48,7 @@ pub fn validate_uncompressed_length(frame_data: []const u8) error{
 
 /// Fast pre-decode guard for RLPx handlers before Snappy decompression.
 /// Returns the parsed uncompressed length so callers can size buffers.
-pub fn guard_before_decompression(frame_data: []const u8) error{
-    MissingLengthHeader,
-    LengthVarintTooLong,
-    UncompressedLengthTooLarge,
-    CompressedLengthTooLarge,
-}!usize {
+pub fn guard_before_decompression(frame_data: []const u8) SnappyGuardError!usize {
     return validate_uncompressed_length(frame_data);
 }
 
@@ -88,13 +86,12 @@ test "validate_uncompressed_length enforces compressed and uncompressed limits" 
         validate_uncompressed_length(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
     );
 
-    const max_compressed = @as(usize, @intCast(frame.ProtocolMaxFrameSize));
-    const at_limit = try std.testing.allocator.alloc(u8, max_compressed);
+    const at_limit = try std.testing.allocator.alloc(u8, ProtocolMaxCompressedLength);
     defer std.testing.allocator.free(at_limit);
     @memset(at_limit, 0);
     try std.testing.expectEqual(@as(usize, 0), try validate_uncompressed_length(at_limit));
 
-    const oversized = try std.testing.allocator.alloc(u8, @as(usize, @intCast(frame.ProtocolMaxFrameSize)) + 1);
+    const oversized = try std.testing.allocator.alloc(u8, ProtocolMaxCompressedLength + 1);
     defer std.testing.allocator.free(oversized);
     @memset(oversized, 0);
 
