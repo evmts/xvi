@@ -136,3 +136,12 @@ test "root exports - typed ancestry error is preserved" {
 
     try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local(&chain_state, Hash.ZERO, Hash.ZERO));
 }
+
+test "root exports - divergence and reorg helpers preserve typed missing-head errors" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expectError(error.MissingCanonicalHead, has_canonical_divergence_local(&chain_state, Hash.ZERO));
+    try std.testing.expectError(error.MissingCanonicalHead, canonical_reorg_depth_local(&chain_state, Hash.ZERO));
+    try std.testing.expectError(error.MissingCanonicalHead, candidate_reorg_depth_local(&chain_state, Hash.ZERO));
+}
