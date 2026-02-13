@@ -30,9 +30,13 @@ pub const calculate_persistent_broadcast_quota = policy.calculate_persistent_bro
 /// Admission helpers: re-export to avoid wrapper signature drift and keep
 /// a single public import location for txpool checks.
 pub const fits_size_limits = limits.fits_size_limits;
+/// Admission helper: enforces optional transaction gas limit cap.
 pub const fits_gas_limit = limits.fits_gas_limit;
+/// Admission helper: enforces blob tip and blob base-fee constraints.
 pub const enforce_min_priority_fee_for_blobs = limits.enforce_min_priority_fee_for_blobs;
+/// Admission helper: rejects nonces that exceed in-order sender window.
 pub const enforce_nonce_gap = limits.enforce_nonce_gap;
+/// Admission helper: duplicate precheck against hash cache + typed pools.
 pub const precheck_duplicate = admission.precheck_duplicate;
 
 test {

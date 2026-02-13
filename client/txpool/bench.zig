@@ -265,6 +265,7 @@ fn bench_admission_memory(n_per_type: usize) struct { elapsed_ns: u64, bytes_per
     return .{ .elapsed_ns = res.elapsed_ns, .bytes_per_op = per_op };
 }
 
+/// Benchmark executable entrypoint for txpool admission/sorting hot paths.
 pub fn main() !void {
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
     std.debug.print("  Guillotine Phase-5-TxPool Benchmarks\n", .{});
