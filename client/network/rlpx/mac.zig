@@ -5,12 +5,12 @@ const crypto = @import("crypto");
 const Bytes32 = primitives.Bytes32.Bytes32;
 
 /// Generic pair of MAC/hash states for authenticated framing.
-pub fn MacStatesFor(comptime Hasher: type) type {
+pub fn mac_states_for(comptime Hasher: type) type {
     return struct { ingress: Hasher, egress: Hasher };
 }
 
 /// Default MAC states use Keccak256 as per RLPx.
-pub const MacStates = MacStatesFor(crypto.Keccak256);
+pub const MacStates = mac_states_for(crypto.Keccak256);
 /// Error set for auth/ack framing validation during MAC seeding.
 pub const MacSeedError = error{ InvalidAuthPrefix, InvalidAckPrefix, InvalidAuthSize, InvalidAckSize };
 
@@ -23,7 +23,7 @@ pub fn init_mac_states_for(
     auth: []const u8,
     ack: []const u8,
     is_initiator: bool,
-) MacSeedError!MacStatesFor(Hasher) {
+) MacSeedError!mac_states_for(Hasher) {
     if (auth.len < 2) return error.InvalidAuthPrefix;
     if (ack.len < 2) return error.InvalidAckPrefix;
     const auth_size: u16 = (@as(u16, auth[0]) << 8) | auth[1];
