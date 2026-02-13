@@ -19,6 +19,19 @@ pub const FrameHeaderError = error{
     InvalidTotalPacketSize,
     FrameSizeExceedsTotalPacketSize,
 };
+/// Public, stable error set for frame-header extension decoding.
+pub const FrameHeaderDecodeError = FrameHeaderError || error{
+    InvalidHeaderData,
+};
+
+/// Decoded and validated frame-header metadata.
+pub const FrameHeaderMetadata = struct {
+    is_chunked: bool,
+    is_first_chunk: bool,
+    frame_size: usize,
+    total_packet_size: usize,
+    context_id: ?usize,
+};
 
 /// Returns the zero-fill padding required to align to the AES block size.
 pub inline fn calculate_padding(size: usize) usize {
@@ -57,6 +70,139 @@ pub inline fn validate_total_packet_size(
         if (total == 0 or total > max_packet_size) return error.InvalidTotalPacketSize;
         if (frame_size > total) return error.FrameSizeExceedsTotalPacketSize;
     }
+}
+
+const RlpListBounds = struct {
+    payload_start: usize,
+    payload_end: usize,
+};
+
+const RlpUint = struct {
+    value: usize,
+    next: usize,
+};
+
+/// Decode header-data extension fields from decrypted RLPx header bytes.
+///
+/// `header_data_with_padding` is the 13-byte header-data region:
+/// `header[3..16] = rlp([capability-id, context-id, total-packet-size?]) || zero-padding`.
+/// Trailing bytes after the RLP list are ignored as padding.
+pub fn decode_header_extensions(
+    frame_size: usize,
+    header_data_with_padding: []const u8,
+    max_packet_size: usize,
+) FrameHeaderDecodeError!FrameHeaderMetadata {
+    const list = try decode_rlp_list_bounds(header_data_with_padding);
+    var cursor = list.payload_start;
+
+    // capability-id is currently always zero in RLPx, but parsed for forward compatibility.
+    const capability_id = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
+    _ = capability_id.value;
+    cursor = capability_id.next;
+
+    var context_id: ?usize = null;
+    var total_packet_size: ?usize = null;
+
+    if (cursor < list.payload_end) {
+        const context = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
+        context_id = context.value;
+        cursor = context.next;
+    }
+
+    if (cursor < list.payload_end) {
+        const total = try decode_rlp_uint(header_data_with_padding, cursor, list.payload_end);
+        total_packet_size = total.value;
+        cursor = total.next;
+    }
+
+    // Keep parity with Nethermind's frame-header parsing: reject extra list items.
+    if (cursor != list.payload_end) return error.InvalidHeaderData;
+
+    try validate_total_packet_size(frame_size, total_packet_size, max_packet_size);
+
+    const is_chunked = total_packet_size != null or (context_id != null and context_id.? != 0);
+    const is_first_chunk = total_packet_size != null or !is_chunked;
+
+    return .{
+        .is_chunked = is_chunked,
+        .is_first_chunk = is_first_chunk,
+        .frame_size = frame_size,
+        .total_packet_size = total_packet_size orelse frame_size,
+        .context_id = context_id,
+    };
+}
+
+fn decode_rlp_list_bounds(input: []const u8) FrameHeaderDecodeError!RlpListBounds {
+    if (input.len == 0) return error.InvalidHeaderData;
+    const prefix = input[0];
+    if (prefix < 0xc0) return error.InvalidHeaderData;
+
+    if (prefix <= 0xf7) {
+        const payload_len = @as(usize, @intCast(prefix - 0xc0));
+        const payload_end = std.math.add(usize, 1, payload_len) catch return error.InvalidHeaderData;
+        if (payload_end > input.len) return error.InvalidHeaderData;
+        return .{ .payload_start = 1, .payload_end = payload_end };
+    }
+
+    const len_of_len = @as(usize, @intCast(prefix - 0xf7));
+    if (len_of_len == 0) return error.InvalidHeaderData;
+
+    const len_end = std.math.add(usize, 1, len_of_len) catch return error.InvalidHeaderData;
+    if (len_end > input.len) return error.InvalidHeaderData;
+
+    const payload_len = try parse_big_endian_usize(input[1..len_end]);
+    const payload_end = std.math.add(usize, len_end, payload_len) catch return error.InvalidHeaderData;
+    if (payload_end > input.len) return error.InvalidHeaderData;
+
+    return .{ .payload_start = len_end, .payload_end = payload_end };
+}
+
+fn decode_rlp_uint(
+    input: []const u8,
+    offset: usize,
+    payload_end: usize,
+) FrameHeaderDecodeError!RlpUint {
+    if (offset >= payload_end or payload_end > input.len) return error.InvalidHeaderData;
+
+    const prefix = input[offset];
+    if (prefix <= 0x7f) {
+        return .{ .value = @as(usize, prefix), .next = offset + 1 };
+    }
+
+    if (prefix <= 0xb7) {
+        const data_len = @as(usize, @intCast(prefix - 0x80));
+        const data_start = offset + 1;
+        const data_end = std.math.add(usize, data_start, data_len) catch return error.InvalidHeaderData;
+        if (data_end > payload_end) return error.InvalidHeaderData;
+        const value = try parse_big_endian_usize(input[data_start..data_end]);
+        return .{ .value = value, .next = data_end };
+    }
+
+    if (prefix <= 0xbf) {
+        const len_of_len = @as(usize, @intCast(prefix - 0xb7));
+        if (len_of_len == 0) return error.InvalidHeaderData;
+        const len_start = offset + 1;
+        const len_end = std.math.add(usize, len_start, len_of_len) catch return error.InvalidHeaderData;
+        if (len_end > payload_end) return error.InvalidHeaderData;
+
+        const data_len = try parse_big_endian_usize(input[len_start..len_end]);
+        const data_end = std.math.add(usize, len_end, data_len) catch return error.InvalidHeaderData;
+        if (data_end > payload_end) return error.InvalidHeaderData;
+
+        const value = try parse_big_endian_usize(input[len_end..data_end]);
+        return .{ .value = value, .next = data_end };
+    }
+
+    return error.InvalidHeaderData;
+}
+
+fn parse_big_endian_usize(bytes: []const u8) FrameHeaderDecodeError!usize {
+    var value: usize = 0;
+    for (bytes) |byte| {
+        const shifted = std.math.mul(usize, value, 256) catch return error.InvalidHeaderData;
+        value = std.math.add(usize, shifted, @as(usize, byte)) catch return error.InvalidHeaderData;
+    }
+    return value;
 }
 
 test "calculate padding returns zero for aligned sizes" {
@@ -138,5 +284,72 @@ test "validate_total_packet_size: rejects frame larger than declared total" {
     try std.testing.expectError(
         error.FrameSizeExceedsTotalPacketSize,
         validate_total_packet_size(1025, 1024, 16 * 1024 * 1024),
+    );
+}
+
+test "decode_header_extensions: decodes non-chunked header data" {
+    const header_data = [_]u8{ 0xC2, 0x80, 0x80 } ++ [_]u8{0} ** 10;
+    const decoded = try decode_header_extensions(1024, &header_data, 16 * 1024 * 1024);
+
+    try std.testing.expect(!decoded.is_chunked);
+    try std.testing.expect(decoded.is_first_chunk);
+    try std.testing.expectEqual(@as(usize, 1024), decoded.frame_size);
+    try std.testing.expectEqual(@as(usize, 1024), decoded.total_packet_size);
+    try std.testing.expectEqual(@as(?usize, 0), decoded.context_id);
+}
+
+test "decode_header_extensions: decodes first chunk metadata with total packet size" {
+    const header_data = [_]u8{ 0xC5, 0x80, 0x07, 0x82, 0x03, 0xE8 } ++ [_]u8{0} ** 7;
+    const decoded = try decode_header_extensions(256, &header_data, 16 * 1024 * 1024);
+
+    try std.testing.expect(decoded.is_chunked);
+    try std.testing.expect(decoded.is_first_chunk);
+    try std.testing.expectEqual(@as(usize, 256), decoded.frame_size);
+    try std.testing.expectEqual(@as(usize, 1000), decoded.total_packet_size);
+    try std.testing.expectEqual(@as(?usize, 7), decoded.context_id);
+}
+
+test "decode_header_extensions: decodes continuation chunk metadata without total packet size" {
+    const header_data = [_]u8{ 0xC2, 0x80, 0x07 } ++ [_]u8{0} ** 10;
+    const decoded = try decode_header_extensions(512, &header_data, 16 * 1024 * 1024);
+
+    try std.testing.expect(decoded.is_chunked);
+    try std.testing.expect(!decoded.is_first_chunk);
+    try std.testing.expectEqual(@as(usize, 512), decoded.frame_size);
+    try std.testing.expectEqual(@as(usize, 512), decoded.total_packet_size);
+    try std.testing.expectEqual(@as(?usize, 7), decoded.context_id);
+}
+
+test "decode_header_extensions: rejects invalid header data and extra extension elements" {
+    const non_list = [_]u8{0x80} ++ [_]u8{0} ** 12;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &non_list, 16 * 1024 * 1024),
+    );
+
+    const extra_item = [_]u8{ 0xC4, 0x80, 0x01, 0x80, 0x02 } ++ [_]u8{0} ** 8;
+    try std.testing.expectError(
+        error.InvalidHeaderData,
+        decode_header_extensions(32, &extra_item, 16 * 1024 * 1024),
+    );
+}
+
+test "decode_header_extensions: propagates total packet size validation errors" {
+    const zero_total = [_]u8{ 0xC3, 0x80, 0x01, 0x80 } ++ [_]u8{0} ** 9;
+    try std.testing.expectError(
+        error.InvalidTotalPacketSize,
+        decode_header_extensions(32, &zero_total, 16 * 1024 * 1024),
+    );
+
+    const frame_exceeds_total = [_]u8{ 0xC3, 0x80, 0x01, 0x20 } ++ [_]u8{0} ** 9;
+    try std.testing.expectError(
+        error.FrameSizeExceedsTotalPacketSize,
+        decode_header_extensions(33, &frame_exceeds_total, 16 * 1024 * 1024),
+    );
+
+    const total_exceeds_max = [_]u8{ 0xC7, 0x80, 0x01, 0x84, 0x01, 0x00, 0x00, 0x01 } ++ [_]u8{0} ** 5;
+    try std.testing.expectError(
+        error.InvalidTotalPacketSize,
+        decode_header_extensions(1, &total_exceeds_max, 16 * 1024 * 1024),
     );
 }
