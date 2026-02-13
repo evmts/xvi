@@ -1,80 +1,168 @@
 # Context — [pass 1/5] phase-7-engine-api (Engine API (Consensus Layer Interface))
 
-This file gathers targeted references to implement the Engine API surface used by the Consensus Layer. It aligns with Guillotine’s rules: use Voltaire primitives, reuse the existing EVM, mirror Nethermind’s architecture, and keep units small and testable.
+## Phase Goal (from `prd/GUILLOTINE_CLIENT_PLAN.md`)
+- Implement Engine API for Consensus Layer communication.
+- Planned units:
+  - `client/engine/api.zig` (method dispatch/validation)
+  - `client/engine/payload.zig` (payload building + retrieval)
+- Structural references:
+  - `nethermind/src/Nethermind/Nethermind.Merge.Plugin/`
+  - `execution-apis/src/engine/`
 
-## Phase Goals (from prd/GUILLOTINE_CLIENT_PLAN.md)
-- Objective: Implement the Engine API that the CL calls into.
-- Planned modules:
-  - `client/engine/api.zig` — Engine API method handling and dispatch.
-  - `client/engine/payload.zig` — Payload construction/validation helpers.
-- References to follow:
-  - Nethermind Merge plugin: `nethermind/src/Nethermind/Nethermind.Merge.Plugin/` (structure and responsibilities).
-  - Execution APIs spec: `execution-apis/src/engine/` (method, params, results, versioning).
+## Relevant Specs (from `prd/ETHEREUM_SPECS_REFERENCE.md` + direct reads)
 
-## Relevant Specs (from prd/ETHEREUM_SPECS_REFERENCE.md)
-- Engine API spec: `execution-apis/src/engine/`.
-- Merge: EIP-3675 `EIPs/EIPS/eip-3675.md`.
-- PREVRANDAO: EIP-4399 `EIPs/EIPS/eip-4399.md`.
-- Blobs (Cancun): EIP-4844 `EIPs/EIPS/eip-4844.md`.
-- Tests guidance: Hive Engine API tests; execution-spec-tests fixtures (engine formats) when available/documented.
+### Primary Engine API specs
+- `execution-apis/src/engine/common.md`
+  - Authenticated Engine API on dedicated port (default `8551`), strict error code set (`-38001..-38005`), ordering requirement for `engine_forkchoiceUpdated*`, and capability negotiation via `engine_exchangeCapabilities`.
+- `execution-apis/src/engine/authentication.md`
+  - JWT (`HS256`) requirement, `jwt-secret` handling, `iat` skew guidance (`+-60s`).
+- `execution-apis/src/engine/paris.md`
+  - Baseline methods: `engine_newPayloadV1`, `engine_forkchoiceUpdatedV1`, `engine_getPayloadV1`, `engine_exchangeTransitionConfigurationV1`.
+  - Canonical `PayloadStatusV1` semantics (`VALID`, `INVALID`, `SYNCING`, `ACCEPTED`, `INVALID_BLOCK_HASH`).
+- `execution-apis/src/engine/shanghai.md`
+  - Introduces payload V2 + withdrawals, forkchoice V2, payload bodies by hash/range V1.
+- `execution-apis/src/engine/cancun.md`
+  - Introduces payload V3 + blob fields, forkchoice V3, `engine_getBlobsV1`, transition-config deprecation behavior.
+- `execution-apis/src/engine/prague.md`
+  - Introduces `engine_newPayloadV4` and `engine_getPayloadV4` with `executionRequests`.
+- `execution-apis/src/engine/osaka.md`
+  - Introduces `engine_getPayloadV5`, `engine_getBlobsV2`, `engine_getBlobsV3` semantics.
+- `execution-apis/src/engine/amsterdam.md`
+  - Introduces `engine_newPayloadV5`, `engine_getPayloadV6`, payload bodies V2, forkchoice V4, payload attributes V4.
+- OpenRPC detail files used for method inventories:
+  - `execution-apis/src/engine/openrpc/methods/forkchoice.yaml`
+  - `execution-apis/src/engine/openrpc/methods/payload.yaml`
+  - `execution-apis/src/engine/openrpc/methods/blob.yaml`
+  - `execution-apis/src/engine/openrpc/methods/capabilities.yaml`
+  - `execution-apis/src/engine/openrpc/methods/transition_configuration.yaml`
 
-## Nethermind Reference — Db package inventory (ls)
-Path: `nethermind/src/Nethermind/Nethermind.Db/` — key files/classes for storage abstractions used across components (useful for understanding dependency boundaries):
-- `IDb.cs`, `IReadOnlyDb.cs`, `IFullDb.cs`, `ITunableDb.cs` — core DB interfaces.
-- `IDbProvider.cs`, `DbProvider.cs`, `ReadOnlyDbProvider.cs` — provider pattern for composing logical databases.
-- `MemDb.cs`, `MemColumnsDb.cs`, `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs` — in-memory backends.
-- `CompressingDb.cs`, `RocksDbSettings.cs`, `NullRocksDbFactory.cs` — storage and settings.
-- `PruningMode.cs`, `IPruningConfig.cs`, `PruningConfig.cs`, `FullPruning*/` — pruning controls.
-- `DbExtensions.cs`, `DbProviderExtensions.cs`, `DbNames.cs`, `MetadataDbKeys.cs`, `Metrics.cs` — utilities/metadata.
+### EIPs directly relevant to Engine API behavior
+- `EIPs/EIPS/eip-3675.md` (Merge: terminal block validity, PoS forkchoice event mapping, block field constraints).
+- `EIPs/EIPS/eip-4399.md` (`PREVRANDAO` semantics replacing `DIFFICULTY`).
+- `EIPs/EIPS/eip-4895.md` (withdrawals in payload/header).
+- `EIPs/EIPS/eip-4844.md` (blob tx fields, blob gas header rules, KZG-related payload constraints).
+- `EIPs/EIPS/eip-7685.md` (`requests_hash` and execution requests commitment rules).
+- Also present for future fork alignment: `EIPs/EIPS/eip-4788.md`, `EIPs/EIPS/eip-2935.md`.
 
-Rationale: Even though this phase targets Engine API, Nethermind’s modularization around providers and clean interfaces informs our Zig comptime DI surfaces and boundaries between RPC, engine, mempool, and chain/state.
+### Execution-specs files to use for payload/header validation logic
+- `execution-specs/src/ethereum/forks/paris/fork.py`
+- `execution-specs/src/ethereum/forks/paris/blocks.py`
+- `execution-specs/src/ethereum/forks/shanghai/fork.py`
+- `execution-specs/src/ethereum/forks/shanghai/blocks.py`
+- `execution-specs/src/ethereum/forks/cancun/fork.py`
+- `execution-specs/src/ethereum/forks/cancun/blocks.py`
+- `execution-specs/src/ethereum/forks/prague/fork.py`
+- `execution-specs/src/ethereum/forks/prague/blocks.py`
+- `execution-specs/src/ethereum/forks/prague/requests.py`
+- `execution-specs/src/ethereum/forks/osaka/fork.py`
+- `execution-specs/src/ethereum/forks/osaka/blocks.py`
+- `execution-specs/src/ethereum/forks/osaka/requests.py`
+- `execution-specs/src/ethereum/genesis.py` (fork-aware header field initialization).
 
-## Voltaire Zig — Relevant APIs
-Root: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
-- JSON-RPC core:
-  - `jsonrpc/JsonRpc.zig` — union-dispatch for namespaces; includes `engine` methods.
-  - `jsonrpc/types.zig` and `jsonrpc/types/*.zig` — common JSON-RPC value types (Address, Hash, Quantity, BlockTag, BlockSpec).
-- Engine API surface (versions per spec):
-  - `jsonrpc/engine/methods.zig` — union of all `engine_*` methods and name<->tag mapping.
-  - `jsonrpc/engine/*/engine_*.zig` — concrete param/result types + (de)serialization for:
-    - `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
-    - `engine_forkchoiceUpdatedV1..V3`
-    - `engine_getPayloadV1..V6`
-    - `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
-    - `engine_newPayloadV1..V5`
-    - `engine_getBlobsV1`, `engine_getBlobsV2`
-- Primitives used by Engine API payloads and validations:
-  - `primitives/Block*`, `primitives/Hash`, `primitives/Blob`, `primitives/Hardfork`, and related EVM/crypto utilities.
+## Nethermind reference inventory
 
-Notes:
-- We MUST use these modules and types directly — do not mirror or redefine any Engine API or primitive structures locally.
-- The JSON-RPC engine modules already model the versioned param/result shapes we need to pipe into our internal logic.
+### Requested DB folder listing (`nethermind/src/Nethermind/Nethermind.Db/`)
+Key files to mirror for boundary design (idiomatic Zig + comptime DI):
+- Interfaces/providers: `IDb.cs`, `IDbProvider.cs`, `DbProvider.cs`, `ReadOnlyDbProvider.cs`, `IDbFactory.cs`.
+- DB forms: `MemDb.cs`, `MemColumnsDb.cs`, `ReadOnlyDb.cs`, `CompressingDb.cs`.
+- Batching/columns: `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`, `IColumnsDb.cs`.
+- Pruning/config: `IPruningConfig.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruning/*`.
+- Metadata/utilities: `DbNames.cs`, `MetadataDbKeys.cs`, `DbExtensions.cs`, `Metrics.cs`.
 
-## Existing Zig Host Interface
-Path: `src/host.zig`
-- Provides `HostInterface` with vtable methods for `get/set Balance/Code/Storage/Nonce` using Voltaire `Address` and `u256`.
-- EVM nested calls bypass this host and use `CallParams/CallResult` internally; the host is for external state access.
-- Implication: Engine API → transaction/block processing must adapt to this host/EVM boundary without re-implementing call machinery.
+### Engine-specific Nethermind structure to mirror
+- Main module + versioned RPC surfaces:
+  - `nethermind/src/Nethermind/Nethermind.Merge.Plugin/EngineRpcModule.cs`
+  - `.../EngineRpcModule.Paris.cs`
+  - `.../EngineRpcModule.Shanghai.cs`
+  - `.../EngineRpcModule.Cancun.cs`
+  - `.../EngineRpcModule.Prague.cs`
+  - `.../EngineRpcModule.Osaka.cs`
+- Handler split:
+  - `.../Handlers/NewPayloadHandler.cs`
+  - `.../Handlers/ForkchoiceUpdatedHandler.cs`
+  - `.../Handlers/GetPayloadV1Handler.cs` through `GetPayloadV5Handler.cs`
+  - `.../Handlers/GetPayloadBodiesByHashV1Handler.cs`
+  - `.../Handlers/GetPayloadBodiesByRangeV1Handler.cs`
+  - `.../Handlers/GetBlobsHandler.cs`, `GetBlobsHandlerV2.cs`
+  - `.../Handlers/ExchangeCapabilitiesHandler.cs`
+- Data contracts:
+  - `.../Data/ExecutionPayload*.cs`
+  - `.../Data/PayloadStatusV1.cs`
+  - `.../Data/ForkchoiceStateV1.cs`
+  - `.../Data/TransitionConfigurationV1.cs`
 
-## Test Fixtures — What exists locally
-- Classic JSON tests (checked out):
-  - `ethereum-tests/BlockchainTests/` (via `execution-spec-tests/fixtures/blockchain_tests -> ethereum-tests/BlockchainTests`).
-  - Additional suites present under `ethereum-tests/` include `TrieTests/`, `TransactionTests/`, `EOFTests/`, etc.
-- Engine API–specific fixtures:
-  - Documentation present in `execution-spec-tests/docs/running_tests/test_formats/blockchain_test_engine.md` and `..._engine_x.md`.
-  - Engine fixtures directory not materialized in this checkout; plan to rely on Hive engine harness and/or generate via execution-spec-tests when needed.
+## Voltaire Zig APIs to use (no custom duplicate types)
+Base path: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 
-## Immediate Implementation Guidance
-- Wire our Engine API layer to Voltaire `jsonrpc/engine/*` types and use comptime union dispatch from `jsonrpc/JsonRpc.zig`.
-- Keep boundaries: Engine API (RPC surface) → orchestrator (forkchoice/payload mgmt) → chain/state/txpool.
-- Reuse Voltaire primitives exclusively for all payloads, hashes, blobs, headers, and JSON-RPC quantities.
-- Follow Nethermind’s separation for providers/managers to avoid stateful coupling in Engine handlers.
+### JSON-RPC + Engine method types
+- `jsonrpc/root.zig`
+- `jsonrpc/JsonRpc.zig`
+- `jsonrpc/engine/methods.zig`
+- `jsonrpc/engine/**/engine_*.zig`
+  - Available now: exchangeCapabilities, exchangeTransitionConfigurationV1, forkchoiceUpdatedV1..V3, newPayloadV1..V5, getPayloadV1..V6, getPayloadBodiesByHashV1, getPayloadBodiesByRangeV1, getBlobsV1..V2.
 
-## Pointers (paths)
-- Plan: `prd/GUILLOTINE_CLIENT_PLAN.md`
-- Specs: `execution-apis/src/engine/`, `EIPs/EIPS/eip-3675.md`, `EIPs/EIPS/eip-4399.md`, `EIPs/EIPS/eip-4844.md`
-- Nethermind ref: `nethermind/src/Nethermind/Nethermind.Db/`
-- Voltaire API: `/Users/williamcory/voltaire/packages/voltaire-zig/src/jsonrpc/engine/`, `/Users/williamcory/voltaire/packages/voltaire-zig/src/jsonrpc/JsonRpc.zig`, `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/`
-- Host interface: `src/host.zig`
-- Tests present: `ethereum-tests/BlockchainTests/`, `ethereum-tests/TrieTests/`, `ethereum-tests/TransactionTests/`, `ethereum-tests/EOFTests/`
+### Shared JSON-RPC value types
+- `jsonrpc/types.zig`
+- `jsonrpc/types/Address.zig`
+- `jsonrpc/types/Hash.zig`
+- `jsonrpc/types/Quantity.zig`
+- `jsonrpc/types/BlockTag.zig`
+- `jsonrpc/types/BlockSpec.zig`
 
+### Core primitives (payload fields, hashes, headers, fees, withdrawals, blobs)
+- `primitives/root.zig`
+- Important exports used by Engine API payload handling:
+  - `primitives.Block`
+  - `primitives.BlockHeader`
+  - `primitives.BlockHash`
+  - `primitives.Hash`
+  - `primitives.Withdrawal`
+  - `primitives.Blob`
+  - `primitives.ForkTransition`
+  - `primitives.Hardfork`
+  - `primitives.Address`
+  - `primitives.Uint` and fixed-width wrappers
+
+## Existing EVM host boundary
+- Requested file `src/host.zig` is not present in this repo root.
+- Actual host interface file: `guillotine-mini/src/host.zig`.
+- `HostInterface` is a vtable-based external state bridge with:
+  - `get/setBalance`
+  - `get/setCode`
+  - `get/setStorage`
+  - `get/setNonce`
+- Nested call execution is handled internally by guillotine-mini EVM; Engine API integration should orchestrate state/payload flow around this boundary, not replace EVM internals.
+
+## Test fixtures and directories
+
+### ethereum-tests (requested listing)
+Primary fixture roots:
+- `ethereum-tests/BlockchainTests/ValidBlocks/`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/`
+- `ethereum-tests/TransactionTests/`
+- `ethereum-tests/TrieTests/`
+- `ethereum-tests/EOFTests/`
+- `ethereum-tests/GenesisTests/`
+- `ethereum-tests/DifficultyTests/`
+- `ethereum-tests/RLPTests/`
+- Notable Engine-adjacent coverage directories:
+  - `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP3675`
+  - `ethereum-tests/BlockchainTests/InvalidBlocks/bcEIP3675`
+  - `ethereum-tests/BlockchainTests/InvalidBlocks/bc4895-withdrawals`
+  - `ethereum-tests/BlockchainTests/ValidBlocks/bcEIP4844-blobtransactions`
+
+### Additional Engine API harnesses referenced by PRD/spec reference
+- `hive/simulators/eth2/engine/`
+- `hive/simulators/ethereum/engine/`
+- `execution-spec-tests/fixtures/`
+
+## Immediate implementation guidance for Phase 7
+- Use Voltaire `jsonrpc.engine` method structs as canonical request/response contracts.
+- Build versioned handler dispatch via comptime mapping (do not hand-roll duplicate DTOs).
+- Keep component boundaries:
+  - transport/auth (`JWT`, port separation)
+  - engine method dispatcher
+  - forkchoice/payload orchestrator
+  - guillotine-mini execution path
+- Validate payload semantics by fork version, matching execution-apis + execution-specs + EIP rules.
+- Keep methods atomic and testable; one public API entry point per focused unit with matching tests.
