@@ -23,6 +23,12 @@ pub const RequestFieldSpans = struct {
     method: ?ValueSpan = null,
 };
 
+/// Top-level JSON-RPC request shape.
+pub const TopLevelRequestKind = union(enum) {
+    object,
+    array: usize,
+};
+
 /// Maps scanner-level parse failures to EIP-1474 request-level error codes.
 pub fn scan_error_to_jsonrpc_error(err: ScanRequestError) errors.JsonRpcErrorCode {
     return switch (err) {
@@ -226,6 +232,32 @@ fn parse_json_array(input: []const u8, index: *usize) ScanRequestError!void {
     }
 }
 
+fn parse_json_array_count(input: []const u8, index: *usize) ScanRequestError!usize {
+    if (index.* >= input.len or input[index.*] != '[') return error.ParseError;
+    index.* += 1;
+    skip_whitespace(input, index);
+    if (index.* >= input.len) return error.ParseError;
+    if (input[index.*] == ']') {
+        index.* += 1;
+        return 0;
+    }
+
+    var count: usize = 0;
+    while (true) {
+        try parse_json_value(input, index);
+        count += 1;
+        skip_whitespace(input, index);
+        if (index.* >= input.len) return error.ParseError;
+        if (input[index.*] == ']') {
+            index.* += 1;
+            return count;
+        }
+        if (input[index.*] != ',') return error.ParseError;
+        index.* += 1;
+        skip_whitespace(input, index);
+    }
+}
+
 fn parse_json_value(input: []const u8, index: *usize) ScanRequestError!void {
     if (index.* >= input.len) return error.ParseError;
     switch (input[index.*]) {
@@ -238,6 +270,31 @@ fn parse_json_value(input: []const u8, index: *usize) ScanRequestError!void {
         '-', '0'...'9' => try parse_json_number(input, index),
         else => return error.ParseError,
     }
+}
+
+/// Parse a top-level JSON-RPC request value and return whether it is an object
+/// or batch array. For arrays, returns the number of top-level entries.
+pub fn parse_top_level_request_kind(input: []const u8) ScanRequestError!TopLevelRequestKind {
+    var i: usize = 0;
+    if (input.len >= 3 and input[0] == 0xEF and input[1] == 0xBB and input[2] == 0xBF) i = 3;
+    skip_whitespace(input, &i);
+    if (i >= input.len) return error.ParseError;
+
+    const kind: TopLevelRequestKind = switch (input[i]) {
+        '{' => blk: {
+            try parse_json_object_value(input, &i);
+            break :blk .object;
+        },
+        '[' => blk: {
+            const count = try parse_json_array_count(input, &i);
+            break :blk .{ .array = count };
+        },
+        else => return error.InvalidRequest,
+    };
+
+    skip_whitespace(input, &i);
+    if (i != input.len) return error.ParseError;
+    return kind;
 }
 
 /// Parse a request object once and capture top-level `jsonrpc` and `method`
@@ -359,4 +416,39 @@ test "validate_jsonrpc_version_token accepts only jsonrpc 2.0 string token" {
     const bad_req = "{ \"jsonrpc\": 2.0, \"method\": \"eth_blockNumber\" }";
     const bad_fields = try scan_request_fields(bad_req);
     try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_jsonrpc_version_token(bad_req, bad_fields).?);
+}
+
+test "parse_top_level_request_kind classifies object input" {
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\", \"params\": [] }";
+    const out = try parse_top_level_request_kind(req);
+    try std.testing.expect(out == .object);
+}
+
+test "parse_top_level_request_kind counts top-level batch entries" {
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+    const out = try parse_top_level_request_kind(req);
+    switch (out) {
+        .array => |count| try std.testing.expectEqual(@as(usize, 2), count),
+        else => return error.UnexpectedVariant,
+    }
+}
+
+test "parse_top_level_request_kind accepts empty batch arrays" {
+    const out = try parse_top_level_request_kind("[]");
+    switch (out) {
+        .array => |count| try std.testing.expectEqual(@as(usize, 0), count),
+        else => return error.UnexpectedVariant,
+    }
+}
+
+test "parse_top_level_request_kind rejects non-object non-array roots" {
+    try std.testing.expectError(error.InvalidRequest, parse_top_level_request_kind("\"hello\""));
+}
+
+test "parse_top_level_request_kind rejects malformed json" {
+    try std.testing.expectError(error.ParseError, parse_top_level_request_kind("[{\"jsonrpc\":\"2.0\"}"));
 }

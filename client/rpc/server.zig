@@ -70,6 +70,36 @@ pub fn validate_batch_size(config: RpcServerConfig, batch_size: usize, is_authen
     return null;
 }
 
+/// Top-level request kind used by the pre-dispatch request pipeline.
+pub const RequestKind = union(enum) {
+    object,
+    batch: usize,
+};
+
+/// Pre-dispatch parse result with either request kind or EIP-1474 error code.
+pub const ParseRequestKindResult = union(enum) {
+    request: RequestKind,
+    err: errors.JsonRpcErrorCode,
+};
+
+/// Parse top-level request shape and enforce batch limits before dispatch.
+///
+/// Mirrors Nethermind's object-vs-array split in `JsonRpcProcessor`:
+/// - object: routed to single-request method dispatch
+/// - array: count entries and enforce `max_batch_size` for unauthenticated calls
+pub fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const u8, is_authenticated: bool) ParseRequestKindResult {
+    const kind = scan.parse_top_level_request_kind(request) catch |err| return .{ .err = scan.scan_error_to_jsonrpc_error(err) };
+    return switch (kind) {
+        .object => .{ .request = .object },
+        .array => |batch_size| blk: {
+            if (validate_batch_size(config, batch_size, is_authenticated)) |code| {
+                break :blk .{ .err = code };
+            }
+            break :blk .{ .request = .{ .batch = batch_size } };
+        },
+    };
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -174,4 +204,80 @@ test "validate_batch_size rejects oversized unauthenticated batches" {
 test "validate_batch_size allows oversized authenticated batches" {
     const cfg = RpcServerConfig{ .max_batch_size = 4 };
     try std.testing.expect(validate_batch_size(cfg, 10, true) == null);
+}
+
+test "parse_request_kind_for_dispatch classifies single request object" {
+    const cfg = RpcServerConfig{ .max_batch_size = 4 };
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"eth_chainId\", \"params\": [] }";
+    const res = parse_request_kind_for_dispatch(cfg, req, false);
+    switch (res) {
+        .request => |kind| try std.testing.expect(kind == .object),
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "parse_request_kind_for_dispatch classifies batch and counts entries" {
+    const cfg = RpcServerConfig{ .max_batch_size = 4 };
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_blockNumber\",\"params\":[]}\n" ++
+        "]";
+    const res = parse_request_kind_for_dispatch(cfg, req, false);
+    switch (res) {
+        .request => |kind| switch (kind) {
+            .batch => |count| try std.testing.expectEqual(@as(usize, 2), count),
+            else => return error.UnexpectedVariant,
+        },
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "parse_request_kind_for_dispatch rejects oversized unauthenticated batch" {
+    const cfg = RpcServerConfig{ .max_batch_size = 1 };
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_blockNumber\",\"params\":[]}\n" ++
+        "]";
+    const res = parse_request_kind_for_dispatch(cfg, req, false);
+    switch (res) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.limit_exceeded, code),
+    }
+}
+
+test "parse_request_kind_for_dispatch allows oversized authenticated batch" {
+    const cfg = RpcServerConfig{ .max_batch_size = 1 };
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_blockNumber\",\"params\":[]}\n" ++
+        "]";
+    const res = parse_request_kind_for_dispatch(cfg, req, true);
+    switch (res) {
+        .request => |kind| switch (kind) {
+            .batch => |count| try std.testing.expectEqual(@as(usize, 2), count),
+            else => return error.UnexpectedVariant,
+        },
+        .err => |_| return error.UnexpectedError,
+    }
+}
+
+test "parse_request_kind_for_dispatch rejects non-object non-array request roots" {
+    const cfg = RpcServerConfig{};
+    const res = parse_request_kind_for_dispatch(cfg, "\"hello\"", false);
+    switch (res) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+    }
+}
+
+test "parse_request_kind_for_dispatch returns parse_error for malformed json" {
+    const cfg = RpcServerConfig{};
+    const res = parse_request_kind_for_dispatch(cfg, "[{\"jsonrpc\":\"2.0\"}", false);
+    switch (res) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
+    }
 }
