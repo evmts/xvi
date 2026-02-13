@@ -99,6 +99,8 @@ pub const TxPool = struct {
         pending_count: *const fn (ptr: *anyopaque) u32,
         /// Total number of pending blob transactions in the pool.
         pending_blob_count: *const fn (ptr: *anyopaque) u32,
+        /// Whether the concrete pool currently accepts/supports blob transactions.
+        supports_blobs: *const fn (ptr: *anyopaque) bool,
         /// Number of pending transactions for a specific sender address.
         get_pending_count_for_sender: *const fn (ptr: *anyopaque, sender: Address) u32,
         /// Returns whether this transaction hash is known by the pool/hash cache.
@@ -115,6 +117,11 @@ pub const TxPool = struct {
     /// Total number of pending blob transactions in the pool.
     pub fn pending_blob_count(self: TxPool) u32 {
         return self.vtable.pending_blob_count(self.ptr);
+    }
+
+    /// Returns true when blob transactions are supported by this pool.
+    pub fn supports_blobs(self: TxPool) bool {
+        return self.vtable.supports_blobs(self.ptr);
     }
 
     /// Number of pending transactions currently tracked for `sender`.
@@ -146,6 +153,7 @@ test "txpool interface dispatches pending counts" {
     const DummyPool = struct {
         pending: u32,
         pending_blobs: u32,
+        blobs_enabled: bool,
         match_sender: Address,
         pending_for_sender: u32,
         known_hash: TransactionHash,
@@ -161,6 +169,12 @@ test "txpool interface dispatches pending counts" {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
             return self.pending_blobs;
+        }
+
+        fn supports_blobs(ptr: *anyopaque) bool {
+            const Self = @This();
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            return self.blobs_enabled;
         }
 
         fn get_pending_count_for_sender(ptr: *anyopaque, sender: Address) u32 {
@@ -190,6 +204,7 @@ test "txpool interface dispatches pending counts" {
     var dummy = DummyPool{
         .pending = 42,
         .pending_blobs = 7,
+        .blobs_enabled = true,
         .match_sender = target,
         .pending_for_sender = 3,
         .known_hash = known_hash,
@@ -198,6 +213,7 @@ test "txpool interface dispatches pending counts" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
@@ -206,6 +222,7 @@ test "txpool interface dispatches pending counts" {
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
     try std.testing.expectEqual(@as(u32, 42), pool.pending_count());
     try std.testing.expectEqual(@as(u32, 7), pool.pending_blob_count());
+    try std.testing.expect(pool.supports_blobs());
     try std.testing.expectEqual(@as(u32, 3), pool.get_pending_count_for_sender(target));
     const other = Address{ .bytes = [_]u8{0xBA} ++ [_]u8{0} ** 19 };
     try std.testing.expectEqual(@as(u32, 0), pool.get_pending_count_for_sender(other));
@@ -213,6 +230,9 @@ test "txpool interface dispatches pending counts" {
     try std.testing.expect(!pool.is_known([_]u8{0x22} ** 32));
     try std.testing.expect(pool.contains_tx(known_hash, .eip1559));
     try std.testing.expect(!pool.contains_tx(known_hash, .legacy));
+
+    dummy.blobs_enabled = false;
+    try std.testing.expect(!pool.supports_blobs());
 }
 
 test "blobs support mode helpers mirror nethermind semantics" {

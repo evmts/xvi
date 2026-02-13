@@ -284,6 +284,10 @@ const LookupDummyPool = struct {
         return 0;
     }
 
+    fn supports_blobs(_: *anyopaque) bool {
+        return true;
+    }
+
     fn get_pending_count_for_sender(_: *anyopaque, _: Address) u32 {
         return 0;
     }
@@ -307,6 +311,7 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
     const vtable = TxPool.VTable{
         .pending_count = LookupDummyPool.pending_count,
         .pending_blob_count = LookupDummyPool.pending_blob_count,
+        .supports_blobs = LookupDummyPool.supports_blobs,
         .get_pending_count_for_sender = LookupDummyPool.get_pending_count_for_sender,
         .is_known = LookupDummyPool.is_known,
         .contains_tx = LookupDummyPool.contains_tx,

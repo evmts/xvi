@@ -37,6 +37,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return 0;
         }
 
+        fn supports_blobs(_: *anyopaque) bool {
+            return true;
+        }
+
         fn get_pending_count_for_sender(_: *anyopaque, _: Address) u32 {
             return 0;
         }
@@ -65,6 +69,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
@@ -89,6 +94,10 @@ test "precheck_duplicate matches typed containment semantics" {
 
         fn pending_blob_count(_: *anyopaque) u32 {
             return 0;
+        }
+
+        fn supports_blobs(_: *anyopaque) bool {
+            return true;
         }
 
         fn get_pending_count_for_sender(_: *anyopaque, _: Address) u32 {
@@ -117,6 +126,7 @@ test "precheck_duplicate matches typed containment semantics" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .is_known = DummyPool.is_known,
         .contains_tx = DummyPool.contains_tx,
