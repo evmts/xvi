@@ -300,29 +300,40 @@ fn ancestor_hash_local(
     return current_block.hash;
 }
 
-/// Returns the `BLOCKHASH` value for `number` relative to `current_hash`.
+/// Returns the `BLOCKHASH` value for `number` in an execution context.
+///
+/// Parameters:
+/// - `tip_hash`: hash of the latest complete block in the execution context
+///   (normally the parent hash of the currently executing block).
+/// - `execution_block_number`: number of the currently executing block.
 ///
 /// Semantics (execution-specs / EVM-compatible):
-/// - `number` must be strictly lower than the current block number.
-/// - Only the previous 256 blocks are addressable (`depth` in `1..=256`).
+/// - `number` must be strictly lower than `execution_block_number`.
+/// - Only the previous 256 blocks are addressable.
+/// - `tip_hash` must correspond to block `execution_block_number - 1`.
 /// - Uses local storage only; never fetches from fork cache and never allocates.
-/// - Returns `null` when the current block is missing locally or ancestry is
-///   incomplete/malformed in local storage.
+/// - Returns `null` when bounds fail, tip context is inconsistent, or ancestry
+///   is incomplete/malformed in local storage.
 pub fn block_hash_by_number_local(
     chain: *Chain,
-    current_hash: Hash.Hash,
+    tip_hash: Hash.Hash,
+    execution_block_number: u64,
     number: u64,
 ) ?Hash.Hash {
-    const current = get_block_local(chain, current_hash) orelse return null;
-    const current_number = current.header.number;
-
     // EVM BLOCKHASH does not include current or future blocks.
-    if (number >= current_number) return null;
+    if (number >= execution_block_number) return null;
 
-    const depth = current_number - number;
-    if (depth > 256) return null;
+    // No complete block exists before genesis execution context.
+    if (execution_block_number == 0) return null;
 
-    return ancestor_hash_local(chain, current_hash, depth);
+    const depth_from_execution = execution_block_number - number;
+    if (depth_from_execution > 256) return null;
+
+    const tip_block = get_block_local(chain, tip_hash) orelse return null;
+    if (tip_block.header.number + 1 != execution_block_number) return null;
+
+    const distance_from_tip = depth_from_execution - 1;
+    return ancestor_hash_local(chain, tip_hash, distance_from_tip);
 }
 
 /// Collects up to 256 recent block hashes from local storage in spec order.
@@ -2125,7 +2136,7 @@ test "Chain - block_hash_by_number_local returns null when current missing" {
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(block_hash_by_number_local(&chain, Hash.ZERO, 0) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, Hash.ZERO, 1, 0) == null);
 }
 
 test "Chain - block_hash_by_number_local enforces current/future bounds" {
@@ -2143,9 +2154,9 @@ test "Chain - block_hash_by_number_local enforces current/future bounds" {
     try chain.putBlock(b1);
 
     // Equal to current height: out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 1) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
     // Future height: out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 3) == null);
 }
 
 test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
@@ -2172,14 +2183,71 @@ test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
         parent_hash = blk.hash;
     }
 
-    const current = hashes[257];
+    const tip = hashes[257];
+    const execution_number: u64 = 258;
 
     // Depth 256 (max allowed) should still resolve.
-    const oldest = block_hash_by_number_local(&chain, current, 1) orelse return error.Unreachable;
-    try std.testing.expectEqualSlices(u8, &hashes[1], &oldest);
+    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
+
+    // Parent block is always addressable at depth 1.
+    const parent = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 1) orelse
+        return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &tip, &parent);
+
+    // Depth 256 (oldest in range) should still resolve.
+    const oldest_in_range = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 256) orelse
+        return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &hashes[2], &oldest_in_range);
 
     // Depth 257 is out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, current, 0) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, execution_number - 257) == null);
+}
+
+test "Chain - block_hash_by_number_local returns null for inconsistent tip context" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    // tip hash is genesis (#0), but execution number claims #2.
+    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 2, 1) == null);
+}
+
+test "Chain - block_hash_by_number_local supports pending context parent lookup" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    // Executing block #2 with parent hash #1.
+    const parent_hash = block_hash_by_number_local(&chain, b1.hash, 2, 1) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &b1.hash, &parent_hash);
+
+    // Current block number itself remains out of bounds.
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
+}
+
+test "Chain - block_hash_by_number_local returns null when execution context is genesis" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 0, 0) == null);
 }
 
 test "Chain - block_hash_by_number_local returns null when ancestry missing locally" {
@@ -2194,7 +2262,8 @@ test "Chain - block_hash_by_number_local returns null when ancestry missing loca
     const orphan = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 299) == null);
+    // Query parent of orphan parent (#299) which is missing locally.
+    try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 301, 299) == null);
 }
 
 test "Chain - block_hash_by_number_local returns null for malformed parent-number continuity" {
@@ -2213,7 +2282,41 @@ test "Chain - block_hash_by_number_local returns null for malformed parent-numbe
     const malformed = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expect(block_hash_by_number_local(&chain, malformed.hash, 1) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, malformed.hash, 3, 1) == null);
+}
+
+test "Chain - block_hash_by_number_local enforces 256-window from execution context" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var hashes: [258]Hash.Hash = undefined;
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    hashes[0] = genesis.hash;
+
+    var parent_hash = genesis.hash;
+    var i: u64 = 1;
+    while (i < hashes.len) : (i += 1) {
+        var hdr = primitives.BlockHeader.init();
+        hdr.number = i;
+        hdr.parent_hash = parent_hash;
+        hdr.timestamp = i;
+        const blk = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+        try chain.putBlock(blk);
+        hashes[i] = blk.hash;
+        parent_hash = blk.hash;
+    }
+
+    const tip = hashes[257];
+    const execution_number: u64 = 258;
+
+    // Oldest in-range block for execution #258 is #2.
+    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
+
+    // #1 is 257 blocks back from execution context, out of range.
+    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, 1) == null);
 }
 
 test "Chain - last_256_block_hashes_local returns MissingTipBlock when tip missing" {
