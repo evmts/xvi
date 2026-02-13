@@ -278,21 +278,29 @@ pub fn parent_header_local(
 ///   intermediate block is missing, parent-number continuity is malformed, or
 ///   when genesis has no parent.
 /// - Never consults fork caches; performs no allocations.
+const AncestorLookupError = error{
+    MissingStartBlock,
+    MissingAncestorBlock,
+    MalformedAncestorBlock,
+};
+
 fn ancestor_hash_local(
     chain: *Chain,
     start: Hash.Hash,
     distance: u64,
-) ?Hash.Hash {
-    var current_block = get_block_local(chain, start) orelse return null;
+) AncestorLookupError!Hash.Hash {
+    var current_block = get_block_local(chain, start) orelse return error.MissingStartBlock;
     if (distance == 0) return current_block.hash;
 
     var i: u64 = 0;
     while (i < distance) : (i += 1) {
-        if (current_block.header.number == 0) return null; // genesis has no parent
+        if (current_block.header.number == 0) return error.MissingAncestorBlock; // genesis has no parent
 
         const parent_hash = current_block.header.parent_hash;
-        const parent_block = get_block_local(chain, parent_hash) orelse return null;
-        if (parent_block.header.number != current_block.header.number - 1) return null;
+        const parent_block = get_block_local(chain, parent_hash) orelse return error.MissingAncestorBlock;
+        if (parent_block.header.number != current_block.header.number - 1) {
+            return error.MalformedAncestorBlock;
+        }
 
         current_block = parent_block;
     }
@@ -313,12 +321,19 @@ fn ancestor_hash_local(
 /// - Uses local storage only; never fetches from fork cache and never allocates.
 /// - Returns `null` when bounds fail, tip context is inconsistent, or ancestry
 ///   is incomplete/malformed in local storage.
+pub const BlockHashByNumberError = error{
+    MissingTipBlock,
+    InconsistentTipContext,
+    MissingAncestorBlock,
+    MalformedAncestorBlock,
+};
+
 pub fn block_hash_by_number_local(
     chain: *Chain,
     tip_hash: Hash.Hash,
     execution_block_number: u64,
     number: u64,
-) ?Hash.Hash {
+) BlockHashByNumberError!?Hash.Hash {
     // EVM BLOCKHASH does not include current or future blocks.
     if (number >= execution_block_number) return null;
 
@@ -328,11 +343,15 @@ pub fn block_hash_by_number_local(
     const depth_from_execution = execution_block_number - number;
     if (depth_from_execution > 256) return null;
 
-    const tip_block = get_block_local(chain, tip_hash) orelse return null;
-    if (tip_block.header.number + 1 != execution_block_number) return null;
+    const tip_block = get_block_local(chain, tip_hash) orelse return error.MissingTipBlock;
+    if (tip_block.header.number + 1 != execution_block_number) return error.InconsistentTipContext;
 
     const distance_from_tip = depth_from_execution - 1;
-    return ancestor_hash_local(chain, tip_hash, distance_from_tip);
+    return ancestor_hash_local(chain, tip_hash, distance_from_tip) catch |err| switch (err) {
+        error.MissingStartBlock => error.MissingTipBlock,
+        error.MissingAncestorBlock => error.MissingAncestorBlock,
+        error.MalformedAncestorBlock => error.MalformedAncestorBlock,
+    };
 }
 
 /// Collects up to 256 recent block hashes from local storage in spec order.
@@ -393,13 +412,20 @@ pub fn last_256_block_hashes_local(
 /// - If the chains converge, returns the first matching hash when walking
 ///   upward; otherwise returns `null` (e.g., when an ancestor is missing
 ///   locally).
+pub const CommonAncestorError = error{
+    MissingBlockA,
+    MissingBlockB,
+    MissingAncestorBlock,
+    MalformedAncestorBlock,
+};
+
 pub fn common_ancestor_hash_local(
     chain: *Chain,
     a: Hash.Hash,
     b: Hash.Hash,
-) ?Hash.Hash {
-    const na_block = get_block_local(chain, a) orelse return null;
-    const nb_block = get_block_local(chain, b) orelse return null;
+) CommonAncestorError!?Hash.Hash {
+    const na_block = get_block_local(chain, a) orelse return error.MissingBlockA;
+    const nb_block = get_block_local(chain, b) orelse return error.MissingBlockB;
 
     // Fast path: identical hash and present locally.
     if (Hash.equals(&a, &b)) return a;
@@ -412,14 +438,14 @@ pub fn common_ancestor_hash_local(
 
     // Level heights by walking down the taller side first.
     while (ha > hb) : (ha -= 1) {
-        const blk = get_block_local(chain, ah) orelse return null;
-        if (blk.header.number != ha) return null;
+        const blk = get_block_local(chain, ah) orelse return error.MissingAncestorBlock;
+        if (blk.header.number != ha) return error.MalformedAncestorBlock;
         if (ha == 0) return null;
         ah = blk.header.parent_hash;
     }
     while (hb > ha) : (hb -= 1) {
-        const blk = get_block_local(chain, bh) orelse return null;
-        if (blk.header.number != hb) return null;
+        const blk = get_block_local(chain, bh) orelse return error.MissingAncestorBlock;
+        if (blk.header.number != hb) return error.MalformedAncestorBlock;
         if (hb == 0) return null;
         bh = blk.header.parent_hash;
     }
@@ -429,12 +455,12 @@ pub fn common_ancestor_hash_local(
     // This guarantees termination even under malformed/cyclic ancestry.
     var level = ha;
     const remaining_hops_with_genesis, const hops_overflow = @addWithOverflow(ha, 1);
-    if (hops_overflow != 0) return null;
+    if (hops_overflow != 0) return error.MalformedAncestorBlock;
     var remaining_hops = remaining_hops_with_genesis;
     while (remaining_hops > 0) : (remaining_hops -= 1) {
-        const ab = get_block_local(chain, ah) orelse return null;
-        const bb = get_block_local(chain, bh) orelse return null;
-        if (ab.header.number != level or bb.header.number != level) return null;
+        const ab = get_block_local(chain, ah) orelse return error.MissingAncestorBlock;
+        const bb = get_block_local(chain, bh) orelse return error.MissingAncestorBlock;
+        if (ab.header.number != level or bb.header.number != level) return error.MalformedAncestorBlock;
         if (Hash.equals(&ah, &bh)) return ah;
         if (level == 0) return null;
         ah = ab.header.parent_hash;
@@ -453,11 +479,17 @@ pub fn common_ancestor_hash_local(
 ///   is its ancestor.
 /// - Returns `true` only when both heads have a common ancestor that is neither
 ///   head (i.e., actual fork divergence that implies reorg when adopted).
-fn canonical_head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
+const CanonicalHeadSnapshotError = error{
+    MissingCanonicalHash,
+    MissingCanonicalHeadBlock,
+    MalformedCanonicalHead,
+};
+
+fn canonical_head_hash_snapshot_local(chain: *Chain) CanonicalHeadSnapshotError!?Hash.Hash {
     const number = head_number(chain) orelse return null;
-    const canonical = canonical_hash(chain, number) orelse return null;
-    const block = get_block_local(chain, canonical) orelse return null;
-    if (block.header.number != number) return null;
+    const canonical = canonical_hash(chain, number) orelse return error.MissingCanonicalHash;
+    const block = get_block_local(chain, canonical) orelse return error.MissingCanonicalHeadBlock;
+    if (block.header.number != number) return error.MalformedCanonicalHead;
     return canonical;
 }
 
@@ -504,15 +536,17 @@ fn head_block_snapshot_local(chain: *Chain) ?Block.Block {
 }
 
 /// Returns whether `candidate_head` diverges from the current canonical head.
+pub const CanonicalDivergenceError = CanonicalHeadSnapshotError || CommonAncestorError;
+
 pub fn has_canonical_divergence_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) bool {
-    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return false;
+) CanonicalDivergenceError!bool {
+    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return false;
 
     if (Hash.equals(&canonical_head, &candidate_head)) return false;
 
-    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return false;
+    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse return false;
     if (Hash.equals(&ancestor, &canonical_head)) return false; // candidate extends current head
     if (Hash.equals(&ancestor, &candidate_head)) return false; // candidate is an older canonical ancestor
     return true;
@@ -524,12 +558,21 @@ const ReorgDepthContext = struct {
     ancestor_number: u64,
 };
 
-fn reorg_depth_context_local(chain: *Chain, candidate_head: Hash.Hash) ?ReorgDepthContext {
-    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return null;
-    const canonical_head_block = get_block_local(chain, canonical_head) orelse return null;
-    const candidate_head_block = get_block_local(chain, candidate_head) orelse return null;
-    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return null;
-    const ancestor_block = get_block_local(chain, ancestor) orelse return null;
+const ReorgDepthContextError = CanonicalHeadSnapshotError || CommonAncestorError || error{
+    MissingCanonicalHeadBlock,
+    MissingCandidateHeadBlock,
+    MissingCommonAncestorBlock,
+};
+
+fn reorg_depth_context_local(
+    chain: *Chain,
+    candidate_head: Hash.Hash,
+) ReorgDepthContextError!?ReorgDepthContext {
+    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return null;
+    const canonical_head_block = get_block_local(chain, canonical_head) orelse return error.MissingCanonicalHeadBlock;
+    const candidate_head_block = get_block_local(chain, candidate_head) orelse return error.MissingCandidateHeadBlock;
+    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse return null;
+    const ancestor_block = get_block_local(chain, ancestor) orelse return error.MissingCommonAncestorBlock;
 
     return .{
         .canonical_head_number = canonical_head_block.header.number,
@@ -549,13 +592,15 @@ fn reorg_depth_context_local(chain: *Chain, candidate_head: Hash.Hash) ?ReorgDep
 /// - Otherwise returns `canonical_head.number - ancestor.number`, i.e. the
 ///   number of canonical blocks that would be rolled back if candidate became
 ///   canonical.
+pub const ReorgDepthError = ReorgDepthContextError || error{MalformedReorgContext};
+
 pub fn canonical_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) ?u64 {
-    const ctx = reorg_depth_context_local(chain, candidate_head) orelse return null;
+) ReorgDepthError!?u64 {
+    const ctx = (try reorg_depth_context_local(chain, candidate_head)) orelse return null;
 
-    if (ctx.ancestor_number > ctx.canonical_head_number) return null;
+    if (ctx.ancestor_number > ctx.canonical_head_number) return error.MalformedReorgContext;
     return ctx.canonical_head_number - ctx.ancestor_number;
 }
 
@@ -573,19 +618,19 @@ pub fn canonical_reorg_depth_local(
 pub fn candidate_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) ?u64 {
-    const ctx = reorg_depth_context_local(chain, candidate_head) orelse return null;
+) ReorgDepthError!?u64 {
+    const ctx = (try reorg_depth_context_local(chain, candidate_head)) orelse return null;
 
-    if (ctx.ancestor_number > ctx.candidate_head_number) return null;
+    if (ctx.ancestor_number > ctx.candidate_head_number) return error.MalformedReorgContext;
     return ctx.candidate_head_number - ctx.ancestor_number;
 }
 
-test "Chain - common_ancestor_hash_local returns null when either missing" {
+test "Chain - common_ancestor_hash_local returns typed error when either missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(common_ancestor_hash_local(&chain, Hash.ZERO, Hash.ZERO) == null);
+    try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local(&chain, Hash.ZERO, Hash.ZERO));
 }
 
 test "Chain - common_ancestor_hash_local returns self when equal" {
@@ -597,7 +642,7 @@ test "Chain - common_ancestor_hash_local returns self when equal" {
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    const lca = common_ancestor_hash_local(&chain, genesis.hash, genesis.hash) orelse return error.Unreachable;
+    const lca = (try common_ancestor_hash_local(&chain, genesis.hash, genesis.hash)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &genesis.hash, &lca);
 }
 
@@ -622,7 +667,7 @@ test "Chain - common_ancestor_hash_local finds ancestor on same chain" {
     const b2 = try Block.from(&h2, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b2);
 
-    const lca = common_ancestor_hash_local(&chain, b1.hash, b2.hash) orelse return error.Unreachable;
+    const lca = (try common_ancestor_hash_local(&chain, b1.hash, b2.hash)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &b1.hash, &lca);
 }
 
@@ -651,11 +696,11 @@ test "Chain - common_ancestor_hash_local finds ancestor across fork" {
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    const lca = common_ancestor_hash_local(&chain, b1a.hash, b1b.hash) orelse return error.Unreachable;
+    const lca = (try common_ancestor_hash_local(&chain, b1a.hash, b1b.hash)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &genesis.hash, &lca);
 }
 
-test "Chain - common_ancestor_hash_local returns null when ancestry missing locally" {
+test "Chain - common_ancestor_hash_local returns typed error when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -673,10 +718,10 @@ test "Chain - common_ancestor_hash_local returns null when ancestry missing loca
     const b = try Block.from(&h_b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b);
 
-    try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, common_ancestor_hash_local(&chain, a.hash, b.hash));
 }
 
-test "Chain - common_ancestor_hash_local returns null for cyclic ancestry" {
+test "Chain - common_ancestor_hash_local returns typed error for cyclic ancestry" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -698,10 +743,10 @@ test "Chain - common_ancestor_hash_local returns null for cyclic ancestry" {
     b.header.parent_hash = b.hash;
     try chain.putBlock(b);
 
-    try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+    try std.testing.expectError(error.MalformedAncestorBlock, common_ancestor_hash_local(&chain, a.hash, b.hash));
 }
 
-test "Chain - common_ancestor_hash_local returns null for non-contiguous ancestry" {
+test "Chain - common_ancestor_hash_local returns typed error for non-contiguous ancestry" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -725,7 +770,7 @@ test "Chain - common_ancestor_hash_local returns null for non-contiguous ancestr
     const b = try Block.from(&h_b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b);
 
-    try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+    try std.testing.expectError(error.MalformedAncestorBlock, common_ancestor_hash_local(&chain, a.hash, b.hash));
 }
 
 test "Chain - has_canonical_divergence_local returns false for empty canonical chain" {
@@ -733,7 +778,7 @@ test "Chain - has_canonical_divergence_local returns false for empty canonical c
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, Hash.ZERO));
+    try std.testing.expect(!(try has_canonical_divergence_local(&chain, Hash.ZERO)));
 }
 
 test "Chain - has_canonical_divergence_local returns false for current canonical head" {
@@ -745,7 +790,7 @@ test "Chain - has_canonical_divergence_local returns false for current canonical
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, genesis.hash));
+    try std.testing.expect(!(try has_canonical_divergence_local(&chain, genesis.hash)));
 }
 
 test "Chain - has_canonical_divergence_local returns false when candidate extends canonical head" {
@@ -764,7 +809,7 @@ test "Chain - has_canonical_divergence_local returns false when candidate extend
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, b1.hash));
+    try std.testing.expect(!(try has_canonical_divergence_local(&chain, b1.hash)));
 }
 
 test "Chain - has_canonical_divergence_local returns true for forked candidate head" {
@@ -791,7 +836,7 @@ test "Chain - has_canonical_divergence_local returns true for forked candidate h
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    try std.testing.expect(has_canonical_divergence_local(&chain, b1b.hash));
+    try std.testing.expect(try has_canonical_divergence_local(&chain, b1b.hash));
 }
 
 test "Chain - has_canonical_divergence_local returns false when candidate is canonical ancestor" {
@@ -819,10 +864,10 @@ test "Chain - has_canonical_divergence_local returns false when candidate is can
     try chain.putBlock(b2);
     try chain.setCanonicalHead(b2.hash);
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, b1.hash));
+    try std.testing.expect(!(try has_canonical_divergence_local(&chain, b1.hash)));
 }
 
-test "Chain - has_canonical_divergence_local returns false when ancestry missing locally" {
+test "Chain - has_canonical_divergence_local returns typed error when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -838,10 +883,10 @@ test "Chain - has_canonical_divergence_local returns false when ancestry missing
     const orphan = try Block.from(&orphan_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, orphan.hash));
+    try std.testing.expectError(error.MissingAncestorBlock, has_canonical_divergence_local(&chain, orphan.hash));
 }
 
-test "Chain - has_canonical_divergence_local returns false for non-contiguous candidate ancestry" {
+test "Chain - has_canonical_divergence_local returns typed error for non-contiguous candidate ancestry" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -857,7 +902,7 @@ test "Chain - has_canonical_divergence_local returns false for non-contiguous ca
     const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expect(!has_canonical_divergence_local(&chain, malformed.hash));
+    try std.testing.expectError(error.MalformedAncestorBlock, has_canonical_divergence_local(&chain, malformed.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns null for empty canonical chain" {
@@ -865,7 +910,7 @@ test "Chain - canonical_reorg_depth_local returns null for empty canonical chain
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(canonical_reorg_depth_local(&chain, Hash.ZERO) == null);
+    try std.testing.expect((try canonical_reorg_depth_local(&chain, Hash.ZERO)) == null);
 }
 
 test "Chain - canonical_reorg_depth_local returns zero for canonical head" {
@@ -877,7 +922,7 @@ test "Chain - canonical_reorg_depth_local returns zero for canonical head" {
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), canonical_reorg_depth_local(&chain, genesis.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), (try canonical_reorg_depth_local(&chain, genesis.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - canonical_reorg_depth_local returns zero when candidate extends canonical head" {
@@ -896,7 +941,7 @@ test "Chain - canonical_reorg_depth_local returns zero when candidate extends ca
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    try std.testing.expectEqual(@as(u64, 0), canonical_reorg_depth_local(&chain, b1.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), (try canonical_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - canonical_reorg_depth_local returns one for sibling fork at height one" {
@@ -923,7 +968,7 @@ test "Chain - canonical_reorg_depth_local returns one for sibling fork at height
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    try std.testing.expectEqual(@as(u64, 1), canonical_reorg_depth_local(&chain, b1b.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), (try canonical_reorg_depth_local(&chain, b1b.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - canonical_reorg_depth_local returns rollback depth for deeper fork" {
@@ -973,10 +1018,10 @@ test "Chain - canonical_reorg_depth_local returns rollback depth for deeper fork
     const b3b = try Block.from(&h3b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b3b);
 
-    try std.testing.expectEqual(@as(u64, 2), canonical_reorg_depth_local(&chain, b3b.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 2), (try canonical_reorg_depth_local(&chain, b3b.hash)) orelse return error.Unreachable);
 }
 
-test "Chain - canonical_reorg_depth_local returns null when ancestry missing locally" {
+test "Chain - canonical_reorg_depth_local returns typed error when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -992,10 +1037,10 @@ test "Chain - canonical_reorg_depth_local returns null when ancestry missing loc
     const orphan = try Block.from(&orphan_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    try std.testing.expect(canonical_reorg_depth_local(&chain, orphan.hash) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, canonical_reorg_depth_local(&chain, orphan.hash));
 }
 
-test "Chain - canonical_reorg_depth_local returns null for non-contiguous candidate ancestry" {
+test "Chain - canonical_reorg_depth_local returns typed error for non-contiguous candidate ancestry" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -1011,7 +1056,7 @@ test "Chain - canonical_reorg_depth_local returns null for non-contiguous candid
     const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expect(canonical_reorg_depth_local(&chain, malformed.hash) == null);
+    try std.testing.expectError(error.MalformedAncestorBlock, canonical_reorg_depth_local(&chain, malformed.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns null for empty canonical chain" {
@@ -1019,7 +1064,7 @@ test "Chain - candidate_reorg_depth_local returns null for empty canonical chain
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(candidate_reorg_depth_local(&chain, Hash.ZERO) == null);
+    try std.testing.expect((try candidate_reorg_depth_local(&chain, Hash.ZERO)) == null);
 }
 
 test "Chain - candidate_reorg_depth_local returns zero for canonical head" {
@@ -1031,7 +1076,7 @@ test "Chain - candidate_reorg_depth_local returns zero for canonical head" {
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), candidate_reorg_depth_local(&chain, genesis.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), (try candidate_reorg_depth_local(&chain, genesis.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - candidate_reorg_depth_local returns one when candidate extends canonical head" {
@@ -1050,7 +1095,7 @@ test "Chain - candidate_reorg_depth_local returns one when candidate extends can
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    try std.testing.expectEqual(@as(u64, 1), candidate_reorg_depth_local(&chain, b1.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), (try candidate_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - candidate_reorg_depth_local returns one for sibling fork at height one" {
@@ -1077,7 +1122,7 @@ test "Chain - candidate_reorg_depth_local returns one for sibling fork at height
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    try std.testing.expectEqual(@as(u64, 1), candidate_reorg_depth_local(&chain, b1b.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), (try candidate_reorg_depth_local(&chain, b1b.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - candidate_reorg_depth_local returns apply depth for deeper fork" {
@@ -1127,7 +1172,7 @@ test "Chain - candidate_reorg_depth_local returns apply depth for deeper fork" {
     const b3b = try Block.from(&h3b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b3b);
 
-    try std.testing.expectEqual(@as(u64, 2), candidate_reorg_depth_local(&chain, b3b.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 2), (try candidate_reorg_depth_local(&chain, b3b.hash)) orelse return error.Unreachable);
 }
 
 test "Chain - candidate_reorg_depth_local returns zero when candidate is canonical ancestor" {
@@ -1155,10 +1200,10 @@ test "Chain - candidate_reorg_depth_local returns zero when candidate is canonic
     try chain.putBlock(b2);
     try chain.setCanonicalHead(b2.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), candidate_reorg_depth_local(&chain, b1.hash) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), (try candidate_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
 }
 
-test "Chain - candidate_reorg_depth_local returns null when ancestry missing locally" {
+test "Chain - candidate_reorg_depth_local returns typed error when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -1174,10 +1219,10 @@ test "Chain - candidate_reorg_depth_local returns null when ancestry missing loc
     const orphan = try Block.from(&orphan_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    try std.testing.expect(candidate_reorg_depth_local(&chain, orphan.hash) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, candidate_reorg_depth_local(&chain, orphan.hash));
 }
 
-test "Chain - candidate_reorg_depth_local returns null for non-contiguous candidate ancestry" {
+test "Chain - candidate_reorg_depth_local returns typed error for non-contiguous candidate ancestry" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -1193,7 +1238,7 @@ test "Chain - candidate_reorg_depth_local returns null for non-contiguous candid
     const malformed = try Block.from(&malformed_h, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expect(candidate_reorg_depth_local(&chain, malformed.hash) == null);
+    try std.testing.expectError(error.MalformedAncestorBlock, candidate_reorg_depth_local(&chain, malformed.hash));
 }
 
 /// Generic, comptime-injected head hash reader for any chain-like type.
@@ -2107,13 +2152,13 @@ test "Chain - safe/finalized head block helpers return null when missing locally
     try std.testing.expect(finalized_head_block_of(&chain, &fc) == null);
 }
 
-test "Chain - ancestor_hash_local returns null when start missing" {
+test "Chain - ancestor_hash_local returns typed error when start missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(ancestor_hash_local(&chain, Hash.ZERO, 0) == null);
-    try std.testing.expect(ancestor_hash_local(&chain, Hash.ZERO, 1) == null);
+    try std.testing.expectError(error.MissingStartBlock, ancestor_hash_local(&chain, Hash.ZERO, 0));
+    try std.testing.expectError(error.MissingStartBlock, ancestor_hash_local(&chain, Hash.ZERO, 1));
 }
 
 test "Chain - ancestor_hash_local returns start for distance 0 when exists" {
@@ -2124,7 +2169,7 @@ test "Chain - ancestor_hash_local returns start for distance 0 when exists" {
     const genesis = try Block.genesis(1, allocator);
     try chain.putBlock(genesis);
 
-    const h = ancestor_hash_local(&chain, genesis.hash, 0) orelse return error.Unreachable;
+    const h = try ancestor_hash_local(&chain, genesis.hash, 0);
     try std.testing.expectEqualSlices(u8, &genesis.hash, &h);
 }
 
@@ -2142,11 +2187,11 @@ test "Chain - ancestor_hash_local returns parent for distance 1" {
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    const h = ancestor_hash_local(&chain, b1.hash, 1) orelse return error.Unreachable;
+    const h = try ancestor_hash_local(&chain, b1.hash, 1);
     try std.testing.expectEqualSlices(u8, &genesis.hash, &h);
 }
 
-test "Chain - ancestor_hash_local returns null for distance 1 from genesis" {
+test "Chain - ancestor_hash_local returns typed error for distance 1 from genesis" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2154,10 +2199,10 @@ test "Chain - ancestor_hash_local returns null for distance 1 from genesis" {
     const genesis = try Block.genesis(1, allocator);
     try chain.putBlock(genesis);
 
-    try std.testing.expect(ancestor_hash_local(&chain, genesis.hash, 1) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, ancestor_hash_local(&chain, genesis.hash, 1));
 }
 
-test "Chain - ancestor_hash_local returns null when orphan parent missing" {
+test "Chain - ancestor_hash_local returns typed error when orphan parent missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2169,15 +2214,15 @@ test "Chain - ancestor_hash_local returns null when orphan parent missing" {
     const orphan = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    try std.testing.expect(ancestor_hash_local(&chain, orphan.hash, 1) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, ancestor_hash_local(&chain, orphan.hash, 1));
 }
 
-test "Chain - block_hash_by_number_local returns null when current missing" {
+test "Chain - block_hash_by_number_local returns typed error when tip missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(block_hash_by_number_local(&chain, Hash.ZERO, 1, 0) == null);
+    try std.testing.expectError(error.MissingTipBlock, block_hash_by_number_local(&chain, Hash.ZERO, 1, 0));
 }
 
 test "Chain - block_hash_by_number_local enforces current/future bounds" {
@@ -2195,9 +2240,9 @@ test "Chain - block_hash_by_number_local enforces current/future bounds" {
     try chain.putBlock(b1);
 
     // Equal to current height: out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 2)) == null);
     // Future height: out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 3) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 3)) == null);
 }
 
 test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
@@ -2228,24 +2273,24 @@ test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
     const execution_number: u64 = 258;
 
     // Depth 256 (max allowed) should still resolve.
-    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
+    const oldest = (try block_hash_by_number_local(&chain, tip, execution_number, 2)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
 
     // Parent block is always addressable at depth 1.
-    const parent = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 1) orelse
+    const parent = (try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 1)) orelse
         return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &tip, &parent);
 
     // Depth 256 (oldest in range) should still resolve.
-    const oldest_in_range = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 256) orelse
+    const oldest_in_range = (try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 256)) orelse
         return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest_in_range);
 
     // Depth 257 is out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, execution_number - 257) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 257)) == null);
 }
 
-test "Chain - block_hash_by_number_local returns null for inconsistent tip context" {
+test "Chain - block_hash_by_number_local returns typed error for inconsistent tip context" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2254,7 +2299,7 @@ test "Chain - block_hash_by_number_local returns null for inconsistent tip conte
     try chain.putBlock(genesis);
 
     // tip hash is genesis (#0), but execution number claims #2.
-    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 2, 1) == null);
+    try std.testing.expectError(error.InconsistentTipContext, block_hash_by_number_local(&chain, genesis.hash, 2, 1));
 }
 
 test "Chain - block_hash_by_number_local supports pending context parent lookup" {
@@ -2273,11 +2318,11 @@ test "Chain - block_hash_by_number_local supports pending context parent lookup"
     try chain.putBlock(b1);
 
     // Executing block #2 with parent hash #1.
-    const parent_hash = block_hash_by_number_local(&chain, b1.hash, 2, 1) orelse return error.Unreachable;
+    const parent_hash = (try block_hash_by_number_local(&chain, b1.hash, 2, 1)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &b1.hash, &parent_hash);
 
     // Current block number itself remains out of bounds.
-    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 2)) == null);
 }
 
 test "Chain - block_hash_by_number_local returns null when execution context is genesis" {
@@ -2288,10 +2333,10 @@ test "Chain - block_hash_by_number_local returns null when execution context is 
     const genesis = try Block.genesis(1, allocator);
     try chain.putBlock(genesis);
 
-    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 0, 0) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, genesis.hash, 0, 0)) == null);
 }
 
-test "Chain - block_hash_by_number_local returns null when ancestry missing locally" {
+test "Chain - block_hash_by_number_local returns typed error when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2304,10 +2349,10 @@ test "Chain - block_hash_by_number_local returns null when ancestry missing loca
     try chain.putBlock(orphan);
 
     // Query parent of orphan parent (#299) which is missing locally.
-    try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 301, 299) == null);
+    try std.testing.expectError(error.MissingAncestorBlock, block_hash_by_number_local(&chain, orphan.hash, 301, 299));
 }
 
-test "Chain - block_hash_by_number_local returns null for malformed parent-number continuity" {
+test "Chain - block_hash_by_number_local returns typed error for malformed parent-number continuity" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2323,7 +2368,7 @@ test "Chain - block_hash_by_number_local returns null for malformed parent-numbe
     const malformed = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expect(block_hash_by_number_local(&chain, malformed.hash, 3, 1) == null);
+    try std.testing.expectError(error.MalformedAncestorBlock, block_hash_by_number_local(&chain, malformed.hash, 3, 1));
 }
 
 test "Chain - block_hash_by_number_local enforces 256-window from execution context" {
@@ -2353,11 +2398,11 @@ test "Chain - block_hash_by_number_local enforces 256-window from execution cont
     const execution_number: u64 = 258;
 
     // Oldest in-range block for execution #258 is #2.
-    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
+    const oldest = (try block_hash_by_number_local(&chain, tip, execution_number, 2)) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
 
     // #1 is 257 blocks back from execution context, out of range.
-    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, 1) == null);
+    try std.testing.expect((try block_hash_by_number_local(&chain, tip, execution_number, 1)) == null);
 }
 
 test "Chain - last_256_block_hashes_local returns MissingTipBlock when tip missing" {
