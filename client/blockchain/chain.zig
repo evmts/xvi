@@ -380,12 +380,24 @@ pub fn common_ancestor_hash_local(
 ///   is its ancestor.
 /// - Returns `true` only when both heads have a common ancestor that is neither
 ///   head (i.e., actual fork divergence that implies reorg when adopted).
+fn canonical_head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
+    const before = head_number(chain) orelse return null;
+    const block = get_block_by_number_local(chain, before) orelse return null;
+    const after = head_number(chain) orelse return null;
+    if (after != before) return null;
+
+    // Confirm the canonical mapping for this number still matches the snapshot.
+    const canonical = canonical_hash(chain, before) orelse return null;
+    if (!Hash.equals(&canonical, &block.hash)) return null;
+
+    return block.hash;
+}
+
 pub fn has_canonical_divergence_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
 ) bool {
-    const canonical_number = head_number(chain) orelse return false;
-    const canonical_head = canonical_hash(chain, canonical_number) orelse return false;
+    const canonical_head = canonical_head_hash_snapshot_local(chain) orelse return false;
 
     if (Hash.equals(&canonical_head, &candidate_head)) return false;
 
