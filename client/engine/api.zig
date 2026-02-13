@@ -1523,20 +1523,35 @@ fn validate_payload_status_v1_json(
     if (status != .string) return invalid_err;
     if (!status_pred(status.string)) return invalid_err;
 
-    if (obj.get("latestValidHash")) |latest_valid_hash| {
-        switch (latest_valid_hash) {
-            .null => {},
-            .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
-            else => return invalid_err,
-        }
+    const latest_valid_hash = obj.get("latestValidHash") orelse return invalid_err;
+    const is_latest_valid_hash_null = switch (latest_valid_hash) {
+        .null => true,
+        .string => |s| blk: {
+            try validate_data_hex_exact_size(s, 32, invalid_err);
+            break :blk false;
+        },
+        else => return invalid_err,
+    };
+
+    const validation_error = obj.get("validationError") orelse return invalid_err;
+    const is_validation_error_null = switch (validation_error) {
+        .null => true,
+        .string => false,
+        else => return invalid_err,
+    };
+
+    if (std.mem.eql(u8, status.string, "VALID")) {
+        if (is_latest_valid_hash_null or !is_validation_error_null) return invalid_err;
+        return;
     }
 
-    if (obj.get("validationError")) |validation_error| {
-        switch (validation_error) {
-            .null => {},
-            .string => {},
-            else => return invalid_err,
-        }
+    if (std.mem.eql(u8, status.string, "SYNCING") or std.mem.eql(u8, status.string, "ACCEPTED")) {
+        if (!is_latest_valid_hash_null or !is_validation_error_null) return invalid_err;
+        return;
+    }
+
+    if (std.mem.eql(u8, status.string, "INVALID_BLOCK_HASH")) {
+        if (!is_latest_valid_hash_null) return invalid_err;
     }
 }
 
@@ -2616,7 +2631,7 @@ test "engine api dispatches newPayloadV2" {
     var status_obj = std.json.ObjectMap.init(alloc);
     defer status_obj.deinit();
     try status_obj.put("status", .{ .string = "VALID" });
-    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("latestValidHash", .{ .string = zero_hash32_hex });
     try status_obj.put("validationError", .{ .null = {} });
     const result_value = NewPayloadV2Result{
         .value = Quantity{ .value = .{ .object = status_obj } },
