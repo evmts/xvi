@@ -20,6 +20,12 @@ pub const SyncManagerStartConfig = struct {
     download_bodies_in_fast_sync: bool = true,
     /// Enable fast receipts download stage.
     download_receipts_in_fast_sync: bool = true,
+    /// Install process-exit watcher once sync reaches terminal state.
+    exit_on_synced: bool = false,
+    /// Exit watcher delay in seconds.
+    exit_on_synced_wait_time_sec: u32 = 60,
+    /// Trigger GC hook when feed completion modes are observed.
+    gc_on_feed_finished: bool = true,
 };
 
 /// Startup feed bit flags produced by `startup_feed_mask`.
@@ -32,6 +38,61 @@ pub const SyncStartupFeed = struct {
     pub const fast_headers: u32 = 1 << 4;
     pub const fast_bodies: u32 = 1 << 5;
     pub const fast_receipts: u32 = 1 << 6;
+};
+
+/// Optional lifecycle wiring hooks for `SyncManager.start`.
+///
+/// These hooks map to Nethermind `Synchronizer.Start` responsibilities after
+/// feed dispatch startup:
+/// - `watch_for_exit` (`ExitOnSynced`)
+/// - `wire_mode_selector`
+/// - `wire_sync_report`
+/// - `wire_gc_on_feed_finished` (optional by config)
+/// - `update_mode_selector`
+pub const SyncManagerLifecycle = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const Error = error{
+        WatchForExitFailed,
+        WireModeSelectorFailed,
+        WireSyncReportFailed,
+        WireGcOnFeedFinishedFailed,
+        UpdateModeSelectorFailed,
+    };
+
+    pub const VTable = struct {
+        watch_for_exit: ?*const fn (ptr: *anyopaque, wait_time_sec: u32) Error!void = null,
+        wire_mode_selector: ?*const fn (ptr: *anyopaque) Error!void = null,
+        wire_sync_report: ?*const fn (ptr: *anyopaque) Error!void = null,
+        wire_gc_on_feed_finished: ?*const fn (ptr: *anyopaque) Error!void = null,
+        update_mode_selector: ?*const fn (ptr: *anyopaque) Error!void = null,
+    };
+
+    pub fn watch_for_exit(self: SyncManagerLifecycle, wait_time_sec: u32) Error!void {
+        const call = self.vtable.watch_for_exit orelse return;
+        try call(self.ptr, wait_time_sec);
+    }
+
+    pub fn wire_mode_selector(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_mode_selector orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn wire_sync_report(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_sync_report orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn wire_gc_on_feed_finished(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.wire_gc_on_feed_finished orelse return;
+        try call(self.ptr);
+    }
+
+    pub fn update_mode_selector(self: SyncManagerLifecycle) Error!void {
+        const call = self.vtable.update_mode_selector orelse return;
+        try call(self.ptr);
+    }
 };
 
 /// Compute the feed startup plan from sync configuration.
@@ -88,7 +149,8 @@ fn has_flag(mask: u32, flag: u32) bool {
 /// - `pub fn start(self: *Feed) !void`
 ///
 /// Startup ordering mirrors Nethermind `Synchronizer.Start*` flow:
-/// `full -> headers -> bodies -> receipts -> fast_blocks -> snap -> state`.
+/// `full -> headers -> bodies -> receipts -> fast_blocks -> snap -> state`,
+/// then `ExitOnSynced/watch` -> selector/report/gc wiring -> selector update.
 pub fn SyncManager(comptime Feeds: type) type {
     comptime validate_feeds_type(Feeds);
 
@@ -97,6 +159,7 @@ pub fn SyncManager(comptime Feeds: type) type {
 
         config: SyncManagerStartConfig,
         feeds: *Feeds,
+        lifecycle: ?SyncManagerLifecycle = null,
 
         /// Start all enabled sync feeds and return the computed startup mask.
         ///
@@ -113,7 +176,25 @@ pub fn SyncManager(comptime Feeds: type) type {
             try start_feed_if_enabled(mask, SyncStartupFeed.snap, &self.feeds.snap);
             try start_feed_if_enabled(mask, SyncStartupFeed.fast_state, &self.feeds.fast_state);
 
+            try self.start_lifecycle_hooks();
             return mask;
+        }
+
+        fn start_lifecycle_hooks(self: *Self) anyerror!void {
+            const lifecycle = self.lifecycle orelse return;
+
+            if (self.config.exit_on_synced) {
+                try lifecycle.watch_for_exit(self.config.exit_on_synced_wait_time_sec);
+            }
+
+            try lifecycle.wire_mode_selector();
+            try lifecycle.wire_sync_report();
+
+            if (self.config.gc_on_feed_finished) {
+                try lifecycle.wire_gc_on_feed_finished();
+            }
+
+            try lifecycle.update_mode_selector();
         }
     };
 }
@@ -289,6 +370,62 @@ const TraceFeed = struct {
     }
 };
 
+const LifecycleTrace = struct {
+    order: [16]u8 = [_]u8{0} ** 16,
+    len: usize = 0,
+    watch_wait_time_sec: ?u32 = null,
+
+    fn push(self: *LifecycleTrace, id: u8) void {
+        self.order[self.len] = id;
+        self.len += 1;
+    }
+};
+
+const TraceLifecycle = struct {
+    trace: *LifecycleTrace,
+
+    const vtable = SyncManagerLifecycle.VTable{
+        .watch_for_exit = watch_for_exit,
+        .wire_mode_selector = wire_mode_selector,
+        .wire_sync_report = wire_sync_report,
+        .wire_gc_on_feed_finished = wire_gc_on_feed_finished,
+        .update_mode_selector = update_mode_selector,
+    };
+
+    fn as_lifecycle(self: *@This()) SyncManagerLifecycle {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+        };
+    }
+
+    fn watch_for_exit(ptr: *anyopaque, wait_time_sec: u32) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.watch_wait_time_sec = wait_time_sec;
+        self.trace.push(8);
+    }
+
+    fn wire_mode_selector(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(9);
+    }
+
+    fn wire_sync_report(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(10);
+    }
+
+    fn wire_gc_on_feed_finished(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(11);
+    }
+
+    fn update_mode_selector(ptr: *anyopaque) SyncManagerLifecycle.Error!void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.trace.push(12);
+    }
+};
+
 test "SyncManager.start: starts enabled feeds in Nethermind startup order" {
     const Feeds = struct {
         full: TraceFeed,
@@ -431,4 +568,152 @@ test "SyncManager.start: propagates feed start errors and stops later startup" {
     try std.testing.expectEqual(@as(u8, 0), feeds.fast_blocks.starts);
     try std.testing.expectEqual(@as(u8, 0), feeds.snap.starts);
     try std.testing.expectEqual(@as(u8, 0), feeds.fast_state.starts);
+}
+
+test "SyncManager.start: wires lifecycle hooks after feed startup order" {
+    const Feeds = struct {
+        full: TraceFeed,
+        fast_blocks: TraceFeed,
+        fast_state: TraceFeed,
+        snap: TraceFeed,
+        fast_headers: TraceFeed,
+        fast_bodies: TraceFeed,
+        fast_receipts: TraceFeed,
+    };
+    const Manager = SyncManager(Feeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = Feeds{
+        .full = .{ .trace = &feed_trace, .id = 1 },
+        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
+        .fast_state = .{ .trace = &feed_trace, .id = 7 },
+        .snap = .{ .trace = &feed_trace, .id = 6 },
+        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
+        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
+        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
+    };
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = true,
+            .snap_sync = true,
+            .download_headers_in_fast_sync = true,
+            .download_bodies_in_fast_sync = true,
+            .download_receipts_in_fast_sync = true,
+            .exit_on_synced = false,
+            .gc_on_feed_finished = true,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+    const expected_lifecycle_order = [_]u8{ 9, 10, 11, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, null), lifecycle_trace.watch_wait_time_sec);
+}
+
+test "SyncManager.start: exit_on_synced wires watcher before selector/report hooks" {
+    const Feeds = struct {
+        full: TraceFeed,
+        fast_blocks: TraceFeed,
+        fast_state: TraceFeed,
+        snap: TraceFeed,
+        fast_headers: TraceFeed,
+        fast_bodies: TraceFeed,
+        fast_receipts: TraceFeed,
+    };
+    const Manager = SyncManager(Feeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = Feeds{
+        .full = .{ .trace = &feed_trace, .id = 1 },
+        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
+        .fast_state = .{ .trace = &feed_trace, .id = 7 },
+        .snap = .{ .trace = &feed_trace, .id = 6 },
+        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
+        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
+        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
+    };
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = false,
+            .snap_sync = false,
+            .exit_on_synced = true,
+            .exit_on_synced_wait_time_sec = 77,
+            .gc_on_feed_finished = true,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{1};
+    const expected_lifecycle_order = [_]u8{ 8, 9, 10, 11, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, 77), lifecycle_trace.watch_wait_time_sec);
+}
+
+test "SyncManager.start: gc hook wiring is optional" {
+    const Feeds = struct {
+        full: TraceFeed,
+        fast_blocks: TraceFeed,
+        fast_state: TraceFeed,
+        snap: TraceFeed,
+        fast_headers: TraceFeed,
+        fast_bodies: TraceFeed,
+        fast_receipts: TraceFeed,
+    };
+    const Manager = SyncManager(Feeds);
+
+    var feed_trace = FeedTrace{};
+    var feeds = Feeds{
+        .full = .{ .trace = &feed_trace, .id = 1 },
+        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
+        .fast_state = .{ .trace = &feed_trace, .id = 7 },
+        .snap = .{ .trace = &feed_trace, .id = 6 },
+        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
+        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
+        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
+    };
+
+    var lifecycle_trace = LifecycleTrace{};
+    var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
+
+    var manager = Manager{
+        .config = .{
+            .networking_enabled = true,
+            .synchronization_enabled = true,
+            .fast_sync = false,
+            .snap_sync = false,
+            .exit_on_synced = false,
+            .gc_on_feed_finished = false,
+        },
+        .feeds = &feeds,
+        .lifecycle = trace_lifecycle.as_lifecycle(),
+    };
+
+    _ = try manager.start();
+
+    const expected_feed_order = [_]u8{1};
+    const expected_lifecycle_order = [_]u8{ 9, 10, 12 };
+    try std.testing.expectEqualSlices(u8, &expected_feed_order, feed_trace.order[0..feed_trace.len]);
+    try std.testing.expectEqualSlices(u8, &expected_lifecycle_order, lifecycle_trace.order[0..lifecycle_trace.len]);
+    try std.testing.expectEqual(@as(?u32, null), lifecycle_trace.watch_wait_time_sec);
 }
