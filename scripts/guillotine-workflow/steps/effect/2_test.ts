@@ -41,6 +41,8 @@ If any tests fail and you need to fix code to make them pass, commit each fix at
 
 If you add new test files, commit them:
 - Format: "🧪 test(SCOPE): what was tested"
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 Report each category: passed or failed with details.
 

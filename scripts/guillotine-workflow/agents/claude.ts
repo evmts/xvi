@@ -27,8 +27,8 @@ GIT RULES — CRITICAL:
 - NEVER create branches. Always commit directly to the current branch.
 - NEVER run git checkout -b, git branch, or git switch -c.
 - NEVER commit .db files, .sqlite files, or any database files.
-- After committing, run git push to push your changes.
-- Just git add, git commit, and git push on the current branch. That's it.
+- After committing, run git pull --rebase origin main to rebase on top of latest changes, then git push to push your changes to main.
+- Just git add, git commit, git pull --rebase origin main, and git push on the current branch. That's it.
 
 KEY EFFECT.TS RULES:
 - NEVER use Effect.runPromise except at application edge (main entry, benchmarks)
@@ -68,8 +68,8 @@ GIT RULES — CRITICAL:
 - NEVER create branches. Always commit directly to the current branch.
 - NEVER run git checkout -b, git branch, or git switch -c.
 - NEVER commit .db files, .sqlite files, or any database files.
-- After committing, run git push to push your changes.
-- Just git add, git commit, and git push on the current branch. That's it.
+- After committing, run git pull --rebase origin main to rebase on top of latest changes, then git push to push your changes to main.
+- Just git add, git commit, git pull --rebase origin main, and git push on the current branch. That's it.
 
 CRITICAL OUTPUT REQUIREMENT:
 When you have completed your work, you MUST end your response with a JSON object

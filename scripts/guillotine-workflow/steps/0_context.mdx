@@ -21,6 +21,8 @@ GIT COMMIT RULES:
 - Use emoji prefixes: 🐛 fix, ♻️ refactor, 🧪 test, ⚡ perf
 - Format: "EMOJI type(scope): description"
 - Example: "♻️ refactor(phase-0-db): gather context and reference materials"
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 **REQUIRED OUTPUT** — You MUST end with this exact JSON structure:
 ```json

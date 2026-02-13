@@ -49,6 +49,7 @@ export function makeCodex(target: Target) {
     yolo: true,
     cwd: REPO_ROOT,
     config: { model_reasoning_effort: "high" },
+    timeoutMs: 15 * 60 * 1000, // 15 minutes max per task
   });
 
   return USE_CLI ? cliAgent : apiAgent;

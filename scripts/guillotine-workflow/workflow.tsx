@@ -193,7 +193,7 @@ export default smithers((ctx) => {
               `docs/context/${id}.md`;
 
             return (
-              <Sequence>
+              <Sequence key={id}>
                 <Sequence skipIf={skipMainPhaseSequence}>
                   <Task id={`${id}:work-item`} output={tables.work_item} skipIf={!pendingWorkItem}>
                     {{
@@ -205,7 +205,7 @@ export default smithers((ctx) => {
                     }}
                   </Task>
 
-                  <Task id={`${id}:context`} output={tables.context} agent={codex} skipIf={hasPendingWorkItem}>
+                  <Task id={`${id}:context`} output={tables.context} agent={codex} retries={2} skipIf={hasPendingWorkItem}>
                     <ContextPrompt
                       phase={phase}
                       target={target}
@@ -216,7 +216,7 @@ export default smithers((ctx) => {
                   </Task>
 
                   {/* Implement pass 1 */}
-                  <Task id={`${id}:implement-1`} output={tables.implement} agent={codex}>
+                  <Task id={`${id}:implement-1`} output={tables.implement} agent={codex} retries={2}>
                     {renderImplementPrompt(target.id, {
                       phase,
                       target,
@@ -229,7 +229,7 @@ export default smithers((ctx) => {
                   </Task>
 
                   {/* Implement pass 2 — builds on pass 1 output */}
-                  <Task id={`${id}:implement-2`} output={tables.implement} agent={codex}>
+                  <Task id={`${id}:implement-2`} output={tables.implement} agent={codex} retries={2}>
                     {renderImplementPrompt(target.id, {
                       phase,
                       target,
@@ -241,11 +241,11 @@ export default smithers((ctx) => {
                     })}
                   </Task>
 
-                  <Task id={`${id}:test`} output={tables.test_results} agent={codex}>
+                  <Task id={`${id}:test`} output={tables.test_results} agent={codex} retries={2}>
                     {renderTestPrompt(target.id, { phase })}
                   </Task>
 
-                  <Task id={`${id}:review`} output={tables.review} agent={codex}>
+                  <Task id={`${id}:review`} output={tables.review} agent={codex} retries={2}>
                     <ReviewPrompt
                       phase={phase}
                       target={target}
@@ -259,7 +259,7 @@ export default smithers((ctx) => {
                     />
                   </Task>
 
-                  <Task id={`${id}:review-fix`} output={tables.review_fix} agent={codex} skipIf={latestReview?.severity === "none"}>
+                  <Task id={`${id}:review-fix`} output={tables.review_fix} agent={codex} retries={2} skipIf={latestReview?.severity === "none"}>
                     <ReviewFixPrompt
                       phase={phase}
                       target={target}
@@ -269,7 +269,7 @@ export default smithers((ctx) => {
                     />
                   </Task>
 
-                  <Task id={`${id}:review-response`} output={tables.review_response} agent={codex} skipIf={latestReview?.severity === "none"}>
+                  <Task id={`${id}:review-response`} output={tables.review_response} agent={codex} retries={2} skipIf={latestReview?.severity === "none"}>
                     <ReviewResponsePrompt
                       phase={phase}
                       target={target}
@@ -282,7 +282,7 @@ export default smithers((ctx) => {
                     />
                   </Task>
 
-                  <Task id={`${id}:refactor`} output={tables.refactor} agent={codex}>
+                  <Task id={`${id}:refactor`} output={tables.refactor} agent={codex} retries={2}>
                     {renderRefactorPrompt(target.id, { phase })}
                   </Task>
 
@@ -296,7 +296,7 @@ export default smithers((ctx) => {
                     />
                   </Task>
 
-                  <Task id={`${id}:final-review`} output={tables.final_review} agent={codex}>
+                  <Task id={`${id}:final-review`} output={tables.final_review} agent={codex} retries={2}>
                     <FinalReviewPrompt
                       phase={phase}
                       target={target}
@@ -313,6 +313,7 @@ export default smithers((ctx) => {
                   id={`${id}:work-item-cleanup`}
                   output={tables.work_item_cleanup}
                   agent={codex}
+                  retries={2}
                   skipIf={!hasPendingCleanupForLatestWorkItem}
                 >
                   {`A ${latestWorkItem?.sourceType ?? "review"} work item was completed for ${id}. Delete this file if it exists:

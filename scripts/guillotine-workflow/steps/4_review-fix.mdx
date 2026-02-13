@@ -18,6 +18,8 @@ GIT COMMIT RULES:
 - Example: "🐛 fix(phase-0-db): address review feedback — handle nil pointer in iterator"
 - git add the specific files changed, then git commit with the emoji message
 - Do NOT batch all fixes into one commit — each fix gets its own atomic commit
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 IMPORTANT: After fixing all issues and committing, you MUST output a JSON object:
 ```json

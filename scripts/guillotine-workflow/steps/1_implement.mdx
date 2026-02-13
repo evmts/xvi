@@ -27,6 +27,8 @@ GIT COMMIT RULES:
   - "🧪 test(phase-0-db): add unit tests for RocksDB adapter"
   - "🐛 fix(phase-0-db): handle missing key edge case in get()"
 - git add the specific files changed, then git commit with the emoji message
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 IMPORTANT: After completing the implementation and committing, you MUST output a JSON object:
 ```json

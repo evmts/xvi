@@ -36,6 +36,8 @@ If any tests fail and you need to fix code to make them pass, commit each fix at
 If you add new test files, commit them:
 - Format: "🧪 test(SCOPE): what was tested"
 - Example: "🧪 test(phase-0-db): add edge case tests for iterator"
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 Report each category: passed or failed with details.
 If any tests fail, provide a clear summary of what's failing and why.

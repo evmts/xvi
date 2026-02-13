@@ -23,6 +23,8 @@ GIT COMMIT RULES:
   - "♻️ refactor(phase-0-db): consolidate Layer composition with Layer.merge"
   - "♻️ refactor(phase-0-db): replace pipe chain with Effect.gen for readability"
 - git add the specific files changed, then git commit with the emoji message
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
 
 If nothing needs refactoring, say so and move on.
 
