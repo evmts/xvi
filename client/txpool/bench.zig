@@ -42,12 +42,11 @@ fn mk_vhash(byte: u8) VersionedHash {
     return .{ .bytes = [_]u8{byte} ++ [_]u8{0} ** 31 };
 }
 
-noinline fn fits_size_limits_ok(tx: anytype, cfg: txpool.TxPoolConfig) bool {
-    txpool.fits_size_limits(tx, cfg) catch return false;
-    return true;
+noinline fn fits_size_limits_ok(tx: anytype, cfg: txpool.TxPoolConfig) !void {
+    try txpool.fits_size_limits(tx, cfg);
 }
 
-fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
+fn bench_admission(_: std.mem.Allocator, n_per_type: usize) !bench.BenchResult {
     // Config with generous size caps (should all pass)
     var cfg = txpool.TxPoolConfig{};
     cfg.max_tx_size = 256 * 1024; // legacy/1559/2930/7702
@@ -72,7 +71,8 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{0} ** 32,
         };
         for (0..n_per_type) |_| {
-            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
+            try fits_size_limits_ok(tx, cfg);
+            accepted_count +%= 1;
         }
         ops += n_per_type;
     }
@@ -94,7 +94,8 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{2} ** 32,
         };
         for (0..n_per_type) |_| {
-            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
+            try fits_size_limits_ok(tx, cfg);
+            accepted_count +%= 1;
         }
         ops += n_per_type;
     }
@@ -121,7 +122,8 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{4} ** 32,
         };
         for (0..n_per_type) |_| {
-            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
+            try fits_size_limits_ok(tx, cfg);
+            accepted_count +%= 1;
         }
         ops += n_per_type;
     }
@@ -145,7 +147,8 @@ fn bench_admission(_: std.mem.Allocator, n_per_type: usize) bench.BenchResult {
             .s = [_]u8{0} ** 32,
         };
         for (0..n_per_type) |_| {
-            accepted_count +%= @intFromBool(fits_size_limits_ok(tx, cfg));
+            try fits_size_limits_ok(tx, cfg);
+            accepted_count +%= 1;
         }
         ops += n_per_type;
     }
@@ -374,12 +377,12 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
     };
 }
 
-fn bench_admission_memory(n_per_type: usize) struct { elapsed_ns: u64, bytes_per_op: usize } {
+fn bench_admission_memory(n_per_type: usize) !struct { elapsed_ns: u64, bytes_per_op: usize } {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
     defer _ = gpa.deinit();
 
     const before_bytes: usize = gpa.total_requested_bytes;
-    const res = bench_admission(gpa.allocator(), n_per_type);
+    const res = try bench_admission(gpa.allocator(), n_per_type);
     const after_bytes: usize = gpa.total_requested_bytes;
 
     const total_ops: usize = n_per_type * 4; // 4 tx types in this bench
@@ -397,10 +400,10 @@ pub fn main() !void {
     // Admission (fits_size_limits) using GPA to ensure frees reclaim memory
     std.debug.print("--- Admission: fits_size_limits (GPA allocator) ---\n", .{});
     {
-        const r_small = bench_admission(std.heap.c_allocator, N_ADMISSION_SMALL);
+        const r_small = try bench_admission(std.heap.c_allocator, N_ADMISSION_SMALL);
         bench.print_result(r_small);
 
-        const r_med = bench_admission(std.heap.c_allocator, N_ADMISSION_MED);
+        const r_med = try bench_admission(std.heap.c_allocator, N_ADMISSION_MED);
         bench.print_result(r_med);
     }
     std.debug.print("\n", .{});
@@ -408,7 +411,7 @@ pub fn main() !void {
     // Allocation behavior (bytes/op) with GPA accounting
     std.debug.print("--- Allocation Behavior (GPA observed) ---\n", .{});
     {
-        const m = bench_admission_memory(2_000);
+        const m = try bench_admission_memory(2_000);
         const time_str = bench.format_ns(m.elapsed_ns);
         std.debug.print("  fits_size_limits: ~{d} bytes/op (2k/tx-type), time={s}\n", .{ m.bytes_per_op, &time_str });
         std.debug.print("  Note: using GPA to ensure frees are honored; Arena would retain until deinit.\n", .{});
