@@ -321,6 +321,34 @@ pub fn enforce_min_priority_fee_for_blobs(
 // Tests
 // =============================================================================
 
+fn append_rlp_list_prefix(
+    allocator: std.mem.Allocator,
+    out: *std.array_list.AlignedManaged(u8, null),
+    payload_len: usize,
+) !void {
+    const rlp = primitives.Rlp;
+    if (payload_len <= 55) {
+        try out.append(@as(u8, @intCast(0xc0 + payload_len)));
+        return;
+    }
+
+    const len_bytes = try rlp.encodeLength(allocator, payload_len);
+    defer allocator.free(len_bytes);
+    try out.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
+    try out.appendSlice(len_bytes);
+}
+
+fn make_typed_envelope(
+    allocator: std.mem.Allocator,
+    tx_type: u8,
+    rlp_payload_list: []const u8,
+) ![]u8 {
+    const encoded = try allocator.alloc(u8, 1 + rlp_payload_list.len);
+    encoded[0] = tx_type;
+    @memcpy(encoded[1..], rlp_payload_list);
+    return encoded;
+}
+
 test "fits_size_limits — legacy within and over limit (wire size incl. v,r,s)" {
     const tx = tx_mod.LegacyTransaction{
         .nonce = 0,
@@ -386,14 +414,7 @@ test "fits_size_limits — legacy within and over limit (wire size incl. v,r,s)"
     }
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
-    if (list.items.len <= 55) {
-        try wrapped.append(@as(u8, @intCast(0xc0 + list.items.len)));
-    } else {
-        const len_bytes = try rlp.encodeLength(allocator, list.items.len);
-        defer allocator.free(len_bytes);
-        try wrapped.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-        try wrapped.appendSlice(len_bytes);
-    }
+    try append_rlp_list_prefix(allocator, &wrapped, list.items.len);
     try wrapped.appendSlice(list.items);
     const encoded = wrapped.items;
 
@@ -490,18 +511,9 @@ test "fits_size_limits — eip1559 within and over limit (wire size incl. y_pari
     }
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
-    if (list.items.len <= 55) {
-        try wrapped.append(@as(u8, @intCast(0xc0 + list.items.len)));
-    } else {
-        const len_bytes = try rlp.encodeLength(allocator, list.items.len);
-        defer allocator.free(len_bytes);
-        try wrapped.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-        try wrapped.appendSlice(len_bytes);
-    }
+    try append_rlp_list_prefix(allocator, &wrapped, list.items.len);
     try wrapped.appendSlice(list.items);
-    const encoded = try allocator.alloc(u8, 1 + wrapped.items.len);
-    encoded[0] = 0x02;
-    @memcpy(encoded[1..], wrapped.items);
+    const encoded = try make_typed_envelope(allocator, 0x02, wrapped.items);
     defer allocator.free(encoded);
 
     var cfg_ok = TxPoolConfig{};
@@ -599,14 +611,7 @@ test "fits_size_limits — eip4844 (blob) within and over blob limit" {
             defer allocator.free(enc);
             try hashes_list.appendSlice(enc);
         }
-        if (hashes_list.items.len <= 55) {
-            try list.append(@as(u8, @intCast(0xc0 + hashes_list.items.len)));
-        } else {
-            const len_bytes = try rlp.encodeLength(allocator, hashes_list.items.len);
-            defer allocator.free(len_bytes);
-            try list.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-            try list.appendSlice(len_bytes);
-        }
+        try append_rlp_list_prefix(allocator, &list, hashes_list.items.len);
         try list.appendSlice(hashes_list.items);
     }
     {
@@ -627,19 +632,10 @@ test "fits_size_limits — eip4844 (blob) within and over blob limit" {
 
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
-    if (list.items.len <= 55) {
-        try wrapped.append(@as(u8, @intCast(0xc0 + list.items.len)));
-    } else {
-        const len_bytes = try rlp.encodeLength(allocator, list.items.len);
-        defer allocator.free(len_bytes);
-        try wrapped.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-        try wrapped.appendSlice(len_bytes);
-    }
+    try append_rlp_list_prefix(allocator, &wrapped, list.items.len);
     try wrapped.appendSlice(list.items);
 
-    const encoded = try allocator.alloc(u8, 1 + wrapped.items.len);
-    encoded[0] = 0x03;
-    @memcpy(encoded[1..], wrapped.items);
+    const encoded = try make_typed_envelope(allocator, 0x03, wrapped.items);
     defer allocator.free(encoded);
 
     var cfg_ok = TxPoolConfig{};
@@ -728,18 +724,9 @@ test "fits_size_limits — eip7702 within and over limit (unsigned)" {
     }
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
-    if (list.items.len <= 55) {
-        try wrapped.append(@as(u8, @intCast(0xc0 + list.items.len)));
-    } else {
-        const len_bytes = try rlp.encodeLength(allocator, list.items.len);
-        defer allocator.free(len_bytes);
-        try wrapped.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-        try wrapped.appendSlice(len_bytes);
-    }
+    try append_rlp_list_prefix(allocator, &wrapped, list.items.len);
     try wrapped.appendSlice(list.items);
-    const encoded = try allocator.alloc(u8, 1 + wrapped.items.len);
-    encoded[0] = 0x04;
-    @memcpy(encoded[1..], wrapped.items);
+    const encoded = try make_typed_envelope(allocator, 0x04, wrapped.items);
     defer allocator.free(encoded);
 
     var cfg_ok = TxPoolConfig{};
@@ -844,18 +831,9 @@ test "fits_size_limits — eip7702 within and over limit (signed)" {
     }
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
-    if (list.items.len <= 55) {
-        try wrapped.append(@as(u8, @intCast(0xc0 + list.items.len)));
-    } else {
-        const len_bytes = try rlp.encodeLength(allocator, list.items.len);
-        defer allocator.free(len_bytes);
-        try wrapped.append(@as(u8, @intCast(0xf7 + len_bytes.len)));
-        try wrapped.appendSlice(len_bytes);
-    }
+    try append_rlp_list_prefix(allocator, &wrapped, list.items.len);
     try wrapped.appendSlice(list.items);
-    const encoded = try allocator.alloc(u8, 1 + wrapped.items.len);
-    encoded[0] = 0x04;
-    @memcpy(encoded[1..], wrapped.items);
+    const encoded = try make_typed_envelope(allocator, 0x04, wrapped.items);
     defer allocator.free(encoded);
 
     var cfg_ok = TxPoolConfig{};
@@ -865,12 +843,6 @@ test "fits_size_limits — eip7702 within and over limit (signed)" {
     var cfg_bad = TxPoolConfig{};
     cfg_bad.max_tx_size = encoded.len - 1;
     try std.testing.expectError(error.MaxTxSizeExceeded, fits_size_limits(tx, cfg_bad));
-}
-
-test "fits_size_limits — eip2930 removed in primitives (N/A)" {
-    // EIP-2930 transaction type is not present in current Voltaire primitives.
-    // This placeholder test documents that 2930-specific size logic is N/A.
-    try std.testing.expect(true);
 }
 
 test "fits_gas_limit — passes when under/equal, errors when over (legacy)" {
