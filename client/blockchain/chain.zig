@@ -54,23 +54,22 @@ pub fn head_number(chain: *Chain) ?u64 {
 ///
 /// Semantics:
 /// - Mirrors Nethermind's `PendingHash` behavior where pending defaults to head.
-/// - Uses only local canonical mappings and block store reads; never fetches
-///   from the fork cache and never allocates.
-/// - Returns `null` when no consistent canonical-head snapshot is available.
+/// - Uses only local head-number/canonical-hash snapshots; never fetches from
+///   the fork cache and never allocates.
+/// - Retries once when head changes during the read to avoid transient nulls.
 pub fn pending_hash(chain: *Chain) ?Hash.Hash {
-    return canonical_head_hash_snapshot_local(chain);
+    return head_hash_snapshot_local(chain);
 }
 
 /// Returns the pending block as the current canonical head block (local-only).
 ///
 /// Semantics:
 /// - Mirrors Nethermind's `FindPendingBlock` behavior with `PendingHash => Head`.
-/// - Resolves pending hash through local storage only; never fetches from
-///   fork cache and never allocates.
-/// - Returns `null` when pending hash is unavailable or not present locally.
+/// - Uses local head snapshots only; never fetches from fork cache and never
+///   allocates.
+/// - Retries once when head changes during the read to avoid transient nulls.
 pub fn pending_block(chain: *Chain) ?Block.Block {
-    const hash = pending_hash(chain) orelse return null;
-    return get_block_local(chain, hash);
+    return head_block_snapshot_local(chain);
 }
 
 /// Returns true if the given hash is canonical at its block number (local-only).
@@ -460,6 +459,48 @@ fn canonical_head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
     const block = get_block_local(chain, canonical) orelse return null;
     if (block.header.number != number) return null;
     return canonical;
+}
+
+fn head_hash_snapshot_local_with_policy(chain: *Chain, max_attempts: usize) ?Hash.Hash {
+    const attempts = @max(max_attempts, 1);
+    var attempt: usize = 0;
+    while (attempt < attempts) : (attempt += 1) {
+        const before = head_number(chain) orelse return null;
+        const maybe_hash = canonical_hash(chain, before);
+        const hash = maybe_hash orelse {
+            if (attempt + 1 == attempts) return null;
+            continue;
+        };
+        const after = head_number(chain) orelse return null;
+        if (after == before) return hash;
+        if (attempt + 1 == attempts) return hash; // return the "before" snapshot
+    }
+    return null; // defensive
+}
+
+fn head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
+    return head_hash_snapshot_local_with_policy(chain, 2);
+}
+
+fn head_block_snapshot_local_with_policy(chain: *Chain, max_attempts: usize) ?Block.Block {
+    const attempts = @max(max_attempts, 1);
+    var attempt: usize = 0;
+    while (attempt < attempts) : (attempt += 1) {
+        const before = head_number(chain) orelse return null;
+        const maybe_block = get_block_by_number_local(chain, before);
+        const block = maybe_block orelse {
+            if (attempt + 1 == attempts) return null;
+            continue;
+        };
+        const after = head_number(chain) orelse return null;
+        if (after == before) return block;
+        if (attempt + 1 == attempts) return block; // return the "before" snapshot
+    }
+    return null; // defensive
+}
+
+fn head_block_snapshot_local(chain: *Chain) ?Block.Block {
+    return head_block_snapshot_local_with_policy(chain, 2);
 }
 
 /// Returns whether `candidate_head` diverges from the current canonical head.
