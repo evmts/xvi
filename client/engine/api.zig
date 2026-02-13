@@ -10,6 +10,7 @@ const method_name = @import("method_name.zig");
 const ExchangeCapabilitiesMethod = @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeCapabilities");
 const ExchangeTransitionConfigurationV1Method =
     @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeTransitionConfigurationV1");
+const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
 /// Parameters for `engine_exchangeCapabilities` requests.
 pub const ExchangeCapabilitiesParams = @FieldType(ExchangeCapabilitiesMethod, "params");
 /// Result payload for `engine_exchangeCapabilities` responses.
@@ -32,6 +33,10 @@ pub const ClientVersionV1Result = struct {
 pub const ExchangeTransitionConfigurationV1Params = @FieldType(ExchangeTransitionConfigurationV1Method, "params");
 /// Result payload for `engine_exchangeTransitionConfigurationV1` responses.
 pub const ExchangeTransitionConfigurationV1Result = @FieldType(ExchangeTransitionConfigurationV1Method, "result");
+/// Parameters for `engine_newPayloadV1` requests.
+pub const NewPayloadV1Params = @FieldType(NewPayloadV1Method, "params");
+/// Result payload for `engine_newPayloadV1` responses.
+pub const NewPayloadV1Result = @FieldType(NewPayloadV1Method, "result");
 
 // Method-name validation logic is centralized in client/engine/method_name.zig
 
@@ -123,6 +128,11 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: ExchangeTransitionConfigurationV1Params,
         ) Error!ExchangeTransitionConfigurationV1Result,
+        /// Validate an incoming execution payload V1.
+        new_payload_v1: *const fn (
+            ptr: *anyopaque,
+            params: NewPayloadV1Params,
+        ) Error!NewPayloadV1Result,
     };
 
     /// Exchange list of supported Engine API methods.
@@ -161,11 +171,25 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Validates and imports an execution payload V1.
+    ///
+    /// This stage performs request/response shape checks only.
+    /// Full payload semantics are handled by the execution path.
+    pub fn new_payload_v1(
+        self: EngineApi,
+        params: NewPayloadV1Params,
+    ) Error!NewPayloadV1Result {
+        try validate_new_payload_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.new_payload_v1(self.ptr, params);
+        try validate_new_payload_v1_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Generic dispatcher for EngineMethod calls using Voltaire's EngineMethod schema.
     ///
-    /// Partial coverage: currently handles `engine_exchangeCapabilities` and
-    /// `engine_exchangeTransitionConfigurationV1`. All other Engine methods
-    /// return `Error.MethodNotFound` until implemented.
+    /// Partial coverage: currently handles `engine_exchangeCapabilities`,
+    /// `engine_exchangeTransitionConfigurationV1`, and `engine_newPayloadV1`.
+    /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
     /// const Result = try api.dispatch("engine_exchangeCapabilities", params);
@@ -178,6 +202,8 @@ pub const EngineApi = struct {
             return self.exchange_capabilities(params);
         } else if (comptime Method == ExchangeTransitionConfigurationV1Method) {
             return self.exchange_transition_configuration_v1(params);
+        } else if (comptime Method == NewPayloadV1Method) {
+            return self.new_payload_v1(params);
         } else {
             return Error.MethodNotFound;
         }
@@ -320,6 +346,20 @@ fn validate_transition_configuration_json(value: std.json.Value, comptime invali
     }
 }
 
+fn validate_new_payload_v1_params(
+    params: NewPayloadV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (params.execution_payload.value != .object) return invalid_err;
+}
+
+fn validate_new_payload_v1_result(
+    result: NewPayloadV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (result.value.value != .object) return invalid_err;
+}
+
 fn is_slice_of_byte_slices(comptime T: type) bool {
     const info = @typeInfo(T);
     if (info != .pointer or info.pointer.size != .slice) return false;
@@ -399,9 +439,11 @@ const DummyEngine = struct {
     result: ExchangeCapabilitiesResult,
     client_version_result: ClientVersionV1Result = undefined,
     transition_result: ExchangeTransitionConfigurationV1Result = undefined,
+    new_payload_result: NewPayloadV1Result = undefined,
     called: bool = false,
     client_version_called: bool = false,
     transition_called: bool = false,
+    new_payload_called: bool = false,
 
     fn exchange_capabilities(
         ptr: *anyopaque,
@@ -432,12 +474,23 @@ const DummyEngine = struct {
         self.transition_called = true;
         return self.transition_result;
     }
+
+    fn new_payload_v1(
+        ptr: *anyopaque,
+        params: NewPayloadV1Params,
+    ) EngineApi.Error!NewPayloadV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.new_payload_called = true;
+        return self.new_payload_result;
+    }
 };
 
 const dummy_vtable = EngineApi.VTable{
     .exchange_capabilities = DummyEngine.exchange_capabilities,
     .get_client_version_v1 = DummyEngine.get_client_version_v1,
     .exchange_transition_configuration_v1 = DummyEngine.exchange_transition_configuration_v1,
+    .new_payload_v1 = DummyEngine.new_payload_v1,
 };
 
 fn make_api(dummy: *DummyEngine) EngineApi {
@@ -868,6 +921,74 @@ test "engine api generic dispatcher routes exchangeTransitionConfigurationV1" {
 
     const out = try api.dispatch(ExchangeTransitionConfigurationV1Method, params);
     try std.testing.expectEqualDeep(result_value, out);
+}
+
+test "engine api dispatches newPayloadV1" {
+    const alloc = std.testing.allocator;
+
+    var payload_obj = std.json.ObjectMap.init(alloc);
+    defer payload_obj.deinit();
+    try payload_obj.put("parentHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000000" });
+    const params = NewPayloadV1Params{
+        .execution_payload = jsonrpc.types.Quantity{ .value = .{ .object = payload_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "SYNCING" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV1Result{
+        .value = jsonrpc.types.Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.new_payload_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_called);
+}
+
+test "engine api rejects invalid newPayloadV1 params" {
+    const params = NewPayloadV1Params{
+        .execution_payload = jsonrpc.types.Quantity{ .value = .{ .string = "0x01" } },
+    };
+    const exchange_result = ExchangeCapabilitiesResult{ .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.new_payload_v1(params));
+    try std.testing.expect(!dummy.new_payload_called);
+}
+
+test "engine api generic dispatcher routes newPayloadV1" {
+    const alloc = std.testing.allocator;
+
+    var payload_obj = std.json.ObjectMap.init(alloc);
+    defer payload_obj.deinit();
+    try payload_obj.put("parentHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000000" });
+    const params = NewPayloadV1Params{
+        .execution_payload = jsonrpc.types.Quantity{ .value = .{ .object = payload_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "ACCEPTED" });
+    try status_obj.put("latestValidHash", .{ .null = {} });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV1Result{
+        .value = jsonrpc.types.Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.dispatch(NewPayloadV1Method, params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_called);
 }
 
 test "engine api generic dispatcher rejects unknown method" {
