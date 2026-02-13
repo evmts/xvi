@@ -24,6 +24,8 @@ pub const SyncManagerStartConfig = manager.SyncManagerStartConfig;
 pub const SyncStartupFeed = manager.SyncStartupFeed;
 /// Startup feed planner for manager boot orchestration.
 pub const startup_feed_mask = manager.startup_feed_mask;
+/// Comptime-injected sync startup coordinator.
+pub const SyncManager = manager.SyncManager;
 
 /// GetBlockHeaders request helper.
 pub const HeadersRequest = headers.HeadersRequest;
