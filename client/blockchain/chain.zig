@@ -344,7 +344,8 @@ pub fn block_hash_by_number_local(
     if (depth_from_execution > 256) return null;
 
     const tip_block = get_block_local(chain, tip_hash) orelse return error.MissingTipBlock;
-    if (tip_block.header.number + 1 != execution_block_number) return error.InconsistentTipContext;
+    const expected_tip_number = execution_block_number - 1;
+    if (tip_block.header.number != expected_tip_number) return error.InconsistentTipContext;
 
     const distance_from_tip = depth_from_execution - 1;
     return ancestor_hash_local(chain, tip_hash, distance_from_tip) catch |err| switch (err) {
@@ -2396,6 +2397,28 @@ test "Chain - block_hash_by_number_local supports pending context parent lookup"
 
     // Current block number itself remains out of bounds.
     try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 2)) == null);
+}
+
+test "Chain - block_hash_by_number_local rejects execution number derived from tip hash" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    // Executing block number must be tip.number + 1 (2), not tip.number (1).
+    try std.testing.expectError(
+        error.InconsistentTipContext,
+        block_hash_by_number_local(&chain, b1.hash, 1, 0),
+    );
 }
 
 test "Chain - block_hash_by_number_local returns null when execution context is genesis" {
