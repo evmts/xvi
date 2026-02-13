@@ -5,6 +5,7 @@ const server = @import("server.zig");
 const errors = @import("error.zig");
 const response = @import("response.zig");
 const eth = @import("eth.zig");
+const net = @import("net.zig");
 
 /// JSON-RPC server configuration.
 pub const RpcServerConfig = server.RpcServerConfig;
@@ -16,6 +17,8 @@ pub const JsonRpcErrorCode = errors.JsonRpcErrorCode;
 pub const Response = response.Response;
 /// ETH namespace API surface (comptime DI)
 pub const EthApi = eth.EthApi;
+/// NET namespace API surface (comptime DI)
+pub const NetApi = net.NetApi;
 
 test {
     std.testing.refAllDecls(@This());

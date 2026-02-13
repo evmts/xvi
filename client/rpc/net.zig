@@ -1,0 +1,147 @@
+//! Ethereum JSON-RPC (net_*) minimal handlers.
+//!
+//! Implements `net_version` per execution-apis `eth/client.yaml` and EIP-1474:
+//! result is a decimal string network ID (not QUANTITY hex).
+const std = @import("std");
+const primitives = @import("primitives");
+const envelope = @import("envelope.zig");
+const errors = @import("error.zig");
+const Response = @import("response.zig").Response;
+
+const NetworkId = primitives.NetworkId.NetworkId;
+
+/// Generic NET API surface (comptime-injected provider).
+///
+/// The `Provider` type must define:
+/// - `pub fn getNetworkId(self: *const Provider) primitives.NetworkId.NetworkId`
+pub fn NetApi(comptime Provider: type) type {
+    comptime {
+        if (!@hasDecl(Provider, "getNetworkId")) {
+            @compileError("NetApi Provider must define getNetworkId(self: *const Provider) primitives.NetworkId.NetworkId");
+        }
+        const Fn = @TypeOf(Provider.getNetworkId);
+        const ti = @typeInfo(Fn);
+        if (ti != .@"fn") @compileError("getNetworkId must be a function");
+        if (ti.@"fn".params.len != 1 or ti.@"fn".params[0].type == null) {
+            @compileError("getNetworkId must take exactly one parameter: *const Provider");
+        }
+        const P0 = ti.@"fn".params[0].type.?;
+        if (@typeInfo(P0) != .pointer or @typeInfo(P0).pointer.is_const != true or @typeInfo(P0).pointer.child != Provider) {
+            @compileError("getNetworkId param must be of type *const Provider");
+        }
+        const Ret = ti.@"fn".return_type orelse @compileError("getNetworkId must return primitives.NetworkId.NetworkId");
+        if (Ret != NetworkId) @compileError("getNetworkId must return primitives.NetworkId.NetworkId");
+    }
+
+    return struct {
+        const Self = @This();
+
+        provider: *const Provider,
+
+        /// Handle `net_version` request.
+        ///
+        /// - Extracts the request `id` allocation-free.
+        /// - On success, returns decimal-string network ID.
+        /// - On malformed/unsupported envelope, returns EIP-1474 error with id=null.
+        pub fn handle_version(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
+            const id_res = envelope.extract_request_id(request_bytes);
+            switch (id_res) {
+                .id => |id| {
+                    const network_id: NetworkId = self.provider.getNetworkId();
+
+                    var result_buf: [22]u8 = undefined; // quote + 20 digits + quote
+                    result_buf[0] = '"';
+                    const digits = try std.fmt.bufPrint(result_buf[1 .. result_buf.len - 1], "{}", .{primitives.NetworkId.toNumber(network_id)});
+                    result_buf[1 + digits.len] = '"';
+
+                    try Response.write_success_raw(writer, id, result_buf[0 .. digits.len + 2]);
+                },
+                .err => |code| {
+                    try Response.write_error(writer, .null, code, code.default_message(), null);
+                },
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "NetApi.handleVersion: number id -> decimal string result" {
+    const Provider = struct {
+        pub fn getNetworkId(_: *const @This()) NetworkId {
+            return primitives.NetworkId.MAINNET;
+        }
+    };
+    const Api = NetApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 7,\n" ++
+        "  \"method\": \"net_version\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_version(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"1\"}",
+        buf.items,
+    );
+}
+
+test "NetApi.handleVersion: string id preserved" {
+    const Provider = struct {
+        pub fn getNetworkId(_: *const @This()) NetworkId {
+            return primitives.NetworkId.SEPOLIA;
+        }
+    };
+    const Api = NetApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": \"abc-123\",\n" ++
+        "  \"method\": \"net_version\",\n" ++
+        "  \"params\": []\n" ++
+        "}";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_version(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"abc-123\",\"result\":\"11155111\"}",
+        buf.items,
+    );
+}
+
+test "NetApi.handleVersion: invalid envelope -> EIP-1474 error with id:null" {
+    const Provider = struct {
+        pub fn getNetworkId(_: *const @This()) NetworkId {
+            return primitives.NetworkId.MAINNET;
+        }
+    };
+    const Api = NetApi(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    // Batch array at top level is not handled here.
+    const bad = "[ { \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"net_version\", \"params\": [] } ]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_version(buf.writer(), bad);
+
+    const code = errors.JsonRpcErrorCode.invalid_request;
+    var expect_buf: [256]u8 = undefined;
+    var fba = std.io.fixedBufferStream(&expect_buf);
+    try Response.write_error(fba.writer(), .null, code, code.default_message(), null);
+    try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
+}
