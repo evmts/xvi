@@ -101,7 +101,9 @@ fn runtime_voltaire_type(comptime T: type) type {
 
 const Quantity = runtime_voltaire_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods"));
 
+/// Request payload type for `engine_exchangeCapabilities`.
 pub const ExchangeCapabilitiesParams = runtime_voltaire_type(ExchangeCapabilitiesVoltaireParams);
+/// Response payload type for `engine_exchangeCapabilities`.
 pub const ExchangeCapabilitiesResult = runtime_voltaire_type(ExchangeCapabilitiesVoltaireResult);
 
 /// ClientVersionV1 per execution-apis/src/engine/identification.md.
@@ -117,43 +119,81 @@ pub const ClientVersionV1Result = struct {
     value: []const ClientVersionV1,
 };
 
+/// Request payload type for `engine_exchangeTransitionConfigurationV1`.
 pub const ExchangeTransitionConfigurationV1Params = runtime_voltaire_type(ExchangeTransitionConfigurationV1VoltaireParams);
+/// Response payload type for `engine_exchangeTransitionConfigurationV1`.
 pub const ExchangeTransitionConfigurationV1Result = runtime_voltaire_type(ExchangeTransitionConfigurationV1VoltaireResult);
+/// Request payload type for `engine_newPayloadV1`.
 pub const NewPayloadV1Params = runtime_voltaire_type(NewPayloadV1VoltaireParams);
+/// Response payload type for `engine_newPayloadV1`.
 pub const NewPayloadV1Result = runtime_voltaire_type(NewPayloadV1VoltaireResult);
+/// Request payload type for `engine_newPayloadV2`.
 pub const NewPayloadV2Params = runtime_voltaire_type(NewPayloadV2VoltaireParams);
+/// Response payload type for `engine_newPayloadV2`.
 pub const NewPayloadV2Result = runtime_voltaire_type(NewPayloadV2VoltaireResult);
+/// Request payload type for `engine_newPayloadV3`.
 pub const NewPayloadV3Params = runtime_voltaire_type(NewPayloadV3VoltaireParams);
+/// Response payload type for `engine_newPayloadV3`.
 pub const NewPayloadV3Result = runtime_voltaire_type(NewPayloadV3VoltaireResult);
+/// Request payload type for `engine_newPayloadV4`.
 pub const NewPayloadV4Params = runtime_voltaire_type(NewPayloadV4VoltaireParams);
+/// Response payload type for `engine_newPayloadV4`.
 pub const NewPayloadV4Result = runtime_voltaire_type(NewPayloadV4VoltaireResult);
+/// Request payload type for `engine_newPayloadV5`.
 pub const NewPayloadV5Params = runtime_voltaire_type(NewPayloadV5VoltaireParams);
+/// Response payload type for `engine_newPayloadV5`.
 pub const NewPayloadV5Result = runtime_voltaire_type(NewPayloadV5VoltaireResult);
+/// Request payload type for `engine_forkchoiceUpdatedV1`.
 pub const ForkchoiceUpdatedV1Params = runtime_voltaire_type(ForkchoiceUpdatedV1VoltaireParams);
+/// Response payload type for `engine_forkchoiceUpdatedV1`.
 pub const ForkchoiceUpdatedV1Result = runtime_voltaire_type(ForkchoiceUpdatedV1VoltaireResult);
+/// Request payload type for `engine_forkchoiceUpdatedV2`.
 pub const ForkchoiceUpdatedV2Params = runtime_voltaire_type(ForkchoiceUpdatedV2VoltaireParams);
+/// Response payload type for `engine_forkchoiceUpdatedV2`.
 pub const ForkchoiceUpdatedV2Result = runtime_voltaire_type(ForkchoiceUpdatedV2VoltaireResult);
+/// Request payload type for `engine_forkchoiceUpdatedV3`.
 pub const ForkchoiceUpdatedV3Params = runtime_voltaire_type(ForkchoiceUpdatedV3VoltaireParams);
+/// Response payload type for `engine_forkchoiceUpdatedV3`.
 pub const ForkchoiceUpdatedV3Result = runtime_voltaire_type(ForkchoiceUpdatedV3VoltaireResult);
+/// Request payload type for `engine_getPayloadV1`.
 pub const GetPayloadV1Params = runtime_voltaire_type(GetPayloadV1VoltaireParams);
+/// Response payload type for `engine_getPayloadV1`.
 pub const GetPayloadV1Result = runtime_voltaire_type(GetPayloadV1VoltaireResult);
+/// Request payload type for `engine_getPayloadV2`.
 pub const GetPayloadV2Params = runtime_voltaire_type(GetPayloadV2VoltaireParams);
+/// Response payload type for `engine_getPayloadV2`.
 pub const GetPayloadV2Result = runtime_voltaire_type(GetPayloadV2VoltaireResult);
+/// Request payload type for `engine_getPayloadV3`.
 pub const GetPayloadV3Params = runtime_voltaire_type(GetPayloadV3VoltaireParams);
+/// Response payload type for `engine_getPayloadV3`.
 pub const GetPayloadV3Result = runtime_voltaire_type(GetPayloadV3VoltaireResult);
+/// Request payload type for `engine_getPayloadV4`.
 pub const GetPayloadV4Params = runtime_voltaire_type(GetPayloadV4VoltaireParams);
+/// Response payload type for `engine_getPayloadV4`.
 pub const GetPayloadV4Result = runtime_voltaire_type(GetPayloadV4VoltaireResult);
+/// Request payload type for `engine_getPayloadV5`.
 pub const GetPayloadV5Params = runtime_voltaire_type(GetPayloadV5VoltaireParams);
+/// Response payload type for `engine_getPayloadV5`.
 pub const GetPayloadV5Result = runtime_voltaire_type(GetPayloadV5VoltaireResult);
+/// Request payload type for `engine_getPayloadV6`.
 pub const GetPayloadV6Params = runtime_voltaire_type(GetPayloadV6VoltaireParams);
+/// Response payload type for `engine_getPayloadV6`.
 pub const GetPayloadV6Result = runtime_voltaire_type(GetPayloadV6VoltaireResult);
+/// Request payload type for `engine_getPayloadBodiesByHashV1`.
 pub const GetPayloadBodiesByHashV1Params = runtime_voltaire_type(GetPayloadBodiesByHashV1VoltaireParams);
+/// Response payload type for `engine_getPayloadBodiesByHashV1`.
 pub const GetPayloadBodiesByHashV1Result = runtime_voltaire_type(GetPayloadBodiesByHashV1VoltaireResult);
+/// Request payload type for `engine_getPayloadBodiesByRangeV1`.
 pub const GetPayloadBodiesByRangeV1Params = runtime_voltaire_type(GetPayloadBodiesByRangeV1VoltaireParams);
+/// Response payload type for `engine_getPayloadBodiesByRangeV1`.
 pub const GetPayloadBodiesByRangeV1Result = runtime_voltaire_type(GetPayloadBodiesByRangeV1VoltaireResult);
+/// Request payload type for `engine_getBlobsV1`.
 pub const GetBlobsV1Params = runtime_voltaire_type(GetBlobsV1VoltaireParams);
+/// Response payload type for `engine_getBlobsV1`.
 pub const GetBlobsV1Result = runtime_voltaire_type(GetBlobsV1VoltaireResult);
+/// Request payload type for `engine_getBlobsV2`.
 pub const GetBlobsV2Params = runtime_voltaire_type(GetBlobsV2VoltaireParams);
+/// Response payload type for `engine_getBlobsV2`.
 pub const GetBlobsV2Result = runtime_voltaire_type(GetBlobsV2VoltaireResult);
 
 fn dispatch_result(comptime Method: type) type {
