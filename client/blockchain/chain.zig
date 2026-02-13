@@ -371,6 +371,30 @@ pub fn common_ancestor_hash_local(
     }
 }
 
+/// Returns true when candidate head is on a different branch than canonical head.
+///
+/// Semantics:
+/// - Uses local store only and never fetches from fork cache.
+/// - Returns `false` when canonical head is unavailable locally.
+/// - Returns `false` when candidate is equal to canonical head, extends it, or
+///   is its ancestor.
+/// - Returns `true` only when both heads have a common ancestor that is neither
+///   head (i.e., actual fork divergence that implies reorg when adopted).
+pub fn has_canonical_divergence_local(
+    chain: *Chain,
+    candidate_head: Hash.Hash,
+) bool {
+    const canonical_number = head_number(chain) orelse return false;
+    const canonical_head = canonical_hash(chain, canonical_number) orelse return false;
+
+    if (Hash.equals(&canonical_head, &candidate_head)) return false;
+
+    const ancestor = common_ancestor_hash_local(chain, canonical_head, candidate_head) orelse return false;
+    if (Hash.equals(&ancestor, &canonical_head)) return false; // candidate extends current head
+    if (Hash.equals(&ancestor, &candidate_head)) return false; // candidate is an older canonical ancestor
+    return true;
+}
+
 test "Chain - common_ancestor_hash_local returns null when either missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -465,6 +489,119 @@ test "Chain - common_ancestor_hash_local returns null when ancestry missing loca
     try chain.putBlock(b);
 
     try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+}
+
+test "Chain - has_canonical_divergence_local returns false for empty canonical chain" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, Hash.ZERO));
+}
+
+test "Chain - has_canonical_divergence_local returns false for current canonical head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, genesis.hash));
+}
+
+test "Chain - has_canonical_divergence_local returns false when candidate extends canonical head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, b1.hash));
+}
+
+test "Chain - has_canonical_divergence_local returns true for forked candidate head" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1a = primitives.BlockHeader.init();
+    h1a.number = 1;
+    h1a.parent_hash = genesis.hash;
+    h1a.timestamp = 1;
+    const b1a = try Block.from(&h1a, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1a);
+    try chain.setCanonicalHead(b1a.hash);
+
+    var h1b = primitives.BlockHeader.init();
+    h1b.number = 1;
+    h1b.parent_hash = genesis.hash;
+    h1b.timestamp = 2;
+    const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1b);
+
+    try std.testing.expect(has_canonical_divergence_local(&chain, b1b.hash));
+}
+
+test "Chain - has_canonical_divergence_local returns false when candidate is canonical ancestor" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+    try chain.setCanonicalHead(b1.hash);
+
+    var h2 = primitives.BlockHeader.init();
+    h2.number = 2;
+    h2.parent_hash = b1.hash;
+    h2.timestamp = 2;
+    const b2 = try Block.from(&h2, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b2);
+    try chain.setCanonicalHead(b2.hash);
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, b1.hash));
+}
+
+test "Chain - has_canonical_divergence_local returns false when ancestry missing locally" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var orphan_h = primitives.BlockHeader.init();
+    orphan_h.number = 9;
+    orphan_h.parent_hash = [_]u8{0x33} ** 32;
+    orphan_h.timestamp = 9;
+    const orphan = try Block.from(&orphan_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(orphan);
+
+    try std.testing.expect(!has_canonical_divergence_local(&chain, orphan.hash));
 }
 
 /// Generic, comptime-injected head hash reader for any chain-like type.

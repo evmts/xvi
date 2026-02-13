@@ -38,6 +38,8 @@ pub const block_hash_by_number_local = chain.block_hash_by_number_local;
 pub const last_256_block_hashes_local = chain.last_256_block_hashes_local;
 /// Local-only lowest common ancestor hash lookup between two blocks.
 pub const common_ancestor_hash_local = chain.common_ancestor_hash_local;
+/// Local-only canonical divergence check between current head and candidate head.
+pub const has_canonical_divergence_local = chain.has_canonical_divergence_local;
 /// Generic comptime DI helpers for head reads.
 pub const head_hash_of = chain.head_hash_of;
 pub const head_block_of = chain.head_block_of;
