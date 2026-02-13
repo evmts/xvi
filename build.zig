@@ -556,6 +556,17 @@ pub fn build(b: *std.Build) void {
     const install_client_txpool_bench = b.addInstallArtifact(client_txpool_bench, .{});
     bench_txpool_step.dependOn(&install_client_txpool_bench.step);
 
+    const client_txpool_bench_tests = b.addTest(.{
+        .root_module = client_txpool_bench_mod,
+    });
+
+    const run_client_txpool_bench_tests = b.addRunArtifact(client_txpool_bench_tests);
+    test_step.dependOn(&run_client_txpool_bench_tests.step);
+    unit_test_step.dependOn(&run_client_txpool_bench_tests.step);
+
+    const client_txpool_bench_test_step = b.step("test-txpool-bench", "Run txpool benchmark module tests");
+    client_txpool_bench_test_step.dependOn(&run_client_txpool_bench_tests.step);
+
     // Add execution-specs tests
     // Build option to force refreshing the generated Python fixtures
     const refresh_specs_opt = b.option(bool, "refresh-specs", "Force refresh of execution-specs fixtures");

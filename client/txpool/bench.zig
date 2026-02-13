@@ -12,6 +12,7 @@
 ///   zig build bench-txpool                         # Debug timings (sanity)
 ///   zig build bench-txpool -Doptimize=ReleaseFast  # Release timings (use these)
 const std = @import("std");
+const builtin = @import("builtin");
 const bench = @import("bench_utils");
 const primitives = @import("primitives");
 const txpool = @import("root.zig");
@@ -32,6 +33,30 @@ const N_ADMISSION_SMALL: usize = 5_000; // Per-type sample size
 const N_ADMISSION_MED: usize = 20_000; // Per-type sample size
 const N_SORT: usize = 50_000; // Fee tuples for sort bench
 const N_LOOKUP: usize = 50_000_000; // Interface lookups for is_known/contains_tx
+
+const BenchWorkload = struct {
+    admission_small: usize,
+    admission_medium: usize,
+    sort: usize,
+    lookup: usize,
+};
+
+fn benchmark_workload() BenchWorkload {
+    if (builtin.is_test) {
+        return .{
+            .admission_small = 16,
+            .admission_medium = 32,
+            .sort = 128,
+            .lookup = 1_024,
+        };
+    }
+    return .{
+        .admission_small = N_ADMISSION_SMALL,
+        .admission_medium = N_ADMISSION_MED,
+        .sort = N_SORT,
+        .lookup = N_LOOKUP,
+    };
+}
 
 fn mk_addr(byte: u8) Address {
     return .{ .bytes = [_]u8{byte} ++ [_]u8{0} ** 19 };
@@ -388,6 +413,8 @@ fn bench_lookup_dispatch(n: usize) !struct { is_known: bench.BenchResult, contai
 
 /// Benchmark executable entrypoint for txpool admission/sorting hot paths.
 pub fn main() !void {
+    const workload = benchmark_workload();
+
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
     std.debug.print("  Guillotine Phase-5-TxPool Benchmarks\n", .{});
     std.debug.print("  Warmup: implicit in generation; timings averaged per run\n", .{});
@@ -396,10 +423,10 @@ pub fn main() !void {
     // Admission (fits_size_limits) hot path.
     std.debug.print("--- Admission: fits_size_limits ---\n", .{});
     {
-        const r_small = try bench_admission(N_ADMISSION_SMALL);
+        const r_small = try bench_admission(workload.admission_small);
         bench.print_result(r_small);
 
-        const r_med = try bench_admission(N_ADMISSION_MED);
+        const r_med = try bench_admission(workload.admission_medium);
         bench.print_result(r_med);
     }
     std.debug.print("\n", .{});
@@ -407,10 +434,10 @@ pub fn main() !void {
     // Comparator-only and full sort
     std.debug.print("--- Fee Market Priority Sorting ---\n", .{});
     {
-        const r_cmp = try bench_fee_compare_only(N_SORT);
+        const r_cmp = try bench_fee_compare_only(workload.sort);
         bench.print_result(r_cmp);
 
-        const r_sort = try bench_fee_sort(N_SORT);
+        const r_sort = try bench_fee_sort(workload.sort);
         bench.print_result(r_sort);
     }
     std.debug.print("\n", .{});
@@ -418,10 +445,14 @@ pub fn main() !void {
     // TxPool vtable lookup dispatch hot path
     std.debug.print("--- TxPool Lookup Dispatch ---\n", .{});
     {
-        const r_lookup = try bench_lookup_dispatch(N_LOOKUP);
+        const r_lookup = try bench_lookup_dispatch(workload.lookup);
         bench.print_result(r_lookup.is_known);
         bench.print_result(r_lookup.contains_tx);
     }
 
     std.debug.print("\n" ++ "=" ** 100 ++ "\n\n", .{});
+}
+
+test "txpool benchmark main entrypoint is directly executable" {
+    try main();
 }
