@@ -19,28 +19,29 @@ fn is_legacy_fee_fields(max_fee: MaxFeePerGas, max_priority: MaxPriorityFeePerGa
     return max_fee.isZero() and max_priority.isZero();
 }
 
-fn resolve_max_fee(
+const ResolvedFeeTuple = struct {
+    max_fee: MaxFeePerGas,
+    max_priority: MaxPriorityFeePerGas,
+};
+
+fn resolve_fee_tuple(
     gas_price: GasPrice,
     max_fee: MaxFeePerGas,
-    is_legacy: bool,
-) MaxFeePerGas {
-    if (is_legacy) {
-        return MaxFeePerGas.fromU256(gas_price.toWei());
-    }
-
-    return max_fee;
-}
-
-fn resolve_max_priority(
-    gas_price: GasPrice,
     max_priority: MaxPriorityFeePerGas,
     is_legacy: bool,
-) MaxPriorityFeePerGas {
-    if (is_legacy) {
-        return MaxPriorityFeePerGas.fromU256(gas_price.toWei());
+) ResolvedFeeTuple {
+    if (!is_legacy) {
+        return .{
+            .max_fee = max_fee,
+            .max_priority = max_priority,
+        };
     }
 
-    return max_priority;
+    const legacy_fee_wei = gas_price.toWei();
+    return .{
+        .max_fee = MaxFeePerGas.fromU256(legacy_fee_wei),
+        .max_priority = MaxPriorityFeePerGas.fromU256(legacy_fee_wei),
+    };
 }
 
 /// Compare two fee tuples by priority (descending).
@@ -69,33 +70,30 @@ pub fn compare_fee_market_priority(
         const x_is_legacy = is_legacy_fee_fields(x_max_fee_per_gas, x_max_priority_fee_per_gas);
         const y_is_legacy = is_legacy_fee_fields(y_max_fee_per_gas, y_max_priority_fee_per_gas);
 
-        const x_max_fee = resolve_max_fee(x_gas_price, x_max_fee_per_gas, x_is_legacy);
-        const y_max_fee = resolve_max_fee(y_gas_price, y_max_fee_per_gas, y_is_legacy);
-
-        const x_max_priority = resolve_max_priority(x_gas_price, x_max_priority_fee_per_gas, x_is_legacy);
-        const y_max_priority = resolve_max_priority(y_gas_price, y_max_priority_fee_per_gas, y_is_legacy);
+        const x_fee = resolve_fee_tuple(x_gas_price, x_max_fee_per_gas, x_max_priority_fee_per_gas, x_is_legacy);
+        const y_fee = resolve_fee_tuple(y_gas_price, y_max_fee_per_gas, y_max_priority_fee_per_gas, y_is_legacy);
 
         const base_fee_wei = base_fee.toWei();
 
         const x_allowed: U256 = blk: {
-            if (x_max_fee.toWei().cmp(base_fee_wei) == .lt) break :blk x_max_fee.toWei();
-            break :blk x_max_fee.toWei().wrapping_sub(base_fee_wei);
+            if (x_fee.max_fee.toWei().cmp(base_fee_wei) == .lt) break :blk x_fee.max_fee.toWei();
+            break :blk x_fee.max_fee.toWei().wrapping_sub(base_fee_wei);
         };
         const y_allowed: U256 = blk: {
-            if (y_max_fee.toWei().cmp(base_fee_wei) == .lt) break :blk y_max_fee.toWei();
-            break :blk y_max_fee.toWei().wrapping_sub(base_fee_wei);
+            if (y_fee.max_fee.toWei().cmp(base_fee_wei) == .lt) break :blk y_fee.max_fee.toWei();
+            break :blk y_fee.max_fee.toWei().wrapping_sub(base_fee_wei);
         };
 
-        const x_eff_prio: U256 = if (x_max_priority.toWei().cmp(x_allowed) == .lt) x_max_priority.toWei() else x_allowed;
-        const y_eff_prio: U256 = if (y_max_priority.toWei().cmp(y_allowed) == .lt) y_max_priority.toWei() else y_allowed;
+        const x_eff_prio: U256 = if (x_fee.max_priority.toWei().cmp(x_allowed) == .lt) x_fee.max_priority.toWei() else x_allowed;
+        const y_eff_prio: U256 = if (y_fee.max_priority.toWei().cmp(y_allowed) == .lt) y_fee.max_priority.toWei() else y_allowed;
 
         const x_effective: U256 = blk: {
             const candidate = base_fee_wei.wrapping_add(x_eff_prio);
-            break :blk if (candidate.cmp(x_max_fee.toWei()) == .gt) x_max_fee.toWei() else candidate;
+            break :blk if (candidate.cmp(x_fee.max_fee.toWei()) == .gt) x_fee.max_fee.toWei() else candidate;
         };
         const y_effective: U256 = blk: {
             const candidate = base_fee_wei.wrapping_add(y_eff_prio);
-            break :blk if (candidate.cmp(y_max_fee.toWei()) == .gt) y_max_fee.toWei() else candidate;
+            break :blk if (candidate.cmp(y_fee.max_fee.toWei()) == .gt) y_fee.max_fee.toWei() else candidate;
         };
 
         switch (x_effective.cmp(y_effective)) {
@@ -104,7 +102,7 @@ pub fn compare_fee_market_priority(
             .eq => {},
         }
 
-        switch (x_max_fee.compare(y_max_fee)) {
+        switch (x_fee.max_fee.compare(y_fee.max_fee)) {
             .lt => return 1,
             .gt => return -1,
             .eq => return 0,
