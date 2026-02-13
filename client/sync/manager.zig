@@ -156,6 +156,14 @@ pub fn SyncManager(comptime Feeds: type) type {
 
     return struct {
         const Self = @This();
+        const StartError = feed_start_error_set(@FieldType(Feeds, "full")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_blocks")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_state")) ||
+            feed_start_error_set(@FieldType(Feeds, "snap")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_headers")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_bodies")) ||
+            feed_start_error_set(@FieldType(Feeds, "fast_receipts")) ||
+            SyncManagerLifecycle.Error;
 
         config: SyncManagerStartConfig,
         feeds: *Feeds,
@@ -165,7 +173,7 @@ pub fn SyncManager(comptime Feeds: type) type {
         ///
         /// Any feed start failure is returned to the caller; no errors are
         /// swallowed, and later feeds are not started after a failure.
-        pub fn start(self: *Self) anyerror!u32 {
+        pub fn start(self: *Self) StartError!u32 {
             const mask = startup_feed_mask(self.config);
 
             try start_feed_if_enabled(mask, SyncStartupFeed.full, &self.feeds.full);
@@ -180,7 +188,7 @@ pub fn SyncManager(comptime Feeds: type) type {
             return mask;
         }
 
-        fn start_lifecycle_hooks(self: *Self) anyerror!void {
+        fn start_lifecycle_hooks(self: *Self) SyncManagerLifecycle.Error!void {
             const lifecycle = self.lifecycle orelse return;
 
             if (self.config.exit_on_synced) {
@@ -255,12 +263,28 @@ fn require_feed_start_signature(comptime Feed: type, comptime field_name: []cons
     }
 }
 
-fn start_feed_if_enabled(mask: u32, flag: u32, feed_ptr: anytype) anyerror!void {
+fn feed_start_error_set(comptime Feed: type) type {
+    const start_ret = @typeInfo(@TypeOf(Feed.start)).@"fn".return_type.?;
+    if (start_ret == void) return error{};
+
+    const start_ret_info = @typeInfo(start_ret);
+    return switch (start_ret_info) {
+        .error_union => |error_union| error_union.error_set,
+        else => @compileError("Feed.start must return void or an error union"),
+    };
+}
+
+fn FeedStartError(comptime FeedPtr: type) type {
+    const Feed = @typeInfo(FeedPtr).pointer.child;
+    return feed_start_error_set(Feed);
+}
+
+fn start_feed_if_enabled(mask: u32, flag: u32, feed_ptr: anytype) FeedStartError(@TypeOf(feed_ptr))!void {
     if (!has_flag(mask, flag)) return;
     try call_feed_start(feed_ptr);
 }
 
-fn call_feed_start(feed_ptr: anytype) anyerror!void {
+fn call_feed_start(feed_ptr: anytype) FeedStartError(@TypeOf(feed_ptr))!void {
     const Feed = @typeInfo(@TypeOf(feed_ptr)).pointer.child;
     const start_ret = @typeInfo(@TypeOf(Feed.start)).@"fn".return_type.?;
 
