@@ -361,7 +361,10 @@ pub fn common_ancestor_hash_local(
     }
 
     // Walk in lockstep until hashes match or ancestry is missing locally.
-    while (true) {
+    // In a valid chain, both sides can move up at most `ha + 1` times.
+    // This guarantees termination even under malformed/cyclic ancestry.
+    var remaining_hops = ha + 1;
+    while (remaining_hops > 0) : (remaining_hops -= 1) {
         if (Hash.equals(&ah, &bh)) return ah;
         const ab = get_block_local(chain, ah) orelse return null;
         const bb = get_block_local(chain, bh) orelse return null;
@@ -369,6 +372,7 @@ pub fn common_ancestor_hash_local(
         ah = ab.header.parent_hash;
         bh = bb.header.parent_hash;
     }
+    return null;
 }
 
 /// Returns true when candidate head is on a different branch than canonical head.
@@ -498,6 +502,31 @@ test "Chain - common_ancestor_hash_local returns null when ancestry missing loca
     h_b.number = 7;
     h_b.parent_hash = [_]u8{0x22} ** 32;
     const b = try Block.from(&h_b, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b);
+
+    try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
+}
+
+test "Chain - common_ancestor_hash_local returns null for cyclic ancestry" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    // Malformed blocks: parent links point to themselves.
+    var h_a = primitives.BlockHeader.init();
+    h_a.number = 9;
+    h_a.timestamp = 1;
+    const a0 = try Block.from(&h_a, &primitives.BlockBody.init(), allocator);
+    var a = a0;
+    a.header.parent_hash = a.hash;
+    try chain.putBlock(a);
+
+    var h_b = primitives.BlockHeader.init();
+    h_b.number = 9;
+    h_b.timestamp = 2;
+    const b0 = try Block.from(&h_b, &primitives.BlockBody.init(), allocator);
+    var b = b0;
+    b.header.parent_hash = b.hash;
     try chain.putBlock(b);
 
     try std.testing.expect(common_ancestor_hash_local(&chain, a.hash, b.hash) == null);
