@@ -17,15 +17,12 @@ const ForkBlockCache = blockchain.ForkBlockCache;
 ///
 /// Semantics:
 /// - Reads the current head block number; if none is set, returns null.
-/// - Fetches the canonical block for that number and derives the hash from the
-///   returned block (single-source snapshot) rather than consulting the
-///   number→hash map separately.
+/// - Resolves via the local canonical number->hash map (hash-only path), so
+///   hot hash reads avoid full block fetch overhead.
 /// - Race‑resilient snapshot: if the head changes during the read, a consistent
-///   snapshot from the initial head number is returned rather than a stale mix
-///   of values. This mirrors Nethermind’s snapshot semantics.
+///   snapshot from the initial head number is returned rather than a stale mix.
 pub fn head_hash(chain: *Chain) !?Hash.Hash {
-    // Delegate to the generic helper to avoid duplication and propagate errors.
-    return try head_hash_of(chain);
+    return head_hash_snapshot_local(chain);
 }
 
 /// Returns the canonical head block if present.
