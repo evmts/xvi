@@ -36,6 +36,7 @@ pub fn validate_uncompressed_length(frame_data: []const u8) error{
             return value;
         }
 
+        if (idx + 1 == MaxLengthVarintBytes) return error.LengthVarintTooLong;
         shift += 7;
     }
 
@@ -70,6 +71,10 @@ test "validate_uncompressed_length rejects truncated preamble and long varint" {
     try std.testing.expectError(
         error.MissingLengthHeader,
         validate_uncompressed_length(&[_]u8{0x80}),
+    );
+    try std.testing.expectError(
+        error.LengthVarintTooLong,
+        validate_uncompressed_length(&[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80 }),
     );
     try std.testing.expectError(
         error.LengthVarintTooLong,
@@ -110,5 +115,12 @@ test "guard_before_decompression fails fast on oversized payload metadata" {
     try std.testing.expectError(
         error.UncompressedLengthTooLarge,
         guard_before_decompression(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
+    );
+}
+
+test "guard_before_decompression rejects continuation-only five-byte varint" {
+    try std.testing.expectError(
+        error.LengthVarintTooLong,
+        guard_before_decompression(&[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80 }),
     );
 }
