@@ -1,129 +1,166 @@
-# [Pass 2/5] Phase 8: Networking (devp2p) -- Implementation Context
+# [pass 2/5] phase-8-networking (Networking (devp2p))
 
-## Phase Goal
+## Phase Goal (from PRD)
 
-Implement devp2p networking (RLPx transport, discv4/v5 discovery, eth/68+ and snap/1 capabilities) for peer communication. This phase wires protocol framing, handshakes, capability negotiation, and message encoding.
+Source: `prd/GUILLOTINE_CLIENT_PLAN.md`
 
-**Key Components (from plan)**:
-- `client/net/rlpx.zig` -- RLPx transport
-- `client/net/discovery.zig` -- discv4/v5 discovery
-- `client/net/eth.zig` -- eth protocol (status, headers, bodies, tx exchange)
+- Phase: `phase-8-networking`
+- Goal: implement devp2p networking for peer communication.
+- Planned components:
+  - `client/net/rlpx.zig` (RLPx transport)
+  - `client/net/discovery.zig` (discv4/v5)
+  - `client/net/eth.zig` (eth protocol)
+- Architectural reference target:
+  - `nethermind/src/Nethermind/Nethermind.Network/`
 
----
+## Relevant Specs (from spec map)
 
-## 1. Specs (devp2p/)
+Source: `prd/ETHEREUM_SPECS_REFERENCE.md`
 
-### RLPx transport
+Phase 8 points to:
 - `devp2p/rlpx.md`
-  - RLPx protocol v5 over TCP.
-  - ECIES handshake using secp256k1; derives `aes-secret` and `mac-secret`.
-  - Framing: header and frame ciphertext with per-direction MAC states.
-  - Capability multiplexing uses message ID space; hello is uncompressed; all other messages Snappy compressed.
-  - Enforce max uncompressed payload size (16 MiB) by checking Snappy length header.
-
-### ETH capability
 - `devp2p/caps/eth.md`
-  - Current protocol version listed as eth/69.
-  - Session is active only after both sides exchange Status message.
-  - Message size limits: RLPx 16.7 MiB hard limit, typical soft limit ~10 MiB.
-  - Chain sync uses GetBlockHeaders/Bodies; receipts via GetReceipts during state sync.
-  - Post-merge note: block propagation via eth is deprecated for PoS networks.
-
-### SNAP capability
 - `devp2p/caps/snap.md`
-  - snap/1 runs side-by-side with eth, not standalone.
-  - Allows account range, storage range, and bytecode retrieval with proofs.
-  - Key requirement: peers must respond, even if returning empty data when state root is unavailable.
-
-### Discovery v4
 - `devp2p/discv4.md`
-  - UDP packets signed by secp256k1 key; packet header includes hash and signature.
-  - Kademlia routing with k-buckets (k=16), endpoint proof by recent pong (12h window).
-  - Packet types: Ping, Pong, FindNode, Neighbors, ENRRequest, ENRResponse.
-
-### Discovery v5
 - `devp2p/discv5/discv5.md`
-  - v5.1 spec overview; wire/theory/rationale split into `discv5-wire.md`, `discv5-theory.md`, `discv5-rationale.md`.
-  - Encrypted communication, topic advertisements, extensible node identity.
-
-### ENR
 - `devp2p/enr.md`
-  - ENR format: RLP list `[signature, seq, k, v, ...]` with key ordering.
-  - Max record size 300 bytes.
-  - v4 identity scheme: keccak256(content) -> secp256k1 signature.
-  - Text form `enr:` + URL-safe base64 (no padding).
 
----
+### Direct spec notes (read in this pass)
 
-## 2. Nethermind Architecture References
+- `devp2p/rlpx.md`
+  - RLPx v5 over TCP.
+  - ECIES handshake with secp256k1, ECDH-derived `aes-secret` and `mac-secret`.
+  - Frame format and MAC update rules are strict; ingress MAC should be verified before decrypting frame components.
+  - `Hello` is uncompressed; following messages are Snappy-compressed.
+  - Reject decompressed payloads above 16 MiB.
 
-**Primary module**:
-- `nethermind/src/Nethermind/Nethermind.Network/` (overall networking architecture and protocol handlers)
+- `devp2p/caps/eth.md`
+  - Current protocol version in spec is `eth/69`.
+  - ETH session is active only after both sides exchange `Status`.
+  - RLPx hard cap is ~16.7 MiB; clients should enforce lower soft caps.
+  - Defines tx exchange flow: `NewPooledTransactionHashes`, `GetPooledTransactions`, `PooledTransactions`, `Transactions`.
 
-**Db module (requested listing for cross-cutting storage)**:
-- `nethermind/src/Nethermind/Nethermind.Db/` files (from `ls`):
-  - `DbNames.cs` (includes `DiscoveryNodes`, `DiscoveryV5Nodes`, `Peers` DB names)
-  - `DbProvider.cs`, `IDbProvider.cs`, `IDb.cs`, `IColumnsDb.cs`, `IFullDb.cs`
-  - `MemDb.cs`, `MemDbFactory.cs`, `NullDb.cs`, `ReadOnlyDb.cs`
-  - `RocksDbSettings.cs`, `RocksDbMergeEnumerator.cs`
-  - `Metrics.cs`, `DbExtensions.cs`, `DbProviderExtensions.cs`
-  - `ReceiptsColumns.cs`, `BlobTxsColumns.cs`, `MetadataDbKeys.cs`
+- `devp2p/caps/snap.md`
+  - `snap/1` is a satellite protocol to `eth`, not standalone.
+  - State snapshot range retrieval must always respond.
+  - If requested state root is unavailable, peer must return an empty reply (not silence).
 
-`DbNames.cs` defines discovery and peer storage names: `discoveryNodes`, `discoveryV5Nodes`, `peers`.
+- `devp2p/discv4.md`
+  - UDP protocol with signed packets and 1280-byte max packet size.
+  - Kademlia-like table with `k=16`.
+  - Endpoint proof requirement: valid recent pong (12h window) before sending amplification-prone responses.
+  - Packet set includes `Ping`, `Pong`, `FindNode`, `Neighbors`, `ENRRequest`, `ENRResponse`.
 
----
+- `devp2p/discv5/discv5.md`
+  - Discovery v5.1 overview.
+  - Main details split into:
+    - `devp2p/discv5/discv5-wire.md`
+    - `devp2p/discv5/discv5-theory.md`
+    - `devp2p/discv5/discv5-rationale.md`
+  - Highlights: encrypted communication, topic advertisement/query support, extensible identity crypto.
 
-## 3. Voltaire APIs (must use, no custom types)
+- `devp2p/enr.md`
+  - ENR canonical RLP: `[signature, seq, k, v, ...]`.
+  - Key/value pairs must be sorted and unique.
+  - Max encoded ENR size is 300 bytes.
+  - Text form is `enr:` + URL-safe base64 without padding.
+  - v4 identity uses keccak256(content) + secp256k1 signature.
 
-**Primitives** (`/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/`):
-- `PeerId.PeerId` -- 64-byte public key node ID; enode parsing/formatting helpers
-- `PeerInfo.PeerInfo` and `PeerInfo.NetworkInfo` -- peer metadata and connection info
-- `ProtocolVersion.ProtocolVersion` -- capability versioning (eth/xx, snap/1)
-- `HandshakeRole.HandshakeRole` -- initiator vs recipient
-- `Rlp` -- RLP encode/decode for handshake, p2p, eth, snap, discv4 packets
-- `Base64` -- ENR text encoding
-- `PublicKey`, `PrivateKey`, `Signature`, `Hash`, `Bytes`, `Bytes32` -- protocol payloads
-- `SnappyParameters.MaxSnappyLength` -- 16 MiB uncompressed cap
+## Nethermind Reference Inventory (requested listing)
 
-**Crypto** (`/Users/williamcory/voltaire/packages/voltaire-zig/src/crypto/`):
-- `secp256k1.zig` -- node identity and signatures
-- `hash.zig`, `keccak256_*` -- RLPx/ENR hashing
-- `sha256_accel.zig` -- RLPx HMAC-SHA256
+Directory listed: `nethermind/src/Nethermind/Nethermind.Db/`
 
----
+Key files for cross-cutting networking persistence context:
+- `DbNames.cs`
+- `DbProvider.cs`
+- `IDb.cs`
+- `IDbProvider.cs`
+- `IColumnsDb.cs`
+- `MemDb.cs`
+- `ReadOnlyDb.cs`
+- `RocksDbSettings.cs`
+- `Metrics.cs`
+- `MetadataDbKeys.cs`
 
-## 4. Existing Zig Files (integration points)
+`DbNames.cs` includes networking-relevant DB names:
+- `DiscoveryNodes = "discoveryNodes"`
+- `DiscoveryV5Nodes = "discoveryV5Nodes"`
+- `PeersDb = "peers"`
 
-- `src/host.zig` -- HostInterface vtable pattern used for comptime DI; mirror this pattern for networking interfaces.
+## Voltaire APIs (must reuse; no custom duplicates)
 
----
+Directory listed: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 
-## 5. Test Fixtures and References
+Top-level modules:
+- `blockchain/`
+- `crypto/`
+- `evm/`
+- `jsonrpc/`
+- `precompiles/`
+- `primitives/`
+- `state-manager/`
 
-**devp2p tests**:
-- `hive/` (devp2p and sync scenarios)
+From `/Users/williamcory/voltaire/packages/voltaire-zig/src/primitives/root.zig`, networking-relevant exports:
+- `PeerId`
+- `PeerInfo`
+- `NodeInfo`
+- `ProtocolVersion`
+- `NetworkId`
+- `SyncStatus`
+- `Rlp`
+- `Base64`
+- `Hash`
+- `Bytes`
+- `Bytes32`
+- `PublicKey`
+- `PrivateKey`
+- `Signature`
+- `Address`
 
-**Ethereum test fixtures** (directory listing from `ethereum-tests/`):
+From `/Users/williamcory/voltaire/packages/voltaire-zig/src/crypto/root.zig`, networking-relevant exports:
+- `secp256k1`
+- `Hash`
+- `SHA256_Accel`
+- `Keccak256_Accel`
+- `Crypto`
+
+## Existing Host Interface (resolved path)
+
+Requested path `src/host.zig` does not exist at repo root.
+
+Host interface found and read at:
+- `guillotine-mini/src/host.zig`
+
+`HostInterface` pattern summary:
+- Struct with `ptr: *anyopaque` and `vtable: *const VTable`.
+- Current methods:
+  - `getBalance` / `setBalance`
+  - `getCode` / `setCode`
+  - `getStorage` / `setStorage`
+  - `getNonce` / `setNonce`
+- This is the reference DI style to mirror for networking interfaces.
+
+## Ethereum Tests Fixture Paths (requested listing)
+
+Directories present under `ethereum-tests/`:
 - `ethereum-tests/ABITests`
 - `ethereum-tests/BasicTests`
 - `ethereum-tests/BlockchainTests`
 - `ethereum-tests/DifficultyTests`
 - `ethereum-tests/EOFTests`
 - `ethereum-tests/GenesisTests`
+- `ethereum-tests/JSONSchema`
 - `ethereum-tests/KeyStoreTests`
 - `ethereum-tests/LegacyTests`
 - `ethereum-tests/PoWTests`
 - `ethereum-tests/RLPTests`
 - `ethereum-tests/TransactionTests`
 - `ethereum-tests/TrieTests`
-- `ethereum-tests/JSONSchema`
 
----
+## Implementation Focus for Phase 8
 
-## 6. Notes for Implementation
-
-- RLPx framing and MAC updates are strict; verify MAC before decrypting header/body.
-- Snappy compression required after Hello; enforce uncompressed size limit.
-- Status exchange gates ETH session activation.
-- Discovery v4 relies on endpoint proof; v5 introduces encrypted packets and topic ads.
-- Store discovery nodes and peers in DB names aligned with Nethermind (see `DbNames.cs`).
+- Treat `devp2p/` files above as protocol authority before coding.
+- Keep capability/session activation semantics exact (`Status` gating, strict frame/auth rules).
+- Keep all networking models typed with Voltaire primitives.
+- Follow existing ptr+vtable dependency injection style from `guillotine-mini/src/host.zig`.
+- Use Nethermind structure as module-boundary reference only, implemented idiomatically in Zig.
