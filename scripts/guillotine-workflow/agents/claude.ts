@@ -1,7 +1,7 @@
 import { ToolLoopAgent as Agent, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { ClaudeCodeAgent } from "smithers";
-import { read, edit, bash, grep, write } from "smithers/tools";
+import { ClaudeCodeAgent } from "smithers-orchestrator";
+import { read, edit, bash, grep, write } from "smithers-orchestrator/tools";
 import type { Target } from "../targets";
 import { ZIG_TARGET } from "../targets";
 

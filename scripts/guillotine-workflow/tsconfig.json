@@ -4,9 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "smithers",
+    "jsxImportSource": "smithers-orchestrator",
     "strict": true,
     "esModuleInterop": true,
-    "types": ["bun-types"]
+    "skipLibCheck": true,
+    "types": ["bun-types", "@types/mdx", "@types/react"]
   }
 }

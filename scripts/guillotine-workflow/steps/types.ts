@@ -1,23 +1,14 @@
-import type { schema } from "../db";
-import type { SmithersCtx, OutputKey } from "smithers";
-import type { contextTable } from "../db/context";
-import type { implementTable } from "../db/implement";
-import type { testTable } from "../db/test-results";
-import type { reviewTable } from "../db/review";
-import type { reviewFixTable } from "../db/review-fix";
-import type { reviewResponseTable } from "../db/review-response";
-import type { benchmarkTable } from "../db/benchmark";
-import type { finalReviewTable } from "../db/final-review";
-import type { outputTable } from "../db/output";
+import type { SmithersCtx } from "smithers-orchestrator";
+import type { tables } from "../smithers";
 
-export type Ctx = SmithersCtx<typeof schema>;
+export type Ctx = SmithersCtx<any>;
 
-export type ContextRow = typeof contextTable.$inferSelect;
-export type ImplementRow = typeof implementTable.$inferSelect;
-export type TestRow = typeof testTable.$inferSelect;
-export type ReviewRow = typeof reviewTable.$inferSelect;
-export type ReviewFixRow = typeof reviewFixTable.$inferSelect;
-export type ReviewResponseRow = typeof reviewResponseTable.$inferSelect;
-export type BenchmarkRow = typeof benchmarkTable.$inferSelect;
-export type FinalReviewRow = typeof finalReviewTable.$inferSelect;
-export type OutputRow = typeof outputTable.$inferSelect;
+export type ContextRow = typeof tables.context.$inferSelect;
+export type ImplementRow = typeof tables.implement.$inferSelect;
+export type TestRow = typeof tables.test_results.$inferSelect;
+export type ReviewRow = typeof tables.review.$inferSelect;
+export type ReviewFixRow = typeof tables.review_fix.$inferSelect;
+export type ReviewResponseRow = typeof tables.review_response.$inferSelect;
+export type BenchmarkRow = typeof tables.benchmark.$inferSelect;
+export type FinalReviewRow = typeof tables.final_review.$inferSelect;
+export type OutputRow = typeof tables.output.$inferSelect;

@@ -65,8 +65,27 @@ export const finalReviewOutputSchema = z.object({
   reasoning: z.string().describe("Reasoning for the decision"),
 });
 
+export const workItemOutputSchema = z.object({
+  sourceType: z.enum(["review", "issue"]).describe("Type of external work item"),
+  sourcePath: z.string().describe("Path to external review/issue file"),
+  summary: z.string().describe("Why this external work item was used"),
+});
+
+export const workItemCleanupOutputSchema = z.object({
+  sourceType: z.enum(["review", "issue"]).describe("Type of external work item"),
+  sourcePath: z.string().describe("Path to external review/issue file"),
+  removed: z.boolean().describe("Whether the file was removed"),
+  summary: z.string().describe("Cleanup result"),
+});
+
+export const outputOutputSchema = z.object({
+  phasesCompleted: z.array(z.string()).nullable().describe("List of phases completed in this pass"),
+  totalIterations: z.number().int().describe("Total passes completed"),
+  summary: z.string().describe("Pass summary"),
+});
+
 // Map table names to their output schemas
-export const outputSchemas: Record<string, z.ZodObject<any>> = {
+export const outputSchemas = {
   context: contextOutputSchema,
   implement: implementOutputSchema,
   test_results: testOutputSchema,
@@ -76,4 +95,7 @@ export const outputSchemas: Record<string, z.ZodObject<any>> = {
   refactor: refactorOutputSchema,
   benchmark: benchmarkOutputSchema,
   final_review: finalReviewOutputSchema,
-};
+  work_item: workItemOutputSchema,
+  work_item_cleanup: workItemCleanupOutputSchema,
+  output: outputOutputSchema,
+} satisfies Record<string, z.ZodObject<any>>;

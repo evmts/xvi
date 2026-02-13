@@ -1,7 +1,7 @@
 import { ToolLoopAgent as Agent, stepCountIs } from "ai";
 import { openai } from "@ai-sdk/openai";
-import { CodexAgent } from "smithers";
-import { read, grep, bash } from "smithers/tools";
+import { CodexAgent } from "smithers-orchestrator";
+import { read, grep, bash } from "smithers-orchestrator/tools";
 import { getInstructions } from "./claude";
 import type { Target } from "../targets";
 import { ZIG_TARGET } from "../targets";
