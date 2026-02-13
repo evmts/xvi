@@ -138,6 +138,7 @@ fn decode_rlp_uint(item: Rlp.Data) FrameHeaderDecodeError!usize {
 
 fn parse_big_endian_usize(bytes: []const u8) FrameHeaderDecodeError!usize {
     if (bytes.len == 0) return error.InvalidHeaderData;
+    if (bytes[0] == 0) return error.InvalidHeaderData;
     var value: usize = 0;
     for (bytes) |byte| {
         const shifted = std.math.mul(usize, value, 256) catch return error.InvalidHeaderData;
