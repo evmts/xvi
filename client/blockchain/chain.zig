@@ -395,7 +395,9 @@ pub fn common_ancestor_hash_local(
     // In a valid chain, both sides can move up at most `ha + 1` times.
     // This guarantees termination even under malformed/cyclic ancestry.
     var level = ha;
-    var remaining_hops = std.math.add(u64, ha, 1) catch return null;
+    const remaining_hops_with_genesis, const hops_overflow = @addWithOverflow(ha, 1);
+    if (hops_overflow != 0) return null;
+    var remaining_hops = remaining_hops_with_genesis;
     while (remaining_hops > 0) : (remaining_hops -= 1) {
         const ab = get_block_local(chain, ah) orelse return null;
         const bb = get_block_local(chain, bh) orelse return null;
