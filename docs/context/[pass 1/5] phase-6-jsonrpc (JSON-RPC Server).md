@@ -1,24 +1,20 @@
-# [pass 1/5] phase-6-jsonrpc (JSON-RPC Server) - Focused Context
+# [pass 1/5] phase-6-jsonrpc (JSON-RPC Server) - focused context
 
-## 1) Phase Goal and Deliverables
-Source: `prd/GUILLOTINE_CLIENT_PLAN.md`
+## Phase goal (from `prd/GUILLOTINE_CLIENT_PLAN.md`)
+Phase 6 goal is to implement the Ethereum JSON-RPC server layer with:
+- `client/rpc/server.zig` (HTTP/WebSocket request pipeline)
+- `client/rpc/eth.zig` (`eth_*` methods)
+- `client/rpc/net.zig` (`net_*` methods)
+- `client/rpc/web3.zig` (`web3_*` methods)
 
-Phase 6 goal is to implement the Ethereum JSON-RPC API with these planned modules:
-- `client/rpc/server.zig` - HTTP/WebSocket entrypoint and request lifecycle
-- `client/rpc/eth.zig` - `eth_*` methods
-- `client/rpc/net.zig` - `net_*` methods
-- `client/rpc/web3.zig` - `web3_*` methods
-
-Primary architecture reference for module boundaries:
+Primary structural reference:
 - `nethermind/src/Nethermind/Nethermind.JsonRpc/`
 
-Primary method/schema reference:
+Primary method spec source:
 - `execution-apis/src/eth/`
 
-## 2) Specs to Read Before Implementation
-Source map: `prd/ETHEREUM_SPECS_REFERENCE.md`
-
-### JSON-RPC method and payload specs
+## Relevant specs read (from `prd/ETHEREUM_SPECS_REFERENCE.md`)
+### JSON-RPC method definitions
 - `execution-apis/src/eth/block.yaml`
 - `execution-apis/src/eth/client.yaml`
 - `execution-apis/src/eth/execute.yaml`
@@ -29,78 +25,70 @@ Source map: `prd/ETHEREUM_SPECS_REFERENCE.md`
 - `execution-apis/src/eth/submit.yaml`
 - `execution-apis/src/eth/transaction.yaml`
 
-### Shared RPC schema types (canonical wire format constraints)
+### Shared schema types for wire encoding
 - `execution-apis/src/schemas/base-types.yaml`
 - `execution-apis/src/schemas/block.yaml`
-- `execution-apis/src/schemas/transaction.yaml`
+- `execution-apis/src/schemas/client.yaml`
+- `execution-apis/src/schemas/execute.yaml`
+- `execution-apis/src/schemas/filter.yaml`
 - `execution-apis/src/schemas/receipt.yaml`
 - `execution-apis/src/schemas/state.yaml`
-- `execution-apis/src/schemas/filter.yaml`
-- `execution-apis/src/schemas/execute.yaml`
-- `execution-apis/src/schemas/client.yaml`
+- `execution-apis/src/schemas/transaction.yaml`
 
-### EIPs relevant to RPC behavior
+### EIP requirements directly affecting RPC behavior
 - `EIPs/EIPS/eip-1474.md`
-  - JSON-RPC envelope, Ethereum RPC error codes, `Quantity` and `Data` encoding constraints.
+  - JSON-RPC 2.0 envelope requirements
+  - Ethereum RPC error codes (`-32700`..`-32006`)
+  - strict `Quantity` and `Data` hex encoding rules
 - `EIPs/EIPS/eip-1898.md`
-  - Block selector object (`blockHash`/`blockNumber` + `requireCanonical`) for state query methods.
+  - block selector object semantics (`blockNumber` or `blockHash`, optional `requireCanonical`)
+  - precedence: block-not-found before canonicality failure
 - `EIPs/EIPS/eip-695.md`
-  - `eth_chainId` semantics and output expectations.
+  - `eth_chainId` behavior
 
-### Execution-specs references for canonical block/tx/receipt structures
-- `execution-specs/src/ethereum/forks/prague/blocks.py`
-- `execution-specs/src/ethereum/forks/prague/fork.py`
-- `execution-specs/src/ethereum/forks/osaka/blocks.py`
+### execution-specs and devp2p notes
+- `execution-specs/README.md` explicitly points JSON-RPC spec to `execution-apis`.
+- `devp2p/caps/eth.md` provides `networkid` context used by `net_version` semantics.
 
-These files are useful when mapping chain data into RPC response objects (`eth_getBlock*`, `eth_getTransaction*`, `eth_getTransactionReceipt`, logs).
+## Nethermind reference inventory
+### JSON-RPC architecture (`nethermind/src/Nethermind/Nethermind.JsonRpc/`)
+Core request lifecycle files:
+- `JsonRpcProcessor.cs` (parse/stream/process request objects)
+- `JsonRpcService.cs` (method resolution, parameter binding, module rental)
+- `JsonRpcRequest.cs`, `JsonRpcResponse.cs`, `JsonRpcResult.cs`
+- `ErrorCodes.cs`, `Error.cs`
 
-### devp2p references relevant to `net_version`
-- `devp2p/caps/eth.md`
-  - `Status` message includes `networkid`; spec explicitly notes Network ID may differ from EIP-155 Chain ID.
+Module organization (shape to mirror in Zig, not code to port):
+- `Modules/Eth/EthRpcModule.cs`
+- `Modules/Net/NetRpcModule.cs`
+- `Modules/Web3/Web3RpcModule.cs`
+- `Modules/Module/RpcRpcModule.cs`
+- `Modules/Subscribe/SubscribeRpcModule.cs`
+- plus module provider/pool files under `Modules/`
 
-## 3) Nethermind Structural References
+### DB key files requested (`nethermind/src/Nethermind/Nethermind.Db/`)
+Interfaces and providers:
+- `IDb.cs`, `IReadOnlyDb.cs`, `IColumnsDb.cs`, `IFullDb.cs`
+- `IDbFactory.cs`, `IDbProvider.cs`, `IReadOnlyDbProvider.cs`
+- `DbProvider.cs`, `ReadOnlyDbProvider.cs`, `DbProviderExtensions.cs`
 
-### 3.1 JSON-RPC module shape
-Directory: `nethermind/src/Nethermind/Nethermind.JsonRpc/`
+Implementations and write batching:
+- `MemDb.cs`, `MemColumnsDb.cs`, `ReadOnlyDb.cs`, `ReadOnlyColumnsDb.cs`
+- `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
 
-Key files/directories:
-- `JsonRpcProcessor.cs`
-- `JsonRpcRequest.cs`
-- `JsonRpcResponse.cs`
-- `JsonRpcService.cs`
-- `JsonRpcConfig.cs`
-- `Error.cs`
-- `ErrorCodes.cs`
-- `Modules/`
-- `Converters/`
-- `WebSockets/`
+Columns/config/pruning:
+- `ReceiptsColumns.cs`, `BlobTxsColumns.cs`, `MetadataDbKeys.cs`
+- `RocksDbSettings.cs`, `RocksDbMergeEnumerator.cs`, `CompressingDb.cs`
+- `IPruningConfig.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruning/`
 
-Use this as structural guidance only; implement idiomatically in Zig with comptime DI.
+## Voltaire APIs to use (never custom duplicates)
+Base path:
+- `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 
-### 3.2 DB layer files requested for review
-Directory: `nethermind/src/Nethermind/Nethermind.Db/`
-
-Key files noted:
-- Interfaces: `IDb.cs`, `IReadOnlyDb.cs`, `IColumnsDb.cs`, `IFullDb.cs`, `IDbProvider.cs`, `IDbFactory.cs`
-- Providers/impl: `DbProvider.cs`, `DbProviderExtensions.cs`, `ReadOnlyDbProvider.cs`, `MemDb.cs`, `MemColumnsDb.cs`, `ReadOnlyDb.cs`, `ReadOnlyColumnsDb.cs`
-- Batching: `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
-- Configuration/utilities: `RocksDbSettings.cs`, `RocksDbMergeEnumerator.cs`, `DbNames.cs`, `DbExtensions.cs`
-- Data columns/keys: `ReceiptsColumns.cs`, `BlobTxsColumns.cs`, `MetadataDbKeys.cs`
-- Pruning: `IPruningConfig.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruning/`
-
-## 4) Voltaire APIs to Reuse (No Custom RPC Types)
-Base directory: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
-
-### JSON-RPC module
+JSON-RPC typed primitives:
 - `jsonrpc/root.zig`
-- `jsonrpc/JsonRpc.zig`
-  - `JsonRpcMethod` union (`engine`, `eth`, `debug`) and `methodName()` dispatch helper.
-- `jsonrpc/eth/methods.zig`
-  - Typed `EthMethod` union with params/results for `eth_*` methods.
-- `jsonrpc/engine/methods.zig`
-- `jsonrpc/debug/methods.zig`
-
-### Shared RPC types
+- `jsonrpc/JsonRpc.zig` (`JsonRpcMethod` union)
+- `jsonrpc/eth/methods.zig` (`EthMethod` union and typed params/results)
 - `jsonrpc/types.zig`
 - `jsonrpc/types/Address.zig`
 - `jsonrpc/types/Hash.zig`
@@ -108,72 +96,61 @@ Base directory: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 - `jsonrpc/types/BlockTag.zig`
 - `jsonrpc/types/BlockSpec.zig`
 
-### Primitives commonly needed by RPC handlers/results
+Voltaire primitive/state APIs commonly required by method handlers:
 - `primitives/Address/address.zig`
-- `primitives/Hash/Hash.zig`
 - `primitives/Block/Block.zig`
 - `primitives/BlockHeader/BlockHeader.zig`
 - `primitives/BlockNumber/BlockNumber.zig`
+- `primitives/Hash/Hash.zig`
 - `primitives/Transaction/Transaction.zig`
 - `primitives/TransactionHash/TransactionHash.zig`
 - `primitives/Receipt/Receipt.zig`
-- `primitives/Bytes/Bytes.zig`
-- `primitives/Hex/Hex.zig`
-- `primitives/AccessList/access_list.zig`
+- `primitives/Gas/Gas.zig`
 - `primitives/ChainId/ChainId.zig`
 - `primitives/NetworkId/NetworkId.zig`
-- `primitives/FilterId/filter_id.zig`
-- `primitives/BlockFilter/block_filter.zig`
-- `primitives/PendingTransactionFilter/pending_transaction_filter.zig`
-
-### Other supporting Voltaire modules
-- `blockchain/Blockchain.zig`
-- `blockchain/BlockStore.zig`
+- `primitives/Nonce/Nonce.zig`
+- `primitives/SyncStatus/SyncStatus.zig`
 - `state-manager/StateManager.zig`
+- `blockchain/Blockchain.zig`
 
-## 5) Existing Zig Integration Surface
+## Existing Zig host interface
+Requested path was `src/host.zig`; in this repo the file is:
 - `guillotine-mini/src/host.zig`
 
-`HostInterface` currently exposes vtable-backed external state operations:
-- `getBalance` / `setBalance`
-- `getCode` / `setCode`
-- `getStorage` / `setStorage`
-- `getNonce` / `setNonce`
+Key interface summary:
+- `HostInterface` is pointer + vtable based DI surface
+- exposes `get/setBalance`, `get/setCode`, `get/setStorage`, `get/setNonce`
+- comments state nested calls are handled by EVM internals, not via host indirection
 
-Important note from file comments:
-- Nested calls are handled in EVM internals; host interface is for external state access.
-
-## 6) Test Fixture Paths to Reuse
-
-### ethereum-tests directories (requested listing)
-- `ethereum-tests/ABITests/`
-- `ethereum-tests/BasicTests/`
+## Ethereum test fixture paths (directory inventory)
+Primary directories in `ethereum-tests/`:
 - `ethereum-tests/BlockchainTests/`
-- `ethereum-tests/DifficultyTests/`
-- `ethereum-tests/EOFTests/`
-- `ethereum-tests/GenesisTests/`
-- `ethereum-tests/KeyStoreTests/`
-- `ethereum-tests/LegacyTests/`
-- `ethereum-tests/PoWTests/`
-- `ethereum-tests/RLPTests/`
 - `ethereum-tests/TransactionTests/`
 - `ethereum-tests/TrieTests/`
+- `ethereum-tests/BasicTests/`
+- `ethereum-tests/EOFTests/`
+- `ethereum-tests/RLPTests/`
+- `ethereum-tests/DifficultyTests/`
+- `ethereum-tests/GenesisTests/`
+- `ethereum-tests/LegacyTests/`
+- `ethereum-tests/PoWTests/`
+- `ethereum-tests/JSONSchema/`
 
-### Concrete fixture file examples
-- `ethereum-tests/BlockchainTests/InvalidBlocks/bcEIP3675/timestampPerBlock.json`
-- `ethereum-tests/BlockchainTests/InvalidBlocks/bc4895-withdrawals/accountInteractions.json`
-- `ethereum-tests/TransactionTests/ttEIP1559/maxFeePerGasOverflow.json`
-- `ethereum-tests/TransactionTests/ttAddress/AddressMoreThan20.json`
-- `ethereum-tests/TrieTests/trietest.json`
-- `ethereum-tests/ABITests/basic_abi_tests.json`
+Useful subpaths for tx/block coverage:
+- `ethereum-tests/BlockchainTests/ValidBlocks/`
+- `ethereum-tests/BlockchainTests/InvalidBlocks/`
+- `ethereum-tests/TransactionTests/ttEIP1559/`
+- `ethereum-tests/TransactionTests/ttEIP2930/`
+- `ethereum-tests/TransactionTests/ttGasPrice/`
+- `ethereum-tests/TransactionTests/ttWrongRLP/`
 
-### Additional RPC-focused suites
+Additional RPC validation suites:
+- `execution-apis/tests/`
 - `execution-spec-tests/`
 - `hive/`
 
-## 7) Implementation Guardrails for Next Step
-- Use Voltaire JSON-RPC and primitive types directly; do not define duplicate custom wire types.
-- Keep EVM execution on existing guillotine-mini implementation; do not reimplement EVM behavior.
-- Follow Nethermind module boundaries, but use Zig comptime DI patterns for handler wiring/dispatch.
-- Enforce EIP-1474 error code behavior and hex encoding rules.
-- Ensure block selector handling conforms to EIP-1898 object semantics.
+## Implementation guardrails for phase 6
+- Use only Voltaire JSON-RPC/primitives/state types; do not define duplicate RPC wire types.
+- Keep EVM behavior delegated to existing guillotine-mini EVM.
+- Mirror Nethermind boundaries at high level (processor/service/modules) but implement with Zig comptime DI.
+- Enforce EIP-1474 error/encoding requirements and EIP-1898 block selector behavior.
