@@ -5,7 +5,7 @@ const mac_mod = @import("mac.zig");
 
 /// RLPx handshake role (initiator/recipient).
 /// Snappy framing limits for RLPx compressed payloads.
-pub const SnappyParameters = snappy_parameters.SnappyParameters;
+pub const SnappyParameters = snappy_parameters;
 /// RLPx frame constants and padding helper.
 pub const Frame = frame;
 /// RLPx secrets derivation (shared/aes/mac) per spec.

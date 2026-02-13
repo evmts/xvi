@@ -9,7 +9,7 @@ pub const SnappyParameters = rlpx.SnappyParameters;
 pub const Frame = rlpx.Frame;
 
 /// Validates inbound compressed DEVp2p payload metadata before decompression.
-pub fn guard_inbound_snappy_payload(frame_data: []const u8) rlpx.SnappyParameters.ValidationError!usize {
+pub fn guard_inbound_snappy_payload(frame_data: []const u8) @TypeOf(rlpx.SnappyParameters.guard_before_decompression(frame_data)) {
     return rlpx.SnappyParameters.guard_before_decompression(frame_data);
 }
 
