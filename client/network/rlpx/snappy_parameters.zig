@@ -20,7 +20,7 @@ const ProtocolMaxCompressedLength: usize = @as(usize, @intCast(frame.ProtocolMax
 
 /// Parses the Snappy length preamble and enforces the RLPx 16 MiB cap.
 /// The preamble is a little-endian base-128 varint as per Snappy framing.
-pub fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
+fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
     if (frame_data.len > ProtocolMaxCompressedLength) return error.CompressedLengthTooLarge;
     if (frame_data.len == 0) return error.MissingLengthHeader;
 
