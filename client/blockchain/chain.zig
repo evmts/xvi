@@ -113,8 +113,8 @@ pub fn put_block(chain: *Chain, block: Block.Block) !void {
 /// - Propagates underlying storage errors (e.g. `error.BlockNotFound`,
 ///   `error.CannotSetOrphanAsHead`, `error.OutOfMemory`) without suppression.
 /// - Mirrors Nethermind's explicit head-update boundary (`UpdateHeadBlock`).
-pub fn set_canonical_head(chain: *Chain, head_hash: Hash.Hash) !void {
-    try chain.setCanonicalHead(head_hash);
+pub fn set_canonical_head(chain: *Chain, new_head_hash: Hash.Hash) !void {
+    try chain.setCanonicalHead(new_head_hash);
 }
 
 /// Returns true if the given `(number, hash)` pair is canonical (local-only).
