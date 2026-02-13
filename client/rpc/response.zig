@@ -13,9 +13,7 @@ pub const Response = struct {
     ///
     /// The `result_raw` must be a valid JSON fragment (already encoded).
     pub fn write_success_raw(writer: anytype, id: envelope.Id, result_raw: []const u8) !void {
-        try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-        try write_id(writer, id);
-        try writer.writeAll(",\"result\":");
+        try write_success_result_prefix(writer, id);
         try writer.writeAll(result_raw);
         try writer.writeAll("}");
     }
@@ -26,8 +24,7 @@ pub const Response = struct {
     /// - `message` is a human-readable string; it is JSON-escaped here.
     /// - `data_raw`, when provided, must be a valid JSON fragment.
     pub fn write_error(writer: anytype, id: envelope.Id, code: errors.JsonRpcErrorCode, message: []const u8, data_raw: ?[]const u8) !void {
-        try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-        try write_id(writer, id);
+        try write_response_prefix(writer, id);
         try writer.writeAll(",\"error\":{\"code\":");
         try std.fmt.format(writer, "{}", .{@as(i32, @intFromEnum(code))});
         try writer.writeAll(",\"message\":");
@@ -64,9 +61,7 @@ pub const Response = struct {
 
     /// Convenience: full success envelope with QUANTITY(u64) result.
     pub fn write_success_quantity_u64(writer: anytype, id: envelope.Id, value: u64) !void {
-        try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-        try write_id(writer, id);
-        try writer.writeAll(",\"result\":");
+        try write_success_result_prefix(writer, id);
         try write_quantity_u64(writer, value);
         try writer.writeAll("}");
     }
@@ -74,6 +69,16 @@ pub const Response = struct {
     // ---------------------------------------------------------------------
     // Internals
     // ---------------------------------------------------------------------
+
+    fn write_response_prefix(writer: anytype, id: envelope.Id) !void {
+        try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
+        try write_id(writer, id);
+    }
+
+    fn write_success_result_prefix(writer: anytype, id: envelope.Id) !void {
+        try write_response_prefix(writer, id);
+        try writer.writeAll(",\"result\":");
+    }
 
     fn write_id(writer: anytype, id: envelope.Id) !void {
         switch (id) {
@@ -123,7 +128,7 @@ pub const Response = struct {
 // Tests
 // ============================================================================
 
-test "Response.writeSuccessRaw: id string" {
+test "response.write_success_raw: id string" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     try Response.write_success_raw(buf.writer(), .{ .string = "abc-123" }, "1");
@@ -133,7 +138,7 @@ test "Response.writeSuccessRaw: id string" {
     );
 }
 
-test "Response.writeSuccessRaw: id number" {
+test "response.write_success_raw: id number" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     try Response.write_success_raw(buf.writer(), .{ .number = "42" }, "\"0x1\"");
@@ -143,7 +148,7 @@ test "Response.writeSuccessRaw: id number" {
     );
 }
 
-test "Response.writeSuccessRaw: id null" {
+test "response.write_success_raw: id null" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     try Response.write_success_raw(buf.writer(), .null, "null");
@@ -153,7 +158,7 @@ test "Response.writeSuccessRaw: id null" {
     );
 }
 
-test "Response.writeError: basic (string id)" {
+test "response.write_error: basic (string id)" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     const code = errors.JsonRpcErrorCode.invalid_request;
@@ -164,7 +169,7 @@ test "Response.writeError: basic (string id)" {
     );
 }
 
-test "Response.writeError: with data (number id)" {
+test "response.write_error: with data (number id)" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     const code = errors.JsonRpcErrorCode.method_not_found;
@@ -175,7 +180,7 @@ test "Response.writeError: with data (number id)" {
     );
 }
 
-test "Response.writeQuantityU64: encodes per EIP-1474" {
+test "response.write_quantity_u64: encodes per EIP-1474" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     try Response.write_quantity_u64(buf.writer(), 0);
@@ -190,7 +195,7 @@ test "Response.writeQuantityU64: encodes per EIP-1474" {
     try std.testing.expectEqualStrings("\"0xffffffffffffffff\"", buf.items);
 }
 
-test "Response.writeSuccessQuantityU64: full envelope" {
+test "response.write_success_quantity_u64: full envelope" {
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
     try Response.write_success_quantity_u64(buf.writer(), .{ .number = "7" }, 26);
