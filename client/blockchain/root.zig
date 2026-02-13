@@ -1,7 +1,13 @@
 /// Chain management entry point for the client.
+const std = @import("std");
 const chain = @import("chain.zig");
 const validator = @import("validator.zig");
 const blockchain = @import("blockchain");
+const primitives = @import("primitives");
+const Block = primitives.Block;
+const BlockHeader = primitives.BlockHeader;
+const BlockBody = primitives.BlockBody;
+const Hash = primitives.Hash;
 
 // -- Public API --------------------------------------------------------------
 
@@ -80,5 +86,53 @@ pub const HeaderValidationContext = validator.HeaderValidationContext;
 pub const merge_header_validator = validator.merge_header_validator;
 
 test {
-    @import("std").testing.refAllDecls(@This());
+    std.testing.refAllDecls(@This());
+}
+
+test "root exports - head and pending helpers behave consistently" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    const genesis = try Block.genesis(1, std.testing.allocator);
+    try put_block(&chain_state, genesis);
+    try set_canonical_head(&chain_state, genesis.hash);
+
+    try std.testing.expectEqual(@as(u64, 0), head_number(&chain_state) orelse return error.UnexpectedNull);
+
+    const hh = (try head_hash(&chain_state)) orelse return error.UnexpectedNull;
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hh);
+
+    const ph = pending_hash(&chain_state) orelse return error.UnexpectedNull;
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &ph);
+
+    const pb = pending_block(&chain_state) orelse return error.UnexpectedNull;
+    try std.testing.expectEqual(@as(u64, 0), pb.header.number);
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &pb.hash);
+}
+
+test "root exports - block_hash_by_number_local uses execution context" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    const genesis = try Block.genesis(1, std.testing.allocator);
+    try put_block(&chain_state, genesis);
+    try set_canonical_head(&chain_state, genesis.hash);
+
+    var h1 = BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &BlockBody.init(), std.testing.allocator);
+    try put_block(&chain_state, b1);
+
+    const parent = (try block_hash_by_number_local(&chain_state, b1.hash, 2, 1)) orelse return error.UnexpectedNull;
+    try std.testing.expectEqualSlices(u8, &b1.hash, &parent);
+    try std.testing.expect((try block_hash_by_number_local(&chain_state, b1.hash, 2, 2)) == null);
+}
+
+test "root exports - typed ancestry error is preserved" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local(&chain_state, Hash.ZERO, Hash.ZERO));
 }
