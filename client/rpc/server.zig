@@ -158,6 +158,10 @@ test "validate_request_jsonrpc_version rejects missing jsonrpc field" {
     try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version(req).?);
 }
 
+test "validate_request_jsonrpc_version rejects empty request object" {
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, validate_request_jsonrpc_version("{}").?);
+}
+
 test "validate_request_jsonrpc_version rejects unsupported version" {
     const req =
         "{\n" ++

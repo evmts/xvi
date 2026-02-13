@@ -318,7 +318,7 @@ pub fn scan_request_fields(input: []const u8) ScanRequestError!RequestFieldSpans
     i += 1;
     skip_whitespace(input, &i);
     if (i >= input.len) return error.ParseError;
-    if (input[i] == '}') return error.ParseError;
+    if (input[i] == '}') return error.InvalidRequest;
 
     while (true) {
         if (i >= input.len or input[i] != '"') return error.ParseError;
@@ -403,6 +403,10 @@ test "scanRequestFields rejects malformed object" {
         "  \"method\": \"eth_blockNumber\",\n" ++
         "}";
     try std.testing.expectError(error.ParseError, scan_request_fields(req));
+}
+
+test "scanRequestFields rejects empty request objects as invalid_request" {
+    try std.testing.expectError(error.InvalidRequest, scan_request_fields("{}"));
 }
 
 test "scanRequestFields rejects invalid JSON with trailing tokens" {
