@@ -40,6 +40,12 @@ pub const SnappyParameters = struct {
 
         return error.MissingLengthHeader;
     }
+
+    /// Fast pre-decode guard for RLPx handlers before Snappy decompression.
+    /// Returns the parsed uncompressed length so callers can size buffers.
+    pub fn guard_before_decompression(frame_data: []const u8) ValidationError!usize {
+        return validate_uncompressed_length(frame_data);
+    }
 };
 
 test "snappy max length is 16 MiB" {
@@ -79,5 +85,19 @@ test "validate_uncompressed_length enforces compressed and uncompressed limits" 
     try std.testing.expectError(
         error.CompressedLengthTooLarge,
         SnappyParameters.validate_uncompressed_length(oversized),
+    );
+}
+
+test "guard_before_decompression accepts valid snappy preamble" {
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try SnappyParameters.guard_before_decompression(&[_]u8{0x01}),
+    );
+}
+
+test "guard_before_decompression fails fast on oversized payload metadata" {
+    try std.testing.expectError(
+        error.UncompressedLengthTooLarge,
+        SnappyParameters.guard_before_decompression(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
     );
 }
