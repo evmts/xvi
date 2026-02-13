@@ -11,6 +11,7 @@ const ExchangeCapabilitiesMethod = @FieldType(jsonrpc.engine.EngineMethod, "engi
 const ExchangeTransitionConfigurationV1Method =
     @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeTransitionConfigurationV1");
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
+const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
 /// Parameters for `engine_exchangeCapabilities` requests.
 pub const ExchangeCapabilitiesParams = @FieldType(ExchangeCapabilitiesMethod, "params");
 /// Result payload for `engine_exchangeCapabilities` responses.
@@ -37,6 +38,10 @@ pub const ExchangeTransitionConfigurationV1Result = @FieldType(ExchangeTransitio
 pub const NewPayloadV1Params = @FieldType(NewPayloadV1Method, "params");
 /// Result payload for `engine_newPayloadV1` responses.
 pub const NewPayloadV1Result = @FieldType(NewPayloadV1Method, "result");
+/// Parameters for `engine_forkchoiceUpdatedV1` requests.
+pub const ForkchoiceUpdatedV1Params = @FieldType(ForkchoiceUpdatedV1Method, "params");
+/// Result payload for `engine_forkchoiceUpdatedV1` responses.
+pub const ForkchoiceUpdatedV1Result = @FieldType(ForkchoiceUpdatedV1Method, "result");
 
 // Method-name validation logic is centralized in client/engine/method_name.zig
 
@@ -133,6 +138,11 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: NewPayloadV1Params,
         ) Error!NewPayloadV1Result,
+        /// Updates forkchoice state and optionally starts payload building (V1).
+        forkchoice_updated_v1: *const fn (
+            ptr: *anyopaque,
+            params: ForkchoiceUpdatedV1Params,
+        ) Error!ForkchoiceUpdatedV1Result,
     };
 
     /// Exchange list of supported Engine API methods.
@@ -185,10 +195,25 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Applies a forkchoice update V1 with optional payload attributes.
+    ///
+    /// This stage performs request/response shape checks only.
+    /// Forkchoice/payload semantics are handled by the execution path.
+    pub fn forkchoice_updated_v1(
+        self: EngineApi,
+        params: ForkchoiceUpdatedV1Params,
+    ) Error!ForkchoiceUpdatedV1Result {
+        try validate_forkchoice_updated_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.forkchoice_updated_v1(self.ptr, params);
+        try validate_forkchoice_updated_v1_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Generic dispatcher for EngineMethod calls using Voltaire's EngineMethod schema.
     ///
     /// Partial coverage: currently handles `engine_exchangeCapabilities`,
-    /// `engine_exchangeTransitionConfigurationV1`, and `engine_newPayloadV1`.
+    /// `engine_exchangeTransitionConfigurationV1`, `engine_newPayloadV1`,
+    /// and `engine_forkchoiceUpdatedV1`.
     /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
@@ -204,6 +229,8 @@ pub const EngineApi = struct {
             return self.exchange_transition_configuration_v1(params);
         } else if (comptime Method == NewPayloadV1Method) {
             return self.new_payload_v1(params);
+        } else if (comptime Method == ForkchoiceUpdatedV1Method) {
+            return self.forkchoice_updated_v1(params);
         } else {
             return Error.MethodNotFound;
         }
@@ -360,6 +387,35 @@ fn validate_new_payload_v1_result(
     if (result.value.value != .object) return invalid_err;
 }
 
+fn validate_forkchoice_updated_v1_params(
+    params: ForkchoiceUpdatedV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (params.forkchoice_state.value != .object) return invalid_err;
+    switch (params.payload_attributes.value) {
+        .object, .null => {},
+        else => return invalid_err,
+    }
+}
+
+fn validate_forkchoice_updated_v1_result(
+    result: ForkchoiceUpdatedV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (result.value.value != .object) return invalid_err;
+    const obj = result.value.value.object;
+
+    const payload_status = obj.get("payloadStatus") orelse return invalid_err;
+    if (payload_status != .object) return invalid_err;
+
+    const payload_id = obj.get("payloadId") orelse return invalid_err;
+    switch (payload_id) {
+        .null => {},
+        .string => |s| _ = primitives.Hex.assertSize(s, 8) catch return invalid_err,
+        else => return invalid_err,
+    }
+}
+
 fn is_slice_of_byte_slices(comptime T: type) bool {
     const info = @typeInfo(T);
     if (info != .pointer or info.pointer.size != .slice) return false;
@@ -440,10 +496,12 @@ const DummyEngine = struct {
     client_version_result: ClientVersionV1Result = undefined,
     transition_result: ExchangeTransitionConfigurationV1Result = undefined,
     new_payload_result: NewPayloadV1Result = undefined,
+    forkchoice_updated_result: ForkchoiceUpdatedV1Result = undefined,
     called: bool = false,
     client_version_called: bool = false,
     transition_called: bool = false,
     new_payload_called: bool = false,
+    forkchoice_updated_called: bool = false,
 
     fn exchange_capabilities(
         ptr: *anyopaque,
@@ -484,6 +542,16 @@ const DummyEngine = struct {
         self.new_payload_called = true;
         return self.new_payload_result;
     }
+
+    fn forkchoice_updated_v1(
+        ptr: *anyopaque,
+        params: ForkchoiceUpdatedV1Params,
+    ) EngineApi.Error!ForkchoiceUpdatedV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.forkchoice_updated_called = true;
+        return self.forkchoice_updated_result;
+    }
 };
 
 const dummy_vtable = EngineApi.VTable{
@@ -491,6 +559,7 @@ const dummy_vtable = EngineApi.VTable{
     .get_client_version_v1 = DummyEngine.get_client_version_v1,
     .exchange_transition_configuration_v1 = DummyEngine.exchange_transition_configuration_v1,
     .new_payload_v1 = DummyEngine.new_payload_v1,
+    .forkchoice_updated_v1 = DummyEngine.forkchoice_updated_v1,
 };
 
 fn make_api(dummy: *DummyEngine) EngineApi {
@@ -989,6 +1058,114 @@ test "engine api generic dispatcher routes newPayloadV1" {
     const out = try api.dispatch(NewPayloadV1Method, params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.new_payload_called);
+}
+
+test "engine api dispatches forkchoiceUpdatedV1" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000011" });
+    try state_obj.put("safeBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000010" });
+    try state_obj.put("finalizedBlockHash", .{ .string = "0x000000000000000000000000000000000000000000000000000000000000000f" });
+
+    const params = ForkchoiceUpdatedV1Params{
+        .forkchoice_state = jsonrpc.types.Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = jsonrpc.types.Quantity{ .value = .{ .null = {} } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000011" });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+    try response_obj.put("payloadId", .{ .null = {} });
+
+    const result_value = ForkchoiceUpdatedV1Result{
+        .value = jsonrpc.types.Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{
+        .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } },
+    };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .forkchoice_updated_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.forkchoice_updated_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.forkchoice_updated_called);
+}
+
+test "engine api rejects invalid forkchoiceUpdatedV1 params" {
+    const params = ForkchoiceUpdatedV1Params{
+        .forkchoice_state = jsonrpc.types.Quantity{ .value = .{ .string = "0x01" } },
+        .payload_attributes = jsonrpc.types.Quantity{ .value = .{ .null = {} } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{
+        .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } },
+    };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.forkchoice_updated_v1(params));
+    try std.testing.expect(!dummy.forkchoice_updated_called);
+}
+
+test "engine api generic dispatcher routes forkchoiceUpdatedV1" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000022" });
+    try state_obj.put("safeBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000021" });
+    try state_obj.put("finalizedBlockHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000020" });
+
+    var attrs_obj = std.json.ObjectMap.init(alloc);
+    defer attrs_obj.deinit();
+    try attrs_obj.put("timestamp", .{ .string = "0x1" });
+    try attrs_obj.put("prevRandao", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000000" });
+    try attrs_obj.put("suggestedFeeRecipient", .{ .string = "0x0000000000000000000000000000000000000000" });
+
+    const params = ForkchoiceUpdatedV1Params{
+        .forkchoice_state = jsonrpc.types.Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = jsonrpc.types.Quantity{ .value = .{ .object = attrs_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = "0x0000000000000000000000000000000000000000000000000000000000000022" });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+    try response_obj.put("payloadId", .{ .string = "0x0000000000000000" });
+
+    const result_value = ForkchoiceUpdatedV1Result{
+        .value = jsonrpc.types.Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{
+        .value = jsonrpc.types.Quantity{ .value = .{ .null = {} } },
+    };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .forkchoice_updated_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.dispatch(ForkchoiceUpdatedV1Method, params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.forkchoice_updated_called);
 }
 
 test "engine api generic dispatcher rejects unknown method" {
