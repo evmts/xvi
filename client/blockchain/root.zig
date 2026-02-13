@@ -26,6 +26,8 @@ pub const is_canonical = chain.is_canonical;
 pub const is_canonical_or_fetch = chain.is_canonical_or_fetch;
 /// Existence check (local or fork-cache).
 pub const has_block = chain.has_block;
+/// Local write-path block insertion helper.
+pub const put_block = chain.put_block;
 /// Local-only block lookup (no fork-cache fetch/allocations).
 pub const get_block_local = chain.get_block_local; // implemented via local_access adapter
 /// Local-only canonical block lookup by number (no fork-cache fetch/allocations).

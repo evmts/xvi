@@ -95,6 +95,17 @@ pub fn canonical_hash(chain: *Chain, number: u64) ?Hash.Hash {
     return chain.getCanonicalHash(number);
 }
 
+/// Stores `block` in local chain storage via Voltaire's write path.
+///
+/// Semantics:
+/// - Delegates to `Blockchain.putBlock` (local write only; no fork-cache writes).
+/// - Preserves Voltaire orphan semantics: missing-parent blocks are stored and
+///   tracked as orphans until ancestry is resolved.
+/// - Propagates underlying write errors (e.g. `error.OutOfMemory`) explicitly.
+pub fn put_block(chain: *Chain, block: Block.Block) !void {
+    try chain.putBlock(block);
+}
+
 /// Sets the canonical head to `head_hash` using Voltaire's chain store logic.
 ///
 /// Semantics:
@@ -1461,6 +1472,40 @@ test "Chain - set_canonical_head propagates missing block error" {
     defer chain.deinit();
 
     try std.testing.expectError(error.BlockNotFound, set_canonical_head(&chain, Hash.ZERO));
+}
+
+test "Chain - put_block stores block locally" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try put_block(&chain, genesis);
+
+    try std.testing.expect(has_block(&chain, genesis.hash));
+    const stored = get_block_local(&chain, genesis.hash) orelse return error.Unreachable;
+    try std.testing.expectEqual(@as(u64, 0), stored.header.number);
+}
+
+test "Chain - put_block stores orphan and preserves orphan semantics" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var header = primitives.BlockHeader.init();
+    header.number = 5;
+    header.parent_hash = try Hash.fromHex("0x" ++ ("77" ** 32));
+    const body = primitives.BlockBody.init();
+    const orphan = try Block.from(&header, &body, allocator);
+
+    try put_block(&chain, orphan);
+
+    try std.testing.expect(has_block(&chain, orphan.hash));
+    try std.testing.expect(canonical_hash(&chain, orphan.header.number) == null);
+    try std.testing.expectError(
+        error.CannotSetOrphanAsHead,
+        set_canonical_head(&chain, orphan.hash),
+    );
 }
 
 test "Chain - is_canonical_at uses local canonical map" {
