@@ -898,9 +898,9 @@ test "fits_size_limits — eip7702 within and over limit (unsigned)" {
         try list.appendSlice(enc);
     }
     {
-        const enc = try primitives.Authorization.encodeAuthorizationList(allocator, tx.authorization_list);
-        defer allocator.free(enc);
-        try list.appendSlice(enc);
+        std.debug.assert(tx.authorization_list.len == 0);
+        // Empty authorization list is encoded as an empty RLP list (0xc0).
+        try list.append(0xc0);
     }
     var wrapped = std.array_list.AlignedManaged(u8, null).init(allocator);
     defer wrapped.deinit();
@@ -998,9 +998,9 @@ test "fits_size_limits — eip7702 within and over limit (signed)" {
         try list.appendSlice(enc);
     }
     {
-        const enc = try primitives.Authorization.encodeAuthorizationList(allocator, tx.authorization_list);
-        defer allocator.free(enc);
-        try list.appendSlice(enc);
+        std.debug.assert(tx.authorization_list.len == 0);
+        // Empty authorization list is encoded as an empty RLP list (0xc0).
+        try list.append(0xc0);
     }
     // include y_parity, r, s
     {
