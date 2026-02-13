@@ -19,6 +19,19 @@ fn is_engine_versioned_method_name(name: []const u8) bool {
     return name[i - 1] == 'V';
 }
 
+fn resolve_known_method_namespace(
+    comptime MethodUnion: type,
+    method_name: []const u8,
+    namespace: std.meta.Tag(jsonrpc.JsonRpcMethod),
+) ?std.meta.Tag(jsonrpc.JsonRpcMethod) {
+    if (MethodUnion.fromMethodName(method_name)) |_| {
+        return namespace;
+    } else |err| switch (err) {
+        error.UnknownMethod => return null,
+        else => return null,
+    }
+}
+
 /// Returns the root namespace tag of a JSON-RPC method name.
 /// - `.engine` for Engine API
 /// - `.eth` for Ethereum API
@@ -27,61 +40,46 @@ fn is_engine_versioned_method_name(name: []const u8) bool {
 pub fn resolve_namespace(method_name: []const u8) ?std.meta.Tag(jsonrpc.JsonRpcMethod) {
     // Fast prefix short-circuit: only probe the relevant namespace
     if (std.mem.startsWith(u8, method_name, "eth_")) {
-        if (jsonrpc.eth.EthMethod.fromMethodName(method_name)) |tag| {
-            _ = tag;
-            return .eth;
-        } else |err| switch (err) {
-            error.UnknownMethod => return null,
-            else => return null,
-        }
+        return resolve_known_method_namespace(jsonrpc.eth.EthMethod, method_name, .eth);
     }
+
     if (std.mem.startsWith(u8, method_name, "engine_")) {
-        if (jsonrpc.engine.EngineMethod.fromMethodName(method_name)) |tag| {
-            _ = tag;
-            return .engine;
-        } else |err| switch (err) {
-            // Keep routing versioned engine_* methods to the Engine namespace
-            // even if the current Voltaire method registry is behind
-            // execution-apis additions.
-            error.UnknownMethod => {
-                if (is_engine_versioned_method_name(method_name)) return .engine;
-                return null;
-            },
-            else => return null,
+        if (resolve_known_method_namespace(jsonrpc.engine.EngineMethod, method_name, .engine)) |tag| {
+            return tag;
         }
+        // Keep routing versioned engine_* methods to the Engine namespace
+        // even if the current Voltaire method registry is behind
+        // execution-apis additions.
+        if (is_engine_versioned_method_name(method_name)) return .engine;
+        return null;
     }
+
     if (std.mem.startsWith(u8, method_name, "debug_")) {
-        if (jsonrpc.debug.DebugMethod.fromMethodName(method_name)) |tag| {
-            _ = tag;
-            return .debug;
-        } else |err| switch (err) {
-            error.UnknownMethod => return null,
-            else => return null,
-        }
+        return resolve_known_method_namespace(jsonrpc.debug.DebugMethod, method_name, .debug);
     }
 
     return null;
 }
 
-test "resolveNamespace returns .eth for eth_*" {
+test "resolve_namespace returns .eth for eth_*" {
     const tag = resolve_namespace("eth_blockNumber");
     try std.testing.expect(tag != null);
     try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).eth, tag.?);
 }
 
-test "resolveNamespace returns .engine for engine_*" {
+test "resolve_namespace returns .engine for engine_*" {
     const tag = resolve_namespace("engine_getPayloadV3");
     try std.testing.expect(tag != null);
     try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).engine, tag.?);
 }
 
-test "resolveNamespace treats engine_getClientVersionV1 as engine" {
+test "resolve_namespace treats engine_getClientVersionV1 as engine" {
     const tag = resolve_namespace("engine_getClientVersionV1");
     try std.testing.expect(tag != null);
     try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).engine, tag.?);
 }
 
-test "resolveNamespace returns null for unknown" {
+test "resolve_namespace returns null for unknown" {
     try std.testing.expect(resolve_namespace("unknown_method") == null);
 }
 
@@ -121,13 +119,13 @@ pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
 // Additional tests for debug_* mapping and batch input handling
 // ============================================================================
 
-test "resolveNamespace returns .debug for debug_*" {
+test "resolve_namespace returns .debug for debug_*" {
     const tag = resolve_namespace("debug_getRawBlock");
     try std.testing.expect(tag != null);
     try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).debug, tag.?);
 }
 
-test "parseRequestNamespace returns invalid_request for batch array input" {
+test "parse_request_namespace returns invalid_request for batch array input" {
     const req =
         "[\n" ++
         "  {\n" ++
@@ -145,7 +143,7 @@ test "parseRequestNamespace returns invalid_request for batch array input" {
     }
 }
 
-test "parseRequestNamespace returns namespace tag for known eth method" {
+test "parse_request_namespace returns namespace tag for known eth method" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
@@ -163,7 +161,7 @@ test "parseRequestNamespace returns namespace tag for known eth method" {
     }
 }
 
-test "parseRequestNamespace returns method_not_found for unknown method" {
+test "parse_request_namespace returns method_not_found for unknown method" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
@@ -179,7 +177,7 @@ test "parseRequestNamespace returns method_not_found for unknown method" {
     }
 }
 
-test "parseRequestNamespace returns invalid_request when method missing" {
+test "parse_request_namespace returns invalid_request when method missing" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
@@ -194,7 +192,7 @@ test "parseRequestNamespace returns invalid_request when method missing" {
     }
 }
 
-test "parseRequestNamespace validates jsonrpc version before method resolution" {
+test "parse_request_namespace validates jsonrpc version before method resolution" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"1.0\",\n" ++
@@ -210,7 +208,7 @@ test "parseRequestNamespace validates jsonrpc version before method resolution" 
     }
 }
 
-test "parseRequestNamespace validates jsonrpc field before method handling" {
+test "parse_request_namespace validates jsonrpc field before method handling" {
     const req =
         "{\n" ++
         "  \"id\": 1,\n" ++
@@ -225,7 +223,7 @@ test "parseRequestNamespace validates jsonrpc field before method handling" {
     }
 }
 
-test "parseRequestNamespace rejects malformed JSON after method extraction" {
+test "parse_request_namespace rejects malformed JSON after method extraction" {
     const req =
         "{\n" ++
         "  \"jsonrpc\": \"2.0\",\n" ++
@@ -239,7 +237,7 @@ test "parseRequestNamespace rejects malformed JSON after method extraction" {
     }
 }
 
-test "parseRequestNamespace rejects trailing non-json bytes" {
+test "parse_request_namespace rejects trailing non-json bytes" {
     const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_blockNumber\", \"params\": [] } trailing";
 
     const res = parse_request_namespace(req);
