@@ -21,20 +21,19 @@ pub const TxPoolConfig = struct {
         /// Persist blob transactions and retain reorg metadata.
         storage_with_reorgs,
 
-        fn is_persistent_storage(self: BlobsSupportMode) bool {
-            // Helper methods are intentionally module-private; promote to pub if reuse outside this module is required.
+        pub fn is_persistent_storage(self: BlobsSupportMode) bool {
             return self == .storage or self == .storage_with_reorgs;
         }
 
-        fn is_enabled(self: BlobsSupportMode) bool {
+        pub fn is_enabled(self: BlobsSupportMode) bool {
             return self != .disabled;
         }
 
-        fn is_disabled(self: BlobsSupportMode) bool {
+        pub fn is_disabled(self: BlobsSupportMode) bool {
             return self == .disabled;
         }
 
-        fn supports_reorgs(self: BlobsSupportMode) bool {
+        pub fn supports_reorgs(self: BlobsSupportMode) bool {
             return self == .storage_with_reorgs;
         }
     };
@@ -89,14 +88,6 @@ pub const TxPoolConfig = struct {
 /// This mirrors the HostInterface pattern used by the EVM and allows
 /// compile-time wiring of concrete pool implementations.
 pub const TxPool = struct {
-    fn is_known_default(_: *anyopaque, _: TransactionHash) bool {
-        return false;
-    }
-
-    fn contains_tx_default(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
-        return false;
-    }
-
     /// Type-erased pointer to the concrete txpool implementation.
     ptr: *anyopaque,
     /// Pointer to the static vtable for the concrete txpool implementation.
@@ -111,9 +102,9 @@ pub const TxPool = struct {
         /// Number of pending transactions for a specific sender address.
         get_pending_count_for_sender: *const fn (ptr: *anyopaque, sender: Address) u32,
         /// Returns whether this transaction hash is known by the pool/hash cache.
-        is_known: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) bool = is_known_default,
+        is_known: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) bool,
         /// Returns whether the pool already contains this hash and tx type.
-        contains_tx: *const fn (ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool = contains_tx_default,
+        contains_tx: *const fn (ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool,
     };
 
     /// Total number of pending transactions in the pool.
@@ -222,33 +213,6 @@ test "txpool interface dispatches pending counts" {
     try std.testing.expect(!pool.is_known([_]u8{0x22} ** 32));
     try std.testing.expect(pool.contains_tx(known_hash, .eip1559));
     try std.testing.expect(!pool.contains_tx(known_hash, .legacy));
-}
-
-test "txpool interface defaults is_known/contains_tx to false" {
-    const DummyPool = struct {
-        fn pending_count(_: *anyopaque) u32 {
-            return 0;
-        }
-
-        fn pending_blob_count(_: *anyopaque) u32 {
-            return 0;
-        }
-
-        fn get_pending_count_for_sender(_: *anyopaque, _: Address) u32 {
-            return 0;
-        }
-    };
-
-    var dummy = DummyPool{};
-    const vtable = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-    };
-    const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
-
-    try std.testing.expect(!pool.is_known([_]u8{0x33} ** 32));
-    try std.testing.expect(!pool.contains_tx([_]u8{0x33} ** 32, .legacy));
 }
 
 test "blobs support mode helpers mirror nethermind semantics" {

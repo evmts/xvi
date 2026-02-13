@@ -9,6 +9,8 @@ const TxPool = @import("pool.zig").TxPool;
 const U256 = primitives.Denomination.U256;
 const GasLimit = primitives.Gas.GasLimit;
 const Address = primitives.Address;
+const TransactionHash = primitives.TransactionHash.TransactionHash;
+const TransactionType = primitives.Transaction.TransactionType;
 
 inline fn assert_supported_tx_type(comptime T: type, comptime fn_name: []const u8) void {
     if (!(T == tx_mod.LegacyTransaction or
@@ -174,6 +176,12 @@ test "check_nonce_gap_for_sender — accepts when nonce <= current and within wi
             const self: *const @This() = @ptrCast(@alignCast(ptr));
             return self.count_for;
         }
+        fn is_known(_: *anyopaque, _: TransactionHash) bool {
+            return false;
+        }
+        fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
+            return false;
+        }
     };
 
     const DummyHost = struct {
@@ -202,6 +210,8 @@ test "check_nonce_gap_for_sender — accepts when nonce <= current and within wi
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .is_known = DummyPool.is_known,
+        .contains_tx = DummyPool.contains_tx,
     };
     const pool = TxPool{ .ptr = &pool_impl, .vtable = &pool_vt };
 
@@ -242,6 +252,12 @@ test "check_nonce_gap_for_sender — rejects when beyond window and handles near
             const self: *const @This() = @ptrCast(@alignCast(ptr));
             return self.count_for;
         }
+        fn is_known(_: *anyopaque, _: TransactionHash) bool {
+            return false;
+        }
+        fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
+            return false;
+        }
     };
 
     const DummyHost = struct {
@@ -271,6 +287,8 @@ test "check_nonce_gap_for_sender — rejects when beyond window and handles near
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
+        .is_known = DummyPool.is_known,
+        .contains_tx = DummyPool.contains_tx,
     };
     const pool = TxPool{ .ptr = &pool_impl, .vtable = &pool_vt };
 
