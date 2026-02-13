@@ -18,7 +18,7 @@ pub fn validate_uncompressed_length(frame_data: []const u8) error{
     UncompressedLengthTooLarge,
     CompressedLengthTooLarge,
 }!usize {
-    if (frame_data.len > MaxSnappyLength) return error.CompressedLengthTooLarge;
+    if (frame_data.len > @as(usize, @intCast(frame.ProtocolMaxFrameSize))) return error.CompressedLengthTooLarge;
     if (frame_data.len == 0) return error.MissingLengthHeader;
 
     var value: usize = 0;
@@ -83,7 +83,13 @@ test "validate_uncompressed_length enforces compressed and uncompressed limits" 
         validate_uncompressed_length(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
     );
 
-    const oversized = try std.testing.allocator.alloc(u8, MaxSnappyLength + 1);
+    const max_compressed = @as(usize, @intCast(frame.ProtocolMaxFrameSize));
+    const at_limit = try std.testing.allocator.alloc(u8, max_compressed);
+    defer std.testing.allocator.free(at_limit);
+    @memset(at_limit, 0);
+    try std.testing.expectEqual(@as(usize, 0), try validate_uncompressed_length(at_limit));
+
+    const oversized = try std.testing.allocator.alloc(u8, @as(usize, @intCast(frame.ProtocolMaxFrameSize)) + 1);
     defer std.testing.allocator.free(oversized);
     @memset(oversized, 0);
 
