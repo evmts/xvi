@@ -476,7 +476,8 @@ pub fn common_ancestor_hash_local(
 ///
 /// Semantics:
 /// - Uses local store only and never fetches from fork cache.
-/// - Returns `false` when canonical head is unavailable locally.
+/// - Returns typed errors when canonical head snapshot is unavailable or no
+///   local common ancestor can be established.
 /// - Returns `false` when candidate is equal to canonical head, extends it, or
 ///   is its ancestor.
 /// - Returns `true` only when both heads have a common ancestor that is neither
@@ -538,17 +539,21 @@ fn head_block_snapshot_local(chain: *Chain) ?Block.Block {
 }
 
 /// Returns whether `candidate_head` diverges from the current canonical head.
-pub const CanonicalDivergenceError = CanonicalHeadSnapshotError || CommonAncestorError;
+pub const CanonicalDivergenceError = CanonicalHeadSnapshotError || CommonAncestorError || error{
+    MissingCanonicalHead,
+    MissingCommonAncestor,
+};
 
 pub fn has_canonical_divergence_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
 ) CanonicalDivergenceError!bool {
-    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return false;
+    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return error.MissingCanonicalHead;
 
     if (Hash.equals(&canonical_head, &candidate_head)) return false;
 
-    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse return false;
+    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse
+        return error.MissingCommonAncestor;
     if (Hash.equals(&ancestor, &canonical_head)) return false; // candidate extends current head
     if (Hash.equals(&ancestor, &candidate_head)) return false; // candidate is an older canonical ancestor
     return true;
@@ -561,19 +566,22 @@ const ReorgDepthContext = struct {
 };
 
 const ReorgDepthContextError = CanonicalHeadSnapshotError || CommonAncestorError || error{
+    MissingCanonicalHead,
     MissingCanonicalHeadBlock,
     MissingCandidateHeadBlock,
+    MissingCommonAncestor,
     MissingCommonAncestorBlock,
 };
 
 fn reorg_depth_context_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) ReorgDepthContextError!?ReorgDepthContext {
-    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return null;
+) ReorgDepthContextError!ReorgDepthContext {
+    const canonical_head = (try canonical_head_hash_snapshot_local(chain)) orelse return error.MissingCanonicalHead;
     const canonical_head_block = get_block_local(chain, canonical_head) orelse return error.MissingCanonicalHeadBlock;
     const candidate_head_block = get_block_local(chain, candidate_head) orelse return error.MissingCandidateHeadBlock;
-    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse return null;
+    const ancestor = (try common_ancestor_hash_local(chain, canonical_head, candidate_head)) orelse
+        return error.MissingCommonAncestor;
     const ancestor_block = get_block_local(chain, ancestor) orelse return error.MissingCommonAncestorBlock;
 
     return .{
@@ -587,8 +595,9 @@ fn reorg_depth_context_local(
 ///
 /// Semantics:
 /// - Uses local store only and never fetches from fork cache.
-/// - Returns `null` when canonical head snapshot is unavailable, candidate is
-///   missing locally, or no local common ancestor can be established.
+/// - Returns typed errors when canonical head snapshot is unavailable,
+///   candidate is missing locally, or no local common ancestor can be
+///   established.
 /// - Returns `0` when candidate equals canonical head or extends canonical
 ///   head (ancestor is canonical head).
 /// - Otherwise returns `canonical_head.number - ancestor.number`, i.e. the
@@ -599,8 +608,8 @@ pub const ReorgDepthError = ReorgDepthContextError || error{MalformedReorgContex
 pub fn canonical_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) ReorgDepthError!?u64 {
-    const ctx = (try reorg_depth_context_local(chain, candidate_head)) orelse return null;
+) ReorgDepthError!u64 {
+    const ctx = try reorg_depth_context_local(chain, candidate_head);
 
     if (ctx.ancestor_number > ctx.canonical_head_number) return error.MalformedReorgContext;
     return ctx.canonical_head_number - ctx.ancestor_number;
@@ -610,8 +619,9 @@ pub fn canonical_reorg_depth_local(
 ///
 /// Semantics:
 /// - Uses local store only and never fetches from fork cache.
-/// - Returns `null` when canonical head snapshot is unavailable, candidate is
-///   missing locally, or no local common ancestor can be established.
+/// - Returns typed errors when canonical head snapshot is unavailable,
+///   candidate is missing locally, or no local common ancestor can be
+///   established.
 /// - Returns `0` when candidate equals canonical head or is a canonical
 ///   ancestor (ancestor is candidate).
 /// - Returns `candidate_head.number - ancestor.number`, i.e. the number of
@@ -620,8 +630,8 @@ pub fn canonical_reorg_depth_local(
 pub fn candidate_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
-) ReorgDepthError!?u64 {
-    const ctx = (try reorg_depth_context_local(chain, candidate_head)) orelse return null;
+) ReorgDepthError!u64 {
+    const ctx = try reorg_depth_context_local(chain, candidate_head);
 
     if (ctx.ancestor_number > ctx.candidate_head_number) return error.MalformedReorgContext;
     return ctx.candidate_head_number - ctx.ancestor_number;
@@ -775,12 +785,12 @@ test "Chain - common_ancestor_hash_local returns typed error for non-contiguous 
     try std.testing.expectError(error.MalformedAncestorBlock, common_ancestor_hash_local(&chain, a.hash, b.hash));
 }
 
-test "Chain - has_canonical_divergence_local returns false for empty canonical chain" {
+test "Chain - has_canonical_divergence_local returns typed error for empty canonical chain" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect(!(try has_canonical_divergence_local(&chain, Hash.ZERO)));
+    try std.testing.expectError(error.MissingCanonicalHead, has_canonical_divergence_local(&chain, Hash.ZERO));
 }
 
 test "Chain - has_canonical_divergence_local returns false for current canonical head" {
@@ -907,12 +917,32 @@ test "Chain - has_canonical_divergence_local returns typed error for non-contigu
     try std.testing.expectError(error.MalformedAncestorBlock, has_canonical_divergence_local(&chain, malformed.hash));
 }
 
-test "Chain - canonical_reorg_depth_local returns null for empty canonical chain" {
+test "Chain - has_canonical_divergence_local returns typed error when no local common ancestor exists" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect((try canonical_reorg_depth_local(&chain, Hash.ZERO)) == null);
+    const genesis_a = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis_a);
+    try chain.setCanonicalHead(genesis_a.hash);
+
+    // Independent block-0 header (different hash) to simulate disconnected ancestry.
+    var disconnected_h = primitives.BlockHeader.init();
+    disconnected_h.number = 0;
+    disconnected_h.timestamp = 99;
+    disconnected_h.parent_hash = Hash.ZERO;
+    const disconnected = try Block.from(&disconnected_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(disconnected);
+
+    try std.testing.expectError(error.MissingCommonAncestor, has_canonical_divergence_local(&chain, disconnected.hash));
+}
+
+test "Chain - canonical_reorg_depth_local returns typed error for empty canonical chain" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expectError(error.MissingCanonicalHead, canonical_reorg_depth_local(&chain, Hash.ZERO));
 }
 
 test "Chain - canonical_reorg_depth_local returns zero for canonical head" {
@@ -924,7 +954,7 @@ test "Chain - canonical_reorg_depth_local returns zero for canonical head" {
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), (try canonical_reorg_depth_local(&chain, genesis.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), try canonical_reorg_depth_local(&chain, genesis.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns zero when candidate extends canonical head" {
@@ -943,7 +973,7 @@ test "Chain - canonical_reorg_depth_local returns zero when candidate extends ca
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    try std.testing.expectEqual(@as(u64, 0), (try canonical_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), try canonical_reorg_depth_local(&chain, b1.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns one for sibling fork at height one" {
@@ -970,7 +1000,7 @@ test "Chain - canonical_reorg_depth_local returns one for sibling fork at height
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    try std.testing.expectEqual(@as(u64, 1), (try canonical_reorg_depth_local(&chain, b1b.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), try canonical_reorg_depth_local(&chain, b1b.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns rollback depth for deeper fork" {
@@ -1020,7 +1050,7 @@ test "Chain - canonical_reorg_depth_local returns rollback depth for deeper fork
     const b3b = try Block.from(&h3b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b3b);
 
-    try std.testing.expectEqual(@as(u64, 2), (try canonical_reorg_depth_local(&chain, b3b.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 2), try canonical_reorg_depth_local(&chain, b3b.hash));
 }
 
 test "Chain - canonical_reorg_depth_local returns typed error when ancestry missing locally" {
@@ -1061,12 +1091,31 @@ test "Chain - canonical_reorg_depth_local returns typed error for non-contiguous
     try std.testing.expectError(error.MalformedAncestorBlock, canonical_reorg_depth_local(&chain, malformed.hash));
 }
 
-test "Chain - candidate_reorg_depth_local returns null for empty canonical chain" {
+test "Chain - canonical_reorg_depth_local returns typed error when no local common ancestor exists" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expect((try candidate_reorg_depth_local(&chain, Hash.ZERO)) == null);
+    const genesis_a = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis_a);
+    try chain.setCanonicalHead(genesis_a.hash);
+
+    var disconnected_h = primitives.BlockHeader.init();
+    disconnected_h.number = 0;
+    disconnected_h.timestamp = 99;
+    disconnected_h.parent_hash = Hash.ZERO;
+    const disconnected = try Block.from(&disconnected_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(disconnected);
+
+    try std.testing.expectError(error.MissingCommonAncestor, canonical_reorg_depth_local(&chain, disconnected.hash));
+}
+
+test "Chain - candidate_reorg_depth_local returns typed error for empty canonical chain" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expectError(error.MissingCanonicalHead, candidate_reorg_depth_local(&chain, Hash.ZERO));
 }
 
 test "Chain - candidate_reorg_depth_local returns zero for canonical head" {
@@ -1078,7 +1127,7 @@ test "Chain - candidate_reorg_depth_local returns zero for canonical head" {
     try chain.putBlock(genesis);
     try chain.setCanonicalHead(genesis.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), (try candidate_reorg_depth_local(&chain, genesis.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), try candidate_reorg_depth_local(&chain, genesis.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns one when candidate extends canonical head" {
@@ -1097,7 +1146,7 @@ test "Chain - candidate_reorg_depth_local returns one when candidate extends can
     const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1);
 
-    try std.testing.expectEqual(@as(u64, 1), (try candidate_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), try candidate_reorg_depth_local(&chain, b1.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns one for sibling fork at height one" {
@@ -1124,7 +1173,7 @@ test "Chain - candidate_reorg_depth_local returns one for sibling fork at height
     const b1b = try Block.from(&h1b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b1b);
 
-    try std.testing.expectEqual(@as(u64, 1), (try candidate_reorg_depth_local(&chain, b1b.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 1), try candidate_reorg_depth_local(&chain, b1b.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns apply depth for deeper fork" {
@@ -1174,7 +1223,7 @@ test "Chain - candidate_reorg_depth_local returns apply depth for deeper fork" {
     const b3b = try Block.from(&h3b, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(b3b);
 
-    try std.testing.expectEqual(@as(u64, 2), (try candidate_reorg_depth_local(&chain, b3b.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 2), try candidate_reorg_depth_local(&chain, b3b.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns zero when candidate is canonical ancestor" {
@@ -1202,7 +1251,7 @@ test "Chain - candidate_reorg_depth_local returns zero when candidate is canonic
     try chain.putBlock(b2);
     try chain.setCanonicalHead(b2.hash);
 
-    try std.testing.expectEqual(@as(u64, 0), (try candidate_reorg_depth_local(&chain, b1.hash)) orelse return error.Unreachable);
+    try std.testing.expectEqual(@as(u64, 0), try candidate_reorg_depth_local(&chain, b1.hash));
 }
 
 test "Chain - candidate_reorg_depth_local returns typed error when ancestry missing locally" {
@@ -1241,6 +1290,25 @@ test "Chain - candidate_reorg_depth_local returns typed error for non-contiguous
     try chain.putBlock(malformed);
 
     try std.testing.expectError(error.MalformedAncestorBlock, candidate_reorg_depth_local(&chain, malformed.hash));
+}
+
+test "Chain - candidate_reorg_depth_local returns typed error when no local common ancestor exists" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis_a = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis_a);
+    try chain.setCanonicalHead(genesis_a.hash);
+
+    var disconnected_h = primitives.BlockHeader.init();
+    disconnected_h.number = 0;
+    disconnected_h.timestamp = 99;
+    disconnected_h.parent_hash = Hash.ZERO;
+    const disconnected = try Block.from(&disconnected_h, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(disconnected);
+
+    try std.testing.expectError(error.MissingCommonAncestor, candidate_reorg_depth_local(&chain, disconnected.hash));
 }
 
 /// Generic, comptime-injected head hash reader for any chain-like type.
