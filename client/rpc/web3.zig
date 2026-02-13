@@ -640,3 +640,55 @@ test "Web3Api.handleSha3FromRequest: missing id notification emits no response" 
     try api.handle_sha3_from_request(buf.writer(), req);
     try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }
+
+test "Web3Api.handleSha3FromRequest: non-string param -> invalid params" {
+    const Provider = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/linux-zig";
+        }
+    };
+    const Api = Web3Api(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"web3_sha3\", \"params\": [123] }";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_sha3_from_request(buf.writer(), req);
+
+    const code = errors.code.invalid_params;
+    var expect_buf: [256]u8 = undefined;
+    var fba = std.io.fixedBufferStream(&expect_buf);
+    try Response.write_error(fba.writer(), .{ .number = "1" }, code, errors.default_message(code), null);
+    try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
+}
+
+test "Web3Api.handleSha3FromRequest: extra params -> invalid params" {
+    const Provider = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/linux-zig";
+        }
+    };
+    const Api = Web3Api(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 1,\n" ++
+        "  \"method\": \"web3_sha3\",\n" ++
+        "  \"params\": [\"0x\", \"0x00\"]\n" ++
+        "}";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_sha3_from_request(buf.writer(), req);
+
+    const code = errors.code.invalid_params;
+    var expect_buf: [256]u8 = undefined;
+    var fba = std.io.fixedBufferStream(&expect_buf);
+    try Response.write_error(fba.writer(), .{ .number = "1" }, code, errors.default_message(code), null);
+    try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
+}
