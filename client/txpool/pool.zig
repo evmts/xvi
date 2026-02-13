@@ -4,6 +4,7 @@ const GasLimit = primitives.Gas.GasLimit;
 const Address = primitives.Address;
 const TransactionHash = primitives.TransactionHash.TransactionHash;
 const TransactionType = primitives.Transaction.TransactionType;
+const TransactionData = primitives.BlockBody.TransactionData;
 
 /// Transaction pool configuration defaults, modeled after Nethermind's
 /// `ITxPoolConfig` / `TxPoolConfig`.
@@ -88,11 +89,11 @@ pub const TxPoolConfig = struct {
 /// This mirrors the HostInterface pattern used by the EVM and allows
 /// compile-time wiring of concrete pool implementations.
 pub const TxPool = struct {
-    /// Lightweight pending transaction view item used by sender-scoped queries.
-    pub const PendingTransactionRef = struct {
-        tx_hash: TransactionHash,
-        tx_type: TransactionType,
-    };
+    /// Full pending transaction payload used by sender-scoped queries.
+    ///
+    /// This uses Voltaire's canonical transaction transport shape to preserve
+    /// nonce/fee fields in the raw encoded payload.
+    pub const PendingTransaction = TransactionData;
 
     /// Type-erased pointer to the concrete txpool implementation.
     ptr: *anyopaque,
@@ -110,7 +111,7 @@ pub const TxPool = struct {
         /// Number of pending transactions for a specific sender address.
         get_pending_count_for_sender: *const fn (ptr: *anyopaque, sender: Address) u32,
         /// Pending transactions for a specific sender, ordered by nonce and pool policy.
-        get_pending_transactions_by_sender: *const fn (ptr: *anyopaque, sender: Address) []const PendingTransactionRef,
+        get_pending_transactions_by_sender: *const fn (ptr: *anyopaque, sender: Address) []const PendingTransaction,
         /// Returns whether this transaction hash is known by the pool/hash cache.
         is_known: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) bool,
         /// Marks a hash as known in the current block/scope cache.
@@ -146,9 +147,9 @@ pub const TxPool = struct {
 
     /// Pending transactions currently tracked for `sender`.
     ///
-    /// Mirrors Nethermind's `GetPendingTransactionsBySender(Address)` shape,
-    /// but returns a lightweight typed view (hash + transaction type).
-    pub fn get_pending_transactions_by_sender(self: TxPool, sender: Address) []const PendingTransactionRef {
+    /// Mirrors Nethermind's `GetPendingTransactionsBySender(Address)` shape
+    /// by returning full transactions (encoded payloads).
+    pub fn get_pending_transactions_by_sender(self: TxPool, sender: Address) []const PendingTransaction {
         return self.vtable.get_pending_transactions_by_sender(self.ptr, sender);
     }
 
@@ -212,8 +213,8 @@ test "txpool interface dispatches pending counts" {
                 0;
         }
 
-        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
-            return &[_]TxPool.PendingTransactionRef{};
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
         }
 
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
@@ -272,7 +273,7 @@ test "txpool interface dispatches pending counts" {
 test "txpool interface dispatches pending transactions by sender" {
     const DummyPool = struct {
         match_sender: Address,
-        sender_pending: []const TxPool.PendingTransactionRef,
+        sender_pending: []const TxPool.PendingTransaction,
 
         fn pending_count(_: *anyopaque) u32 {
             return 0;
@@ -292,10 +293,10 @@ test "txpool interface dispatches pending transactions by sender" {
             return @intCast(self.sender_pending.len);
         }
 
-        fn get_pending_transactions_by_sender(ptr: *anyopaque, sender: Address) []const TxPool.PendingTransactionRef {
+        fn get_pending_transactions_by_sender(ptr: *anyopaque, sender: Address) []const TxPool.PendingTransaction {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             if (Address.equals(self.match_sender, sender)) return self.sender_pending;
-            return &[_]TxPool.PendingTransactionRef{};
+            return &[_]TxPool.PendingTransaction{};
         }
 
         fn is_known(_: *anyopaque, _: TransactionHash) bool {
@@ -310,9 +311,9 @@ test "txpool interface dispatches pending transactions by sender" {
     };
 
     const target = Address{ .bytes = [_]u8{0xC1} ++ [_]u8{0} ** 19 };
-    const expected = [_]TxPool.PendingTransactionRef{
-        .{ .tx_hash = [_]u8{0x31} ** 32, .tx_type = .legacy },
-        .{ .tx_hash = [_]u8{0x32} ** 32, .tx_type = .eip1559 },
+    const expected = [_]TxPool.PendingTransaction{
+        .{ .raw = &[_]u8{ 0xf8, 0x10, 0x01, 0x82, 0x52, 0x08 } },
+        .{ .raw = &[_]u8{ 0x02, 0xf8, 0x12, 0x01, 0x82, 0x52, 0x08 } },
     };
 
     var dummy = DummyPool{

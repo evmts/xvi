@@ -47,8 +47,8 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return 0;
         }
 
-        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
-            return &[_]TxPool.PendingTransactionRef{};
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
         }
 
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
@@ -120,8 +120,8 @@ test "precheck_duplicate matches typed containment semantics" {
             return 0;
         }
 
-        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
-            return &[_]TxPool.PendingTransactionRef{};
+        fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
         }
 
         fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {

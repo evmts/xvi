@@ -292,8 +292,8 @@ const LookupDummyPool = struct {
         return 0;
     }
 
-    fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransactionRef {
-        return &[_]TxPool.PendingTransactionRef{};
+    fn get_pending_transactions_by_sender(_: *anyopaque, _: Address) []const TxPool.PendingTransaction {
+        return &[_]TxPool.PendingTransaction{};
     }
 
     fn is_known(ptr: *anyopaque, tx_hash: TransactionHash) bool {
