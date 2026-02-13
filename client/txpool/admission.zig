@@ -39,6 +39,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return 0;
         }
 
+        fn get_pending_transactions(_: *anyopaque) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
+        }
+
         fn supports_blobs(_: *anyopaque) bool {
             return true;
         }
@@ -80,6 +84,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .get_pending_transactions = DummyPool.get_pending_transactions,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
@@ -110,6 +115,10 @@ test "precheck_duplicate matches typed containment semantics" {
 
         fn pending_blob_count(_: *anyopaque) u32 {
             return 0;
+        }
+
+        fn get_pending_transactions(_: *anyopaque) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
         }
 
         fn supports_blobs(_: *anyopaque) bool {
@@ -152,6 +161,7 @@ test "precheck_duplicate matches typed containment semantics" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .get_pending_transactions = DummyPool.get_pending_transactions,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,

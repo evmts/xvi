@@ -110,6 +110,8 @@ pub const TxPool = struct {
         pending_count: *const fn (ptr: *anyopaque) u32,
         /// Total number of pending blob transactions in the pool.
         pending_blob_count: *const fn (ptr: *anyopaque) u32,
+        /// Snapshot of currently pending non-blob transactions.
+        get_pending_transactions: *const fn (ptr: *anyopaque) []const PendingTransaction,
         /// Whether the concrete pool currently accepts/supports blob transactions.
         supports_blobs: *const fn (ptr: *anyopaque) bool,
         /// Number of pending transactions for a specific sender address.
@@ -132,6 +134,13 @@ pub const TxPool = struct {
     /// Total number of pending blob transactions in the pool.
     pub fn pending_blob_count(self: TxPool) u32 {
         return self.vtable.pending_blob_count(self.ptr);
+    }
+
+    /// Snapshot of currently pending non-blob transactions.
+    ///
+    /// Mirrors Nethermind's `GetPendingTransactions()` interface shape.
+    pub fn get_pending_transactions(self: TxPool) []const PendingTransaction {
+        return self.vtable.get_pending_transactions(self.ptr);
     }
 
     /// Returns true when blob transactions are supported by this pool.
@@ -202,6 +211,10 @@ test "txpool interface dispatches pending counts" {
             return self.pending_blobs;
         }
 
+        fn get_pending_transactions(_: *anyopaque) []const TxPool.PendingTransaction {
+            return &[_]TxPool.PendingTransaction{};
+        }
+
         fn supports_blobs(ptr: *anyopaque) bool {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
@@ -250,6 +263,7 @@ test "txpool interface dispatches pending counts" {
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .get_pending_transactions = DummyPool.get_pending_transactions,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
@@ -276,6 +290,7 @@ test "txpool interface dispatches pending counts" {
 
 test "txpool interface dispatches pending transactions by sender" {
     const DummyPool = struct {
+        all_pending: []const TxPool.PendingTransaction,
         match_sender: Address,
         sender_pending: []const TxPool.PendingTransaction,
 
@@ -285,6 +300,11 @@ test "txpool interface dispatches pending transactions by sender" {
 
         fn pending_blob_count(_: *anyopaque) u32 {
             return 0;
+        }
+
+        fn get_pending_transactions(ptr: *anyopaque) []const TxPool.PendingTransaction {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            return self.all_pending;
         }
 
         fn supports_blobs(_: *anyopaque) bool {
@@ -321,12 +341,14 @@ test "txpool interface dispatches pending transactions by sender" {
     };
 
     var dummy = DummyPool{
+        .all_pending = &expected,
         .match_sender = target,
         .sender_pending = &expected,
     };
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
         .pending_blob_count = DummyPool.pending_blob_count,
+        .get_pending_transactions = DummyPool.get_pending_transactions,
         .supports_blobs = DummyPool.supports_blobs,
         .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
         .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
@@ -335,6 +357,11 @@ test "txpool interface dispatches pending transactions by sender" {
         .contains_tx = DummyPool.contains_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
+
+    const got_all = pool.get_pending_transactions();
+    try std.testing.expectEqual(@as(usize, expected.len), got_all.len);
+    try std.testing.expectEqualDeep(expected[0], got_all[0]);
+    try std.testing.expectEqualDeep(expected[1], got_all[1]);
 
     const got_target = pool.get_pending_transactions_by_sender(target);
     try std.testing.expectEqual(@as(usize, expected.len), got_target.len);
