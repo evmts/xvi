@@ -65,11 +65,12 @@ pub fn pending_hash(chain: *Chain) ?Hash.Hash {
 ///
 /// Semantics:
 /// - Mirrors Nethermind's `FindPendingBlock` behavior with `PendingHash => Head`.
-/// - Uses local head snapshots only; never fetches from fork cache and never
-///   allocates.
-/// - Retries once when head changes during the read to avoid transient nulls.
+/// - Resolves strictly from `pending_hash` to preserve `PendingHash = HeadHash`
+///   semantics under local mapping races.
+/// - Uses local-only lookups; never fetches from fork cache and never allocates.
 pub fn pending_block(chain: *Chain) ?Block.Block {
-    return head_block_snapshot_local(chain);
+    const hash = pending_hash(chain) orelse return null;
+    return get_block_local(chain, hash);
 }
 
 /// Returns true if the given hash is canonical at its block number (local-only).
@@ -1572,6 +1573,37 @@ test "Chain - pending_block returns canonical head block" {
     const block = pending_block(&chain) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &genesis.hash, &block.hash);
     try std.testing.expectEqual(@as(u64, 0), block.header.number);
+}
+
+test "Chain - pending_block follows pending_hash across canonical head updates" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    var a1_header = primitives.BlockHeader.init();
+    a1_header.number = 1;
+    a1_header.parent_hash = genesis.hash;
+    a1_header.timestamp = 1;
+    const a1 = try Block.from(&a1_header, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(a1);
+    try chain.setCanonicalHead(a1.hash);
+
+    var b1_header = primitives.BlockHeader.init();
+    b1_header.number = 1;
+    b1_header.parent_hash = genesis.hash;
+    b1_header.timestamp = 2;
+    const b1 = try Block.from(&b1_header, &primitives.BlockBody.init(), allocator);
+    try chain.putBlock(b1);
+    try chain.setCanonicalHead(b1.hash);
+
+    const p_hash = pending_hash(&chain) orelse return error.Unreachable;
+    const p_block = pending_block(&chain) orelse return error.Unreachable;
+    try std.testing.expectEqualSlices(u8, &p_hash, &p_block.hash);
+    try std.testing.expectEqualSlices(u8, &b1.hash, &p_hash);
 }
 
 test "Chain - head_number_of forwards to underlying getter" {
