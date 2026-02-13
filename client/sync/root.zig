@@ -30,7 +30,7 @@ pub const SyncManager = manager.SyncManager;
 /// GetBlockHeaders request helper.
 pub const HeadersRequest = headers.HeadersRequest;
 /// GetBlockHeaders origin discriminator.
-pub const HeadersOrigin = headers.Origin;
+pub const HeadersOrigin = headers.HeadersOrigin;
 
 /// Sync status helpers (Nethermind-aligned semantics -> Voltaire SyncStatus).
 pub const is_synced_by_distance = status.is_synced_by_distance;
