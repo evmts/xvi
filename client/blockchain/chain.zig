@@ -331,7 +331,7 @@ pub fn last_256_block_hashes_local(
 /// - If the chains converge, returns the first matching hash when walking
 ///   upward; otherwise returns `null` (e.g., when an ancestor is missing
 ///   locally).
-fn common_ancestor_hash_local(
+pub fn common_ancestor_hash_local(
     chain: *Chain,
     a: Hash.Hash,
     b: Hash.Hash,
