@@ -13,15 +13,37 @@ const ExchangeTransitionConfigurationV1Method =
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
 const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
 const GetPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
-const Quantity = jsonrpc.types.Quantity.Quantity;
+
+fn voltaire_runtime_type(comptime T: type) type {
+    // Voltaire's generated EngineMethod params/results currently expose shared
+    // JSON-RPC types as module namespaces (e.g. `types.Quantity`); unwrap to
+    // the concrete runtime carrier type used by this API boundary.
+    if (comptime @hasDecl(T, "Quantity")) {
+        return T.Quantity;
+    }
+    return T;
+}
+
+const ExchangeCapabilitiesVoltaireParams = @FieldType(ExchangeCapabilitiesMethod, "params");
+const ExchangeCapabilitiesVoltaireResult = @FieldType(ExchangeCapabilitiesMethod, "result");
+const ExchangeTransitionConfigurationV1VoltaireParams = @FieldType(ExchangeTransitionConfigurationV1Method, "params");
+const ExchangeTransitionConfigurationV1VoltaireResult = @FieldType(ExchangeTransitionConfigurationV1Method, "result");
+const NewPayloadV1VoltaireParams = @FieldType(NewPayloadV1Method, "params");
+const NewPayloadV1VoltaireResult = @FieldType(NewPayloadV1Method, "result");
+const ForkchoiceUpdatedV1VoltaireParams = @FieldType(ForkchoiceUpdatedV1Method, "params");
+const ForkchoiceUpdatedV1VoltaireResult = @FieldType(ForkchoiceUpdatedV1Method, "result");
+const GetPayloadV1VoltaireParams = @FieldType(GetPayloadV1Method, "params");
+const GetPayloadV1VoltaireResult = @FieldType(GetPayloadV1Method, "result");
+
+const Quantity = voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods"));
 
 /// Parameters for `engine_exchangeCapabilities` requests.
 pub const ExchangeCapabilitiesParams = struct {
-    consensus_client_methods: Quantity,
+    consensus_client_methods: voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods")),
 };
 /// Result payload for `engine_exchangeCapabilities` responses.
 pub const ExchangeCapabilitiesResult = struct {
-    value: Quantity,
+    value: voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireResult, "value")),
 };
 
 /// ClientVersionV1 per execution-apis/src/engine/identification.md.
@@ -39,36 +61,36 @@ pub const ClientVersionV1Result = struct {
 
 /// Parameters for `engine_exchangeTransitionConfigurationV1` requests.
 pub const ExchangeTransitionConfigurationV1Params = struct {
-    consensus_client_configuration: Quantity,
+    consensus_client_configuration: voltaire_runtime_type(@FieldType(ExchangeTransitionConfigurationV1VoltaireParams, "consensus_client_configuration")),
 };
 /// Result payload for `engine_exchangeTransitionConfigurationV1` responses.
 pub const ExchangeTransitionConfigurationV1Result = struct {
-    value: Quantity,
+    value: voltaire_runtime_type(@FieldType(ExchangeTransitionConfigurationV1VoltaireResult, "value")),
 };
 /// Parameters for `engine_newPayloadV1` requests.
 pub const NewPayloadV1Params = struct {
-    execution_payload: Quantity,
+    execution_payload: voltaire_runtime_type(@FieldType(NewPayloadV1VoltaireParams, "execution_payload")),
 };
 /// Result payload for `engine_newPayloadV1` responses.
 pub const NewPayloadV1Result = struct {
-    value: Quantity,
+    value: voltaire_runtime_type(@FieldType(NewPayloadV1VoltaireResult, "value")),
 };
 /// Parameters for `engine_forkchoiceUpdatedV1` requests.
 pub const ForkchoiceUpdatedV1Params = struct {
-    forkchoice_state: Quantity,
-    payload_attributes: Quantity,
+    forkchoice_state: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireParams, "forkchoice_state")),
+    payload_attributes: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireParams, "payload_attributes")),
 };
 /// Result payload for `engine_forkchoiceUpdatedV1` responses.
 pub const ForkchoiceUpdatedV1Result = struct {
-    value: Quantity,
+    value: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireResult, "value")),
 };
 /// Parameters for `engine_getPayloadV1` requests.
 pub const GetPayloadV1Params = struct {
-    payload_id: Quantity,
+    payload_id: voltaire_runtime_type(@FieldType(GetPayloadV1VoltaireParams, "payload_id")),
 };
 /// Result payload for `engine_getPayloadV1` responses.
 pub const GetPayloadV1Result = struct {
-    value: Quantity,
+    value: voltaire_runtime_type(@FieldType(GetPayloadV1VoltaireResult, "value")),
 };
 
 fn DispatchResult(comptime Method: type) type {
