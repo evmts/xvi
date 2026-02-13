@@ -5,7 +5,7 @@ const crypto = @import("crypto");
 const Bytes32 = primitives.Bytes32.Bytes32;
 
 /// Generic pair of MAC/hash states for authenticated framing.
-pub fn mac_states_for(comptime Hasher: type) type {
+fn mac_states_for(comptime Hasher: type) type {
     return struct { ingress: Hasher, egress: Hasher };
 }
 

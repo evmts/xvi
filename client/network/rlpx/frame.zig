@@ -62,7 +62,7 @@ pub inline fn decode_frame_size_24(bytes: [3]u8) usize {
 /// - `total_packet_size = null` is valid for non-chunked frames.
 /// - When present, `total_packet_size` must be in `1..=max_packet_size`.
 /// - `frame_size` cannot exceed `total_packet_size`.
-pub inline fn validate_total_packet_size(
+inline fn validate_total_packet_size(
     frame_size: usize,
     total_packet_size: ?usize,
     max_packet_size: usize,
