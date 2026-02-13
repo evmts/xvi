@@ -394,6 +394,28 @@ const TraceFeed = struct {
     }
 };
 
+const TestFeeds = struct {
+    full: TraceFeed,
+    fast_blocks: TraceFeed,
+    fast_state: TraceFeed,
+    snap: TraceFeed,
+    fast_headers: TraceFeed,
+    fast_bodies: TraceFeed,
+    fast_receipts: TraceFeed,
+};
+
+fn init_test_feeds(trace: *FeedTrace) TestFeeds {
+    return .{
+        .full = .{ .trace = trace, .id = 1 },
+        .fast_blocks = .{ .trace = trace, .id = 5 },
+        .fast_state = .{ .trace = trace, .id = 7 },
+        .snap = .{ .trace = trace, .id = 6 },
+        .fast_headers = .{ .trace = trace, .id = 2 },
+        .fast_bodies = .{ .trace = trace, .id = 3 },
+        .fast_receipts = .{ .trace = trace, .id = 4 },
+    };
+}
+
 const LifecycleTrace = struct {
     order: [16]u8 = [_]u8{0} ** 16,
     len: usize = 0,
@@ -451,27 +473,10 @@ const TraceLifecycle = struct {
 };
 
 test "SyncManager.start: starts enabled feeds in Nethermind startup order" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &trace, .id = 1 },
-        .fast_blocks = .{ .trace = &trace, .id = 5 },
-        .fast_state = .{ .trace = &trace, .id = 7 },
-        .snap = .{ .trace = &trace, .id = 6 },
-        .fast_headers = .{ .trace = &trace, .id = 2 },
-        .fast_bodies = .{ .trace = &trace, .id = 3 },
-        .fast_receipts = .{ .trace = &trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&trace);
 
     var manager = Manager{
         .config = .{
@@ -506,27 +511,10 @@ test "SyncManager.start: starts enabled feeds in Nethermind startup order" {
 }
 
 test "SyncManager.start: disabled synchronization starts no feed components" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &trace, .id = 1 },
-        .fast_blocks = .{ .trace = &trace, .id = 5 },
-        .fast_state = .{ .trace = &trace, .id = 7 },
-        .snap = .{ .trace = &trace, .id = 6 },
-        .fast_headers = .{ .trace = &trace, .id = 2 },
-        .fast_bodies = .{ .trace = &trace, .id = 3 },
-        .fast_receipts = .{ .trace = &trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&trace);
     var manager = Manager{
         .config = .{
             .synchronization_enabled = false,
@@ -549,27 +537,11 @@ test "SyncManager.start: disabled synchronization starts no feed components" {
 }
 
 test "SyncManager.start: propagates feed start errors and stops later startup" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &trace, .id = 1 },
-        .fast_blocks = .{ .trace = &trace, .id = 5 },
-        .fast_state = .{ .trace = &trace, .id = 7 },
-        .snap = .{ .trace = &trace, .id = 6 },
-        .fast_headers = .{ .trace = &trace, .id = 2, .fail = true },
-        .fast_bodies = .{ .trace = &trace, .id = 3 },
-        .fast_receipts = .{ .trace = &trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&trace);
+    feeds.fast_headers.fail = true;
 
     var manager = Manager{
         .config = .{
@@ -595,27 +567,10 @@ test "SyncManager.start: propagates feed start errors and stops later startup" {
 }
 
 test "SyncManager.start: wires lifecycle hooks after feed startup order" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var feed_trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &feed_trace, .id = 1 },
-        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
-        .fast_state = .{ .trace = &feed_trace, .id = 7 },
-        .snap = .{ .trace = &feed_trace, .id = 6 },
-        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
-        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
-        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&feed_trace);
 
     var lifecycle_trace = LifecycleTrace{};
     var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
@@ -646,27 +601,10 @@ test "SyncManager.start: wires lifecycle hooks after feed startup order" {
 }
 
 test "SyncManager.start: exit_on_synced wires watcher before selector/report hooks" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var feed_trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &feed_trace, .id = 1 },
-        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
-        .fast_state = .{ .trace = &feed_trace, .id = 7 },
-        .snap = .{ .trace = &feed_trace, .id = 6 },
-        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
-        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
-        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&feed_trace);
 
     var lifecycle_trace = LifecycleTrace{};
     var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
@@ -695,27 +633,10 @@ test "SyncManager.start: exit_on_synced wires watcher before selector/report hoo
 }
 
 test "SyncManager.start: gc hook wiring is optional" {
-    const Feeds = struct {
-        full: TraceFeed,
-        fast_blocks: TraceFeed,
-        fast_state: TraceFeed,
-        snap: TraceFeed,
-        fast_headers: TraceFeed,
-        fast_bodies: TraceFeed,
-        fast_receipts: TraceFeed,
-    };
-    const Manager = SyncManager(Feeds);
+    const Manager = SyncManager(TestFeeds);
 
     var feed_trace = FeedTrace{};
-    var feeds = Feeds{
-        .full = .{ .trace = &feed_trace, .id = 1 },
-        .fast_blocks = .{ .trace = &feed_trace, .id = 5 },
-        .fast_state = .{ .trace = &feed_trace, .id = 7 },
-        .snap = .{ .trace = &feed_trace, .id = 6 },
-        .fast_headers = .{ .trace = &feed_trace, .id = 2 },
-        .fast_bodies = .{ .trace = &feed_trace, .id = 3 },
-        .fast_receipts = .{ .trace = &feed_trace, .id = 4 },
-    };
+    var feeds = init_test_feeds(&feed_trace);
 
     var lifecycle_trace = LifecycleTrace{};
     var trace_lifecycle = TraceLifecycle{ .trace = &lifecycle_trace };
