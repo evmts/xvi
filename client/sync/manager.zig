@@ -10,7 +10,7 @@ pub const SyncManagerStartConfig = struct {
     synchronization_enabled: bool = true,
     /// Enable fast-sync stages.
     fast_sync: bool = false,
-    /// Enable snap sync stage (only considered when fast sync is enabled).
+    /// Enable snap sync stage.
     snap_sync: bool = false,
     /// Enable fast header download stage.
     download_headers_in_fast_sync: bool = true,
@@ -37,7 +37,7 @@ pub const SyncStartupFeed = struct {
 /// Mirrors Nethermind `Synchronizer.Start*`:
 /// - If synchronization is disabled: start nothing.
 /// - Always start full feed when synchronization is enabled.
-/// - If fast-sync is enabled: start fast blocks feed + state feed.
+/// - If fast-sync or snap-sync is enabled: start fast blocks feed + state feed.
 /// - If snap-sync is enabled: start snap feed.
 /// - Fast headers always start under fast-sync.
 /// - Fast bodies/receipts start only when `download_headers_in_fast_sync`.
@@ -45,7 +45,8 @@ pub fn startup_feed_mask(config: SyncManagerStartConfig) u32 {
     if (!config.synchronization_enabled) return SyncStartupFeed.none;
 
     var mask: u32 = SyncStartupFeed.full;
-    if (!config.fast_sync) return mask;
+    const fast_sync_enabled = config.fast_sync or config.snap_sync;
+    if (!fast_sync_enabled) return mask;
 
     mask |= SyncStartupFeed.fast_blocks | SyncStartupFeed.fast_state | SyncStartupFeed.fast_headers;
 
@@ -197,13 +198,19 @@ test "startup_feed_mask: disabled synchronization starts no feeds" {
     try std.testing.expectEqual(SyncStartupFeed.none, mask);
 }
 
-test "startup_feed_mask: sync enabled without fast sync starts only full" {
+test "startup_feed_mask: snap sync implies fast-sync startup path" {
     const mask = startup_feed_mask(.{
         .synchronization_enabled = true,
         .fast_sync = false,
         .snap_sync = true,
     });
-    try std.testing.expectEqual(SyncStartupFeed.full, mask);
+    try std.testing.expectEqual(@as(u32, SyncStartupFeed.full |
+        SyncStartupFeed.fast_blocks |
+        SyncStartupFeed.fast_state |
+        SyncStartupFeed.fast_headers |
+        SyncStartupFeed.snap |
+        SyncStartupFeed.fast_bodies |
+        SyncStartupFeed.fast_receipts), mask);
 }
 
 test "startup_feed_mask: fast sync starts full + fast blocks + state + headers" {
