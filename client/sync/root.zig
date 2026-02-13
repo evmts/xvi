@@ -1,6 +1,7 @@
 /// Synchronization module entry point (phase-9-sync).
 const full = @import("full.zig");
-const manager = @import("mode.zig");
+const mode = @import("mode.zig");
+const manager = @import("manager.zig");
 const headers = @import("headers.zig");
 const status = @import("status.zig");
 
@@ -16,7 +17,13 @@ pub const max_receipts_per_request = full.max_receipts_per_request;
 pub const max_headers_per_request = full.max_headers_per_request;
 
 /// Sync mode bit flags (Nethermind-compatible shape).
-pub const SyncMode = manager.SyncMode;
+pub const SyncMode = mode.SyncMode;
+/// Sync manager startup configuration (Nethermind Synchronizer.Start parity).
+pub const SyncManagerStartConfig = manager.SyncManagerStartConfig;
+/// Startup feed bit flags produced by `startup_feed_mask`.
+pub const SyncStartupFeed = manager.SyncStartupFeed;
+/// Startup feed planner for manager boot orchestration.
+pub const startup_feed_mask = manager.startup_feed_mask;
 
 /// GetBlockHeaders request helper.
 pub const HeadersRequest = headers.HeadersRequest;
