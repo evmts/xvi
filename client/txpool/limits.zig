@@ -1,16 +1,11 @@
 const std = @import("std");
 const primitives = @import("primitives");
-// Import HostInterface from the core guillotine module exposed in build.zig
-const HostInterface = @import("guillotine").HostInterface;
 
 const tx_mod = primitives.Transaction;
 const TxPoolConfig = @import("pool.zig").TxPoolConfig;
-const TxPool = @import("pool.zig").TxPool;
 const U256 = primitives.Denomination.U256;
 const GasLimit = primitives.Gas.GasLimit;
 const Address = primitives.Address;
-const TransactionHash = primitives.TransactionHash.TransactionHash;
-const TransactionType = primitives.Transaction.TransactionType;
 
 inline fn assert_supported_tx_type(comptime T: type, comptime fn_name: []const u8) void {
     if (!(T == tx_mod.LegacyTransaction or
@@ -56,20 +51,6 @@ inline fn rlp_len_of_access_list(list: []const tx_mod.AccessListItem) usize {
 // -----------------------------------------------------------------------------
 // Public helpers (no allocations)
 // -----------------------------------------------------------------------------
-/// Compute the furthest in-order nonce the pool should accept without a gap
-/// given the current account nonce and the number of already-pending
-/// transactions from the same sender.
-///
-/// Mirrors Nethermind's GapNonceFilter notion of
-///   next_nonce_in_order = current_nonce + pending_sender_txs
-///
-/// Saturates on u64 overflow (returns `maxInt(u64)`). No allocations.
-fn next_nonce_in_order(current_nonce: u64, pending_sender_txs: u32) u64 {
-    const sum128: u128 = @as(u128, current_nonce) + @as(u128, pending_sender_txs);
-    const max = std.math.maxInt(u64);
-    return if (sum128 > max) max else @intCast(sum128);
-}
-
 /// Validate a transaction's `gas_limit` against optional pool cap.
 ///
 /// - If `cfg.gas_limit` is `null`, this check is a no-op.
@@ -121,24 +102,6 @@ pub fn enforce_nonce_gap(
     return error.NonceGap;
 }
 
-/// Check a transaction's nonce against the sender's current account nonce
-/// and the number of already-pending transactions from that sender present
-/// in the txpool. Rejects with `error.NonceGap` if the submitted nonce is
-/// beyond the allowed in-order window.
-///
-/// Mirrors Nethermind's `GapNonceFilter` using the local vtable-based
-/// `TxPool` + `HostInterface` dependencies.
-fn check_nonce_gap_for_sender(
-    pool: TxPool,
-    host: HostInterface,
-    sender: Address,
-    tx_nonce: u64,
-) error{NonceGap}!void {
-    const current_nonce: u64 = host.getNonce(sender);
-    const pending: u32 = pool.get_pending_count_for_sender(sender);
-    return enforce_nonce_gap(tx_nonce, current_nonce, pending);
-}
-
 test "enforce_nonce_gap — accepts when nonce <= current" {
     try enforce_nonce_gap(7, 8, 0);
 }
@@ -153,166 +116,10 @@ test "enforce_nonce_gap — rejects when beyond pending window" {
     try std.testing.expectError(error.NonceGap, enforce_nonce_gap(14, 10, 3));
 }
 
-test "next_nonce_in_order — computes upper bound without overflow" {
-    try std.testing.expectEqual(@as(u64, 13), next_nonce_in_order(10, 3));
-    try std.testing.expectEqual(@as(u64, 10), next_nonce_in_order(10, 0));
-}
-
-test "next_nonce_in_order — saturates on u64 overflow" {
-    const near_max: u64 = std.math.maxInt(u64) - 1;
-    try std.testing.expectEqual(std.math.maxInt(u64), next_nonce_in_order(near_max, 3));
-}
-
-test "check_nonce_gap_for_sender — accepts when nonce <= current and within window" {
-    const DummyPool = struct {
-        count_for: u32,
-        fn pending_count(_: *anyopaque) u32 {
-            return 0;
-        }
-        fn pending_blob_count(_: *anyopaque) u32 {
-            return 0;
-        }
-        fn get_pending_count_for_sender(ptr: *anyopaque, _: Address) u32 {
-            const self: *const @This() = @ptrCast(@alignCast(ptr));
-            return self.count_for;
-        }
-        fn is_known(_: *anyopaque, _: TransactionHash) bool {
-            return false;
-        }
-        fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
-            return false;
-        }
-    };
-
-    const DummyHost = struct {
-        nonce: u64,
-        fn getBalance(_: *anyopaque, _: Address) u256 {
-            return 0;
-        }
-        fn setBalance(_: *anyopaque, _: Address, _: u256) void {}
-        fn getCode(_: *anyopaque, _: Address) []const u8 {
-            return &[_]u8{};
-        }
-        fn setCode(_: *anyopaque, _: Address, _: []const u8) void {}
-        fn getStorage(_: *anyopaque, _: Address, _: u256) u256 {
-            return 0;
-        }
-        fn setStorage(_: *anyopaque, _: Address, _: u256, _: u256) void {}
-        fn getNonce(ptr: *anyopaque, _: Address) u64 {
-            const self: *const @This() = @ptrCast(@alignCast(ptr));
-            return self.nonce;
-        }
-        fn setNonce(_: *anyopaque, _: Address, _: u64) void {}
-    };
-
-    var pool_impl = DummyPool{ .count_for = 3 };
-    const pool_vt = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .is_known = DummyPool.is_known,
-        .contains_tx = DummyPool.contains_tx,
-    };
-    const pool = TxPool{ .ptr = &pool_impl, .vtable = &pool_vt };
-
-    var host_impl = DummyHost{ .nonce = 10 };
-    const host_vt = HostInterface.VTable{
-        .getBalance = DummyHost.getBalance,
-        .setBalance = DummyHost.setBalance,
-        .getCode = DummyHost.getCode,
-        .setCode = DummyHost.setCode,
-        .getStorage = DummyHost.getStorage,
-        .setStorage = DummyHost.setStorage,
-        .getNonce = DummyHost.getNonce,
-        .setNonce = DummyHost.setNonce,
-    };
-    const host = HostInterface{ .ptr = &host_impl, .vtable = &host_vt };
-
-    const sender = Address{ .bytes = [_]u8{0x01} ++ [_]u8{0} ** 19 };
-
-    // tx_nonce <= current (10) → accept
-    try check_nonce_gap_for_sender(pool, host, sender, 9);
-    try check_nonce_gap_for_sender(pool, host, sender, 10);
-
-    // Within pending window: current=10, pending=3 → up to 13 inclusive
-    try check_nonce_gap_for_sender(pool, host, sender, 11);
-    try check_nonce_gap_for_sender(pool, host, sender, 13);
-}
-
-test "check_nonce_gap_for_sender — rejects when beyond window and handles near-overflow" {
-    const DummyPool = struct {
-        count_for: u32,
-        fn pending_count(_: *anyopaque) u32 {
-            return 0;
-        }
-        fn pending_blob_count(_: *anyopaque) u32 {
-            return 0;
-        }
-        fn get_pending_count_for_sender(ptr: *anyopaque, _: Address) u32 {
-            const self: *const @This() = @ptrCast(@alignCast(ptr));
-            return self.count_for;
-        }
-        fn is_known(_: *anyopaque, _: TransactionHash) bool {
-            return false;
-        }
-        fn contains_tx(_: *anyopaque, _: TransactionHash, _: TransactionType) bool {
-            return false;
-        }
-    };
-
-    const DummyHost = struct {
-        nonce: u64,
-        fn getBalance(_: *anyopaque, _: Address) u256 {
-            return 0;
-        }
-        fn setBalance(_: *anyopaque, _: Address, _: u256) void {}
-        fn getCode(_: *anyopaque, _: Address) []const u8 {
-            return &[_]u8{};
-        }
-        fn setCode(_: *anyopaque, _: Address, _: []const u8) void {}
-        fn getStorage(_: *anyopaque, _: Address, _: u256) u256 {
-            return 0;
-        }
-        fn setStorage(_: *anyopaque, _: Address, _: u256, _: u256) void {}
-        fn getNonce(ptr: *anyopaque, _: Address) u64 {
-            const self: *const @This() = @ptrCast(@alignCast(ptr));
-            return self.nonce;
-        }
-        fn setNonce(_: *anyopaque, _: Address, _: u64) void {}
-    };
-
-    // Case 1: simple rejection (beyond window)
-    var pool_impl = DummyPool{ .count_for = 3 };
-    const pool_vt = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .is_known = DummyPool.is_known,
-        .contains_tx = DummyPool.contains_tx,
-    };
-    const pool = TxPool{ .ptr = &pool_impl, .vtable = &pool_vt };
-
-    var host_impl = DummyHost{ .nonce = 10 };
-    const host_vt = HostInterface.VTable{
-        .getBalance = DummyHost.getBalance,
-        .setBalance = DummyHost.setBalance,
-        .getCode = DummyHost.getCode,
-        .setCode = DummyHost.setCode,
-        .getStorage = DummyHost.getStorage,
-        .setStorage = DummyHost.setStorage,
-        .getNonce = DummyHost.getNonce,
-        .setNonce = DummyHost.setNonce,
-    };
-    const host = HostInterface{ .ptr = &host_impl, .vtable = &host_vt };
-
-    const sender = Address{ .bytes = [_]u8{0x02} ++ [_]u8{0} ** 19 };
-    try std.testing.expectError(error.NonceGap, check_nonce_gap_for_sender(pool, host, sender, 14));
-
-    // Case 2: near-overflow safety — current near max, small pending count
-    host_impl.nonce = std.math.maxInt(u64) - 1;
-    pool_impl.count_for = 1;
-    // tx_nonce = maxInt(u64) → within window (distance=1 <= pending=1)
-    try check_nonce_gap_for_sender(pool, host, sender, std.math.maxInt(u64));
+test "enforce_nonce_gap — handles near-overflow arithmetic safely" {
+    const near_max = std.math.maxInt(u64) - 1;
+    try enforce_nonce_gap(std.math.maxInt(u64), near_max, 1);
+    try std.testing.expectError(error.NonceGap, enforce_nonce_gap(std.math.maxInt(u64), near_max, 0));
 }
 /// Validate the RLP-encoded size of a transaction against pool limits.
 ///
