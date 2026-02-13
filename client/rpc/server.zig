@@ -281,3 +281,12 @@ test "parse_request_kind_for_dispatch returns parse_error for malformed json" {
         .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, code),
     }
 }
+
+test "parse_request_kind_for_dispatch rejects empty batches as invalid_request" {
+    const cfg = RpcServerConfig{};
+    const res = parse_request_kind_for_dispatch(cfg, "[]", false);
+    switch (res) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.JsonRpcErrorCode.invalid_request, code),
+    }
+}

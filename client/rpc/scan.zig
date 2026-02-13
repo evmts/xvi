@@ -293,6 +293,7 @@ pub fn parse_top_level_request_kind(input: []const u8) ScanRequestError!TopLevel
         },
         '[' => blk: {
             const count = try parse_json_array_count(input, &i, 1);
+            if (count == 0) return error.InvalidRequest;
             break :blk .{ .array = count };
         },
         else => return error.InvalidRequest,
@@ -443,12 +444,8 @@ test "parse_top_level_request_kind counts top-level batch entries" {
     }
 }
 
-test "parse_top_level_request_kind accepts empty batch arrays" {
-    const out = try parse_top_level_request_kind("[]");
-    switch (out) {
-        .array => |count| try std.testing.expectEqual(@as(usize, 0), count),
-        else => return error.UnexpectedVariant,
-    }
+test "parse_top_level_request_kind rejects empty batch arrays" {
+    try std.testing.expectError(error.InvalidRequest, parse_top_level_request_kind("[]"));
 }
 
 test "parse_top_level_request_kind rejects non-object non-array roots" {
