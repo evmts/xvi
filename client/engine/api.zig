@@ -12,19 +12,22 @@ const ExchangeTransitionConfigurationV1Method =
     @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeTransitionConfigurationV1");
 const NewPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV1");
 const NewPayloadV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV2");
+const NewPayloadV3Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV3");
+const NewPayloadV4Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV4");
+const NewPayloadV5Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_newPayloadV5");
 const ForkchoiceUpdatedV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV1");
+const ForkchoiceUpdatedV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV2");
+const ForkchoiceUpdatedV3Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_forkchoiceUpdatedV3");
 const GetPayloadV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV1");
 const GetPayloadV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV2");
-
-fn voltaire_runtime_type(comptime T: type) type {
-    // Voltaire's generated EngineMethod params/results currently expose shared
-    // JSON-RPC types as module namespaces (e.g. `types.Quantity`); unwrap to
-    // the concrete runtime carrier type used by this API boundary.
-    if (comptime @hasDecl(T, "Quantity")) {
-        return T.Quantity;
-    }
-    return T;
-}
+const GetPayloadV3Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV3");
+const GetPayloadV4Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV4");
+const GetPayloadV5Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV5");
+const GetPayloadV6Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV6");
+const GetPayloadBodiesByHashV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadBodiesByHashV1");
+const GetPayloadBodiesByRangeV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadBodiesByRangeV1");
+const GetBlobsV1Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getBlobsV1");
+const GetBlobsV2Method = @FieldType(jsonrpc.engine.EngineMethod, "engine_getBlobsV2");
 
 const ExchangeCapabilitiesVoltaireParams = @FieldType(ExchangeCapabilitiesMethod, "params");
 const ExchangeCapabilitiesVoltaireResult = @FieldType(ExchangeCapabilitiesMethod, "result");
@@ -34,23 +37,72 @@ const NewPayloadV1VoltaireParams = @FieldType(NewPayloadV1Method, "params");
 const NewPayloadV1VoltaireResult = @FieldType(NewPayloadV1Method, "result");
 const NewPayloadV2VoltaireParams = @FieldType(NewPayloadV2Method, "params");
 const NewPayloadV2VoltaireResult = @FieldType(NewPayloadV2Method, "result");
+const NewPayloadV3VoltaireParams = @FieldType(NewPayloadV3Method, "params");
+const NewPayloadV3VoltaireResult = @FieldType(NewPayloadV3Method, "result");
+const NewPayloadV4VoltaireParams = @FieldType(NewPayloadV4Method, "params");
+const NewPayloadV4VoltaireResult = @FieldType(NewPayloadV4Method, "result");
+const NewPayloadV5VoltaireParams = @FieldType(NewPayloadV5Method, "params");
+const NewPayloadV5VoltaireResult = @FieldType(NewPayloadV5Method, "result");
 const ForkchoiceUpdatedV1VoltaireParams = @FieldType(ForkchoiceUpdatedV1Method, "params");
 const ForkchoiceUpdatedV1VoltaireResult = @FieldType(ForkchoiceUpdatedV1Method, "result");
+const ForkchoiceUpdatedV2VoltaireParams = @FieldType(ForkchoiceUpdatedV2Method, "params");
+const ForkchoiceUpdatedV2VoltaireResult = @FieldType(ForkchoiceUpdatedV2Method, "result");
+const ForkchoiceUpdatedV3VoltaireParams = @FieldType(ForkchoiceUpdatedV3Method, "params");
+const ForkchoiceUpdatedV3VoltaireResult = @FieldType(ForkchoiceUpdatedV3Method, "result");
 const GetPayloadV1VoltaireParams = @FieldType(GetPayloadV1Method, "params");
 const GetPayloadV1VoltaireResult = @FieldType(GetPayloadV1Method, "result");
 const GetPayloadV2VoltaireParams = @FieldType(GetPayloadV2Method, "params");
 const GetPayloadV2VoltaireResult = @FieldType(GetPayloadV2Method, "result");
+const GetPayloadV3VoltaireParams = @FieldType(GetPayloadV3Method, "params");
+const GetPayloadV3VoltaireResult = @FieldType(GetPayloadV3Method, "result");
+const GetPayloadV4VoltaireParams = @FieldType(GetPayloadV4Method, "params");
+const GetPayloadV4VoltaireResult = @FieldType(GetPayloadV4Method, "result");
+const GetPayloadV5VoltaireParams = @FieldType(GetPayloadV5Method, "params");
+const GetPayloadV5VoltaireResult = @FieldType(GetPayloadV5Method, "result");
+const GetPayloadV6VoltaireParams = @FieldType(GetPayloadV6Method, "params");
+const GetPayloadV6VoltaireResult = @FieldType(GetPayloadV6Method, "result");
+const GetPayloadBodiesByHashV1VoltaireParams = @FieldType(GetPayloadBodiesByHashV1Method, "params");
+const GetPayloadBodiesByHashV1VoltaireResult = @FieldType(GetPayloadBodiesByHashV1Method, "result");
+const GetPayloadBodiesByRangeV1VoltaireParams = @FieldType(GetPayloadBodiesByRangeV1Method, "params");
+const GetPayloadBodiesByRangeV1VoltaireResult = @FieldType(GetPayloadBodiesByRangeV1Method, "result");
+const GetBlobsV1VoltaireParams = @FieldType(GetBlobsV1Method, "params");
+const GetBlobsV1VoltaireResult = @FieldType(GetBlobsV1Method, "result");
+const GetBlobsV2VoltaireParams = @FieldType(GetBlobsV2Method, "params");
+const GetBlobsV2VoltaireResult = @FieldType(GetBlobsV2Method, "result");
 
-const Quantity = voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods"));
+fn runtime_voltaire_type(comptime T: type) type {
+    if (comptime @hasDecl(T, "Quantity")) {
+        return T.Quantity;
+    }
 
-/// Parameters for `engine_exchangeCapabilities` requests.
-pub const ExchangeCapabilitiesParams = struct {
-    consensus_client_methods: voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods")),
-};
-/// Result payload for `engine_exchangeCapabilities` responses.
-pub const ExchangeCapabilitiesResult = struct {
-    value: voltaire_runtime_type(@FieldType(ExchangeCapabilitiesVoltaireResult, "value")),
-};
+    const info = @typeInfo(T);
+    if (info == .@"struct") {
+        const s = info.@"struct";
+        var fields: [s.fields.len]std.builtin.Type.StructField = undefined;
+        inline for (s.fields, 0..) |field, i| {
+            fields[i] = .{
+                .name = field.name,
+                .type = runtime_voltaire_type(field.type),
+                .default_value_ptr = field.default_value_ptr,
+                .is_comptime = field.is_comptime,
+                .alignment = field.alignment,
+            };
+        }
+        return @Type(.{ .@"struct" = .{
+            .layout = s.layout,
+            .fields = &fields,
+            .decls = &.{},
+            .is_tuple = s.is_tuple,
+        } });
+    }
+
+    return T;
+}
+
+const Quantity = runtime_voltaire_type(@FieldType(ExchangeCapabilitiesVoltaireParams, "consensus_client_methods"));
+
+pub const ExchangeCapabilitiesParams = runtime_voltaire_type(ExchangeCapabilitiesVoltaireParams);
+pub const ExchangeCapabilitiesResult = runtime_voltaire_type(ExchangeCapabilitiesVoltaireResult);
 
 /// ClientVersionV1 per execution-apis/src/engine/identification.md.
 pub const ClientVersionV1 = Quantity;
@@ -65,64 +117,66 @@ pub const ClientVersionV1Result = struct {
     value: []const ClientVersionV1,
 };
 
-/// Parameters for `engine_exchangeTransitionConfigurationV1` requests.
-pub const ExchangeTransitionConfigurationV1Params = struct {
-    consensus_client_configuration: voltaire_runtime_type(@FieldType(ExchangeTransitionConfigurationV1VoltaireParams, "consensus_client_configuration")),
-};
-/// Result payload for `engine_exchangeTransitionConfigurationV1` responses.
-pub const ExchangeTransitionConfigurationV1Result = struct {
-    value: voltaire_runtime_type(@FieldType(ExchangeTransitionConfigurationV1VoltaireResult, "value")),
-};
-/// Parameters for `engine_newPayloadV1` requests.
-pub const NewPayloadV1Params = struct {
-    execution_payload: voltaire_runtime_type(@FieldType(NewPayloadV1VoltaireParams, "execution_payload")),
-};
-/// Result payload for `engine_newPayloadV1` responses.
-pub const NewPayloadV1Result = struct {
-    value: voltaire_runtime_type(@FieldType(NewPayloadV1VoltaireResult, "value")),
-};
-/// Parameters for `engine_newPayloadV2` requests.
-pub const NewPayloadV2Params = struct {
-    execution_payload: voltaire_runtime_type(@FieldType(NewPayloadV2VoltaireParams, "execution_payload")),
-};
-/// Result payload for `engine_newPayloadV2` responses.
-pub const NewPayloadV2Result = struct {
-    value: voltaire_runtime_type(@FieldType(NewPayloadV2VoltaireResult, "value")),
-};
-/// Parameters for `engine_forkchoiceUpdatedV1` requests.
-pub const ForkchoiceUpdatedV1Params = struct {
-    forkchoice_state: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireParams, "forkchoice_state")),
-    payload_attributes: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireParams, "payload_attributes")),
-};
-/// Result payload for `engine_forkchoiceUpdatedV1` responses.
-pub const ForkchoiceUpdatedV1Result = struct {
-    value: voltaire_runtime_type(@FieldType(ForkchoiceUpdatedV1VoltaireResult, "value")),
-};
-/// Parameters for `engine_getPayloadV1` requests.
-pub const GetPayloadV1Params = struct {
-    payload_id: voltaire_runtime_type(@FieldType(GetPayloadV1VoltaireParams, "payload_id")),
-};
-/// Result payload for `engine_getPayloadV1` responses.
-pub const GetPayloadV1Result = struct {
-    value: voltaire_runtime_type(@FieldType(GetPayloadV1VoltaireResult, "value")),
-};
-/// Parameters for `engine_getPayloadV2` requests.
-pub const GetPayloadV2Params = struct {
-    payload_id: voltaire_runtime_type(@FieldType(GetPayloadV2VoltaireParams, "payload_id")),
-};
-/// Result payload for `engine_getPayloadV2` responses.
-pub const GetPayloadV2Result = struct {
-    value: voltaire_runtime_type(@FieldType(GetPayloadV2VoltaireResult, "value")),
-};
+pub const ExchangeTransitionConfigurationV1Params = runtime_voltaire_type(ExchangeTransitionConfigurationV1VoltaireParams);
+pub const ExchangeTransitionConfigurationV1Result = runtime_voltaire_type(ExchangeTransitionConfigurationV1VoltaireResult);
+pub const NewPayloadV1Params = runtime_voltaire_type(NewPayloadV1VoltaireParams);
+pub const NewPayloadV1Result = runtime_voltaire_type(NewPayloadV1VoltaireResult);
+pub const NewPayloadV2Params = runtime_voltaire_type(NewPayloadV2VoltaireParams);
+pub const NewPayloadV2Result = runtime_voltaire_type(NewPayloadV2VoltaireResult);
+pub const NewPayloadV3Params = runtime_voltaire_type(NewPayloadV3VoltaireParams);
+pub const NewPayloadV3Result = runtime_voltaire_type(NewPayloadV3VoltaireResult);
+pub const NewPayloadV4Params = runtime_voltaire_type(NewPayloadV4VoltaireParams);
+pub const NewPayloadV4Result = runtime_voltaire_type(NewPayloadV4VoltaireResult);
+pub const NewPayloadV5Params = runtime_voltaire_type(NewPayloadV5VoltaireParams);
+pub const NewPayloadV5Result = runtime_voltaire_type(NewPayloadV5VoltaireResult);
+pub const ForkchoiceUpdatedV1Params = runtime_voltaire_type(ForkchoiceUpdatedV1VoltaireParams);
+pub const ForkchoiceUpdatedV1Result = runtime_voltaire_type(ForkchoiceUpdatedV1VoltaireResult);
+pub const ForkchoiceUpdatedV2Params = runtime_voltaire_type(ForkchoiceUpdatedV2VoltaireParams);
+pub const ForkchoiceUpdatedV2Result = runtime_voltaire_type(ForkchoiceUpdatedV2VoltaireResult);
+pub const ForkchoiceUpdatedV3Params = runtime_voltaire_type(ForkchoiceUpdatedV3VoltaireParams);
+pub const ForkchoiceUpdatedV3Result = runtime_voltaire_type(ForkchoiceUpdatedV3VoltaireResult);
+pub const GetPayloadV1Params = runtime_voltaire_type(GetPayloadV1VoltaireParams);
+pub const GetPayloadV1Result = runtime_voltaire_type(GetPayloadV1VoltaireResult);
+pub const GetPayloadV2Params = runtime_voltaire_type(GetPayloadV2VoltaireParams);
+pub const GetPayloadV2Result = runtime_voltaire_type(GetPayloadV2VoltaireResult);
+pub const GetPayloadV3Params = runtime_voltaire_type(GetPayloadV3VoltaireParams);
+pub const GetPayloadV3Result = runtime_voltaire_type(GetPayloadV3VoltaireResult);
+pub const GetPayloadV4Params = runtime_voltaire_type(GetPayloadV4VoltaireParams);
+pub const GetPayloadV4Result = runtime_voltaire_type(GetPayloadV4VoltaireResult);
+pub const GetPayloadV5Params = runtime_voltaire_type(GetPayloadV5VoltaireParams);
+pub const GetPayloadV5Result = runtime_voltaire_type(GetPayloadV5VoltaireResult);
+pub const GetPayloadV6Params = runtime_voltaire_type(GetPayloadV6VoltaireParams);
+pub const GetPayloadV6Result = runtime_voltaire_type(GetPayloadV6VoltaireResult);
+pub const GetPayloadBodiesByHashV1Params = runtime_voltaire_type(GetPayloadBodiesByHashV1VoltaireParams);
+pub const GetPayloadBodiesByHashV1Result = runtime_voltaire_type(GetPayloadBodiesByHashV1VoltaireResult);
+pub const GetPayloadBodiesByRangeV1Params = runtime_voltaire_type(GetPayloadBodiesByRangeV1VoltaireParams);
+pub const GetPayloadBodiesByRangeV1Result = runtime_voltaire_type(GetPayloadBodiesByRangeV1VoltaireResult);
+pub const GetBlobsV1Params = runtime_voltaire_type(GetBlobsV1VoltaireParams);
+pub const GetBlobsV1Result = runtime_voltaire_type(GetBlobsV1VoltaireResult);
+pub const GetBlobsV2Params = runtime_voltaire_type(GetBlobsV2VoltaireParams);
+pub const GetBlobsV2Result = runtime_voltaire_type(GetBlobsV2VoltaireResult);
 
 fn DispatchResult(comptime Method: type) type {
     if (Method == ExchangeCapabilitiesMethod) return ExchangeCapabilitiesResult;
     if (Method == ExchangeTransitionConfigurationV1Method) return ExchangeTransitionConfigurationV1Result;
     if (Method == NewPayloadV1Method) return NewPayloadV1Result;
     if (Method == NewPayloadV2Method) return NewPayloadV2Result;
+    if (Method == NewPayloadV3Method) return NewPayloadV3Result;
+    if (Method == NewPayloadV4Method) return NewPayloadV4Result;
+    if (Method == NewPayloadV5Method) return NewPayloadV5Result;
     if (Method == ForkchoiceUpdatedV1Method) return ForkchoiceUpdatedV1Result;
+    if (Method == ForkchoiceUpdatedV2Method) return ForkchoiceUpdatedV2Result;
+    if (Method == ForkchoiceUpdatedV3Method) return ForkchoiceUpdatedV3Result;
     if (Method == GetPayloadV1Method) return GetPayloadV1Result;
     if (Method == GetPayloadV2Method) return GetPayloadV2Result;
+    if (Method == GetPayloadV3Method) return GetPayloadV3Result;
+    if (Method == GetPayloadV4Method) return GetPayloadV4Result;
+    if (Method == GetPayloadV5Method) return GetPayloadV5Result;
+    if (Method == GetPayloadV6Method) return GetPayloadV6Result;
+    if (Method == GetPayloadBodiesByHashV1Method) return GetPayloadBodiesByHashV1Result;
+    if (Method == GetPayloadBodiesByRangeV1Method) return GetPayloadBodiesByRangeV1Result;
+    if (Method == GetBlobsV1Method) return GetBlobsV1Result;
+    if (Method == GetBlobsV2Method) return GetBlobsV2Result;
     return @FieldType(Method, "result");
 }
 
@@ -226,11 +280,36 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: NewPayloadV2Params,
         ) Error!NewPayloadV2Result,
+        /// Validate an incoming execution payload V3.
+        new_payload_v3: *const fn (
+            ptr: *anyopaque,
+            params: NewPayloadV3Params,
+        ) Error!NewPayloadV3Result,
+        /// Validate an incoming execution payload V4.
+        new_payload_v4: *const fn (
+            ptr: *anyopaque,
+            params: NewPayloadV4Params,
+        ) Error!NewPayloadV4Result,
+        /// Validate an incoming execution payload V5.
+        new_payload_v5: *const fn (
+            ptr: *anyopaque,
+            params: NewPayloadV5Params,
+        ) Error!NewPayloadV5Result,
         /// Updates forkchoice state and optionally starts payload building (V1).
         forkchoice_updated_v1: *const fn (
             ptr: *anyopaque,
             params: ForkchoiceUpdatedV1Params,
         ) Error!ForkchoiceUpdatedV1Result,
+        /// Updates forkchoice state and optionally starts payload building (V2).
+        forkchoice_updated_v2: *const fn (
+            ptr: *anyopaque,
+            params: ForkchoiceUpdatedV2Params,
+        ) Error!ForkchoiceUpdatedV2Result,
+        /// Updates forkchoice state and optionally starts payload building (V3).
+        forkchoice_updated_v3: *const fn (
+            ptr: *anyopaque,
+            params: ForkchoiceUpdatedV3Params,
+        ) Error!ForkchoiceUpdatedV3Result,
         /// Returns a built execution payload by payload ID (V1).
         get_payload_v1: *const fn (
             ptr: *anyopaque,
@@ -241,6 +320,46 @@ pub const EngineApi = struct {
             ptr: *anyopaque,
             params: GetPayloadV2Params,
         ) Error!GetPayloadV2Result,
+        /// Returns a built execution payload plus sidecars by payload ID (V3).
+        get_payload_v3: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV3Params,
+        ) Error!GetPayloadV3Result,
+        /// Returns a built execution payload plus sidecars/requests by payload ID (V4).
+        get_payload_v4: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV4Params,
+        ) Error!GetPayloadV4Result,
+        /// Returns a built execution payload plus sidecars/requests by payload ID (V5).
+        get_payload_v5: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV5Params,
+        ) Error!GetPayloadV5Result,
+        /// Returns a built execution payload plus sidecars/requests by payload ID (V6).
+        get_payload_v6: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadV6Params,
+        ) Error!GetPayloadV6Result,
+        /// Returns execution payload bodies by block hash.
+        get_payload_bodies_by_hash_v1: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadBodiesByHashV1Params,
+        ) Error!GetPayloadBodiesByHashV1Result,
+        /// Returns execution payload bodies by block range.
+        get_payload_bodies_by_range_v1: *const fn (
+            ptr: *anyopaque,
+            params: GetPayloadBodiesByRangeV1Params,
+        ) Error!GetPayloadBodiesByRangeV1Result,
+        /// Returns blob pool entries by versioned hash.
+        get_blobs_v1: *const fn (
+            ptr: *anyopaque,
+            params: GetBlobsV1Params,
+        ) Error!GetBlobsV1Result,
+        /// Returns blob pool entries by versioned hash with Osaka response model.
+        get_blobs_v2: *const fn (
+            ptr: *anyopaque,
+            params: GetBlobsV2Params,
+        ) Error!GetBlobsV2Result,
     };
 
     /// Exchange list of supported Engine API methods.
@@ -307,6 +426,39 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Validates and imports an execution payload V3.
+    pub fn new_payload_v3(
+        self: EngineApi,
+        params: NewPayloadV3Params,
+    ) Error!NewPayloadV3Result {
+        try validate_new_payload_v3_params(params, Error.InvalidParams);
+        const result = try self.vtable.new_payload_v3(self.ptr, params);
+        try validate_new_payload_v3_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Validates and imports an execution payload V4.
+    pub fn new_payload_v4(
+        self: EngineApi,
+        params: NewPayloadV4Params,
+    ) Error!NewPayloadV4Result {
+        try validate_new_payload_v4_params(params, Error.InvalidParams);
+        const result = try self.vtable.new_payload_v4(self.ptr, params);
+        try validate_new_payload_v4_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Validates and imports an execution payload V5.
+    pub fn new_payload_v5(
+        self: EngineApi,
+        params: NewPayloadV5Params,
+    ) Error!NewPayloadV5Result {
+        try validate_new_payload_v5_params(params, Error.InvalidParams);
+        const result = try self.vtable.new_payload_v5(self.ptr, params);
+        try validate_new_payload_v5_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Applies a forkchoice update V1 with optional payload attributes.
     ///
     /// This stage performs request/response shape checks only.
@@ -318,6 +470,28 @@ pub const EngineApi = struct {
         try validate_forkchoice_updated_v1_params(params, Error.InvalidParams);
         const result = try self.vtable.forkchoice_updated_v1(self.ptr, params);
         try validate_forkchoice_updated_v1_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Applies a forkchoice update V2 with optional payload attributes.
+    pub fn forkchoice_updated_v2(
+        self: EngineApi,
+        params: ForkchoiceUpdatedV2Params,
+    ) Error!ForkchoiceUpdatedV2Result {
+        try validate_forkchoice_updated_v2_params(params, Error.InvalidParams);
+        const result = try self.vtable.forkchoice_updated_v2(self.ptr, params);
+        try validate_forkchoice_updated_v2_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Applies a forkchoice update V3 with optional payload attributes.
+    pub fn forkchoice_updated_v3(
+        self: EngineApi,
+        params: ForkchoiceUpdatedV3Params,
+    ) Error!ForkchoiceUpdatedV3Result {
+        try validate_forkchoice_updated_v3_params(params, Error.InvalidParams);
+        const result = try self.vtable.forkchoice_updated_v3(self.ptr, params);
+        try validate_forkchoice_updated_v3_result(result, Error.InternalError);
         return result;
     }
 
@@ -347,13 +521,95 @@ pub const EngineApi = struct {
         return result;
     }
 
+    /// Retrieves an execution payload response object by 8-byte `payloadId` (V3).
+    pub fn get_payload_v3(
+        self: EngineApi,
+        params: GetPayloadV3Params,
+    ) Error!GetPayloadV3Result {
+        try validate_get_payload_v3_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v3(self.ptr, params);
+        try validate_get_payload_v3_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves an execution payload response object by 8-byte `payloadId` (V4).
+    pub fn get_payload_v4(
+        self: EngineApi,
+        params: GetPayloadV4Params,
+    ) Error!GetPayloadV4Result {
+        try validate_get_payload_v4_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v4(self.ptr, params);
+        try validate_get_payload_v4_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves an execution payload response object by 8-byte `payloadId` (V5).
+    pub fn get_payload_v5(
+        self: EngineApi,
+        params: GetPayloadV5Params,
+    ) Error!GetPayloadV5Result {
+        try validate_get_payload_v5_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v5(self.ptr, params);
+        try validate_get_payload_v5_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves an execution payload response object by 8-byte `payloadId` (V6).
+    pub fn get_payload_v6(
+        self: EngineApi,
+        params: GetPayloadV6Params,
+    ) Error!GetPayloadV6Result {
+        try validate_get_payload_v6_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_v6(self.ptr, params);
+        try validate_get_payload_v6_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves execution payload bodies by block hash.
+    pub fn get_payload_bodies_by_hash_v1(
+        self: EngineApi,
+        params: GetPayloadBodiesByHashV1Params,
+    ) Error!GetPayloadBodiesByHashV1Result {
+        try validate_get_payload_bodies_by_hash_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_bodies_by_hash_v1(self.ptr, params);
+        try validate_get_payload_bodies_by_hash_v1_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves execution payload bodies by starting block and range size.
+    pub fn get_payload_bodies_by_range_v1(
+        self: EngineApi,
+        params: GetPayloadBodiesByRangeV1Params,
+    ) Error!GetPayloadBodiesByRangeV1Result {
+        try validate_get_payload_bodies_by_range_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_payload_bodies_by_range_v1(self.ptr, params);
+        try validate_get_payload_bodies_by_range_v1_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves blobs from the local blob pool.
+    pub fn get_blobs_v1(
+        self: EngineApi,
+        params: GetBlobsV1Params,
+    ) Error!GetBlobsV1Result {
+        try validate_get_blobs_v1_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_blobs_v1(self.ptr, params);
+        try validate_get_blobs_v1_result(result, Error.InternalError);
+        return result;
+    }
+
+    /// Retrieves blobs from the local blob pool using Osaka response schema.
+    pub fn get_blobs_v2(
+        self: EngineApi,
+        params: GetBlobsV2Params,
+    ) Error!GetBlobsV2Result {
+        try validate_get_blobs_v2_params(params, Error.InvalidParams);
+        const result = try self.vtable.get_blobs_v2(self.ptr, params);
+        try validate_get_blobs_v2_result(result, Error.InternalError);
+        return result;
+    }
+
     /// Generic dispatcher for EngineMethod calls using Voltaire's EngineMethod schema.
-    ///
-    /// Partial coverage: currently handles `engine_exchangeCapabilities`,
-    /// `engine_exchangeTransitionConfigurationV1`, `engine_newPayloadV1`,
-    /// `engine_newPayloadV2`, `engine_forkchoiceUpdatedV1`, `engine_getPayloadV1`,
-    /// and `engine_getPayloadV2`.
-    /// All other Engine methods return `Error.MethodNotFound` until implemented.
     ///
     /// Example:
     /// const Result = try api.dispatch("engine_exchangeCapabilities", params);
@@ -370,12 +626,38 @@ pub const EngineApi = struct {
             return self.new_payload_v1(params);
         } else if (comptime Method == NewPayloadV2Method) {
             return self.new_payload_v2(params);
+        } else if (comptime Method == NewPayloadV3Method) {
+            return self.new_payload_v3(params);
+        } else if (comptime Method == NewPayloadV4Method) {
+            return self.new_payload_v4(params);
+        } else if (comptime Method == NewPayloadV5Method) {
+            return self.new_payload_v5(params);
         } else if (comptime Method == ForkchoiceUpdatedV1Method) {
             return self.forkchoice_updated_v1(params);
+        } else if (comptime Method == ForkchoiceUpdatedV2Method) {
+            return self.forkchoice_updated_v2(params);
+        } else if (comptime Method == ForkchoiceUpdatedV3Method) {
+            return self.forkchoice_updated_v3(params);
         } else if (comptime Method == GetPayloadV1Method) {
             return self.get_payload_v1(params);
         } else if (comptime Method == GetPayloadV2Method) {
             return self.get_payload_v2(params);
+        } else if (comptime Method == GetPayloadV3Method) {
+            return self.get_payload_v3(params);
+        } else if (comptime Method == GetPayloadV4Method) {
+            return self.get_payload_v4(params);
+        } else if (comptime Method == GetPayloadV5Method) {
+            return self.get_payload_v5(params);
+        } else if (comptime Method == GetPayloadV6Method) {
+            return self.get_payload_v6(params);
+        } else if (comptime Method == GetPayloadBodiesByHashV1Method) {
+            return self.get_payload_bodies_by_hash_v1(params);
+        } else if (comptime Method == GetPayloadBodiesByRangeV1Method) {
+            return self.get_payload_bodies_by_range_v1(params);
+        } else if (comptime Method == GetBlobsV1Method) {
+            return self.get_blobs_v1(params);
+        } else if (comptime Method == GetBlobsV2Method) {
+            return self.get_blobs_v2(params);
         } else {
             return Error.MethodNotFound;
         }
@@ -539,6 +821,77 @@ fn validate_new_payload_v2_result(
     );
 }
 
+fn validate_new_payload_v3_params(
+    params: NewPayloadV3Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
+    try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
+    switch (params.root_of_the_parent_beacon_block.value) {
+        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_new_payload_v3_result(
+    result: NewPayloadV3Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_status_v1_json(
+        result.value.value,
+        invalid_err,
+        is_payload_status_no_invalid_block_hash_status,
+    );
+}
+
+fn validate_new_payload_v4_params(
+    params: NewPayloadV4Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
+    try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
+    switch (params.root_of_the_parent_beacon_block.value) {
+        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
+        else => return invalid_err,
+    }
+    try validate_bytes_array_json(params.execution_requests.value, invalid_err);
+}
+
+fn validate_new_payload_v4_result(
+    result: NewPayloadV4Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_status_v1_json(
+        result.value.value,
+        invalid_err,
+        is_payload_status_no_invalid_block_hash_status,
+    );
+}
+
+fn validate_new_payload_v5_params(
+    params: NewPayloadV5Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v4_json(params.execution_payload.value, invalid_err);
+    try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
+    switch (params.parent_beacon_block_root.value) {
+        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
+        else => return invalid_err,
+    }
+    try validate_bytes_array_json(params.execution_requests.value, invalid_err);
+}
+
+fn validate_new_payload_v5_result(
+    result: NewPayloadV5Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_status_v1_json(
+        result.value.value,
+        invalid_err,
+        is_payload_status_no_invalid_block_hash_status,
+    );
+}
+
 fn validate_execution_payload_v2_version_gate_json(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
@@ -569,18 +922,62 @@ fn validate_forkchoice_updated_v1_result(
     result: ForkchoiceUpdatedV1Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    if (result.value.value != .object) return invalid_err;
-    const obj = result.value.value.object;
+    try validate_forkchoice_updated_result_json(result.value.value, invalid_err);
+}
+
+fn validate_forkchoice_updated_v2_params(
+    params: ForkchoiceUpdatedV2Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_forkchoice_state_v1_json(params.forkchoice_state.value, invalid_err);
+    switch (params.payload_attributes.value) {
+        .object => try validate_payload_attributes_v1_or_v2_json(params.payload_attributes.value, invalid_err),
+        .null => {},
+        else => return invalid_err,
+    }
+}
+
+fn validate_forkchoice_updated_v2_result(
+    result: ForkchoiceUpdatedV2Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_forkchoice_updated_result_json(result.value.value, invalid_err);
+}
+
+fn validate_forkchoice_updated_v3_params(
+    params: ForkchoiceUpdatedV3Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_forkchoice_state_v1_json(params.forkchoice_state.value, invalid_err);
+    switch (params.payload_attributes.value) {
+        .object => try validate_payload_attributes_v3_json(params.payload_attributes.value, invalid_err),
+        .null => {},
+        else => return invalid_err,
+    }
+}
+
+fn validate_forkchoice_updated_v3_result(
+    result: ForkchoiceUpdatedV3Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_forkchoice_updated_result_json(result.value.value, invalid_err);
+}
+
+fn validate_forkchoice_updated_result_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
 
     const payload_status = obj.get("payloadStatus") orelse return invalid_err;
     try validate_payload_status_v1_json(payload_status, invalid_err, is_restricted_payload_status_v1_status);
 
-    if (obj.get("payloadId")) |payload_id| {
-        switch (payload_id) {
-            .null => {},
-            .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
-            else => return invalid_err,
-        }
+    const payload_id = obj.get("payloadId") orelse return invalid_err;
+    switch (payload_id) {
+        .null => {},
+        .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
+        else => return invalid_err,
     }
 }
 
@@ -606,11 +1003,7 @@ fn validate_get_payload_v2_params(
     params: GetPayloadV2Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    const payload_id = params.payload_id.value;
-    switch (payload_id) {
-        .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
-        else => return invalid_err,
-    }
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v2_result(
@@ -630,6 +1023,188 @@ fn validate_get_payload_v2_result(
     }
 }
 
+fn validate_payload_id_json(
+    payload_id: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    switch (payload_id) {
+        .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_get_payload_v3_params(
+    params: GetPayloadV3Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
+}
+
+fn validate_get_payload_v3_result(
+    result: GetPayloadV3Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_get_payload_v3_or_v4_or_v5_json(result.value.value, invalid_err, false, false);
+}
+
+fn validate_get_payload_v4_params(
+    params: GetPayloadV4Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
+}
+
+fn validate_get_payload_v4_result(
+    result: GetPayloadV4Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_get_payload_v3_or_v4_or_v5_json(result.value.value, invalid_err, true, false);
+}
+
+fn validate_get_payload_v5_params(
+    params: GetPayloadV5Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
+}
+
+fn validate_get_payload_v5_result(
+    result: GetPayloadV5Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_get_payload_v3_or_v4_or_v5_json(result.value.value, invalid_err, true, true);
+}
+
+fn validate_get_payload_v6_params(
+    params: GetPayloadV6Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
+}
+
+fn validate_get_payload_v6_result(
+    result: GetPayloadV6Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (result.value.value != .object) return invalid_err;
+    const obj = result.value.value.object;
+
+    const execution_payload = obj.get("executionPayload") orelse return invalid_err;
+    try validate_execution_payload_v4_json(execution_payload, invalid_err);
+
+    const block_value = obj.get("blockValue") orelse return invalid_err;
+    switch (block_value) {
+        .string => |s| _ = try parse_quantity_hex_u256(s, invalid_err),
+        else => return invalid_err,
+    }
+
+    const blobs_bundle = obj.get("blobsBundle") orelse return invalid_err;
+    try validate_blobs_bundle_v2_json(blobs_bundle, invalid_err);
+
+    const should_override_builder = obj.get("shouldOverrideBuilder") orelse return invalid_err;
+    if (should_override_builder != .bool) return invalid_err;
+
+    const execution_requests = obj.get("executionRequests") orelse return invalid_err;
+    try validate_bytes_array_json(execution_requests, invalid_err);
+}
+
+fn validate_get_payload_bodies_by_hash_v1_params(
+    params: GetPayloadBodiesByHashV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_hash32_array_json(params.array_of_block_hashes.value, invalid_err);
+}
+
+fn validate_get_payload_bodies_by_hash_v1_result(
+    result: GetPayloadBodiesByHashV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_bodies_array_json(result.value.value, invalid_err);
+}
+
+fn validate_get_payload_bodies_by_range_v1_params(
+    params: GetPayloadBodiesByRangeV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    switch (params.starting_block_number.value) {
+        .string => |s| _ = try parse_quantity_hex_u64(s, invalid_err),
+        else => return invalid_err,
+    }
+    switch (params.number_of_blocks_to_return.value) {
+        .string => |s| _ = try parse_quantity_hex_u64(s, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_get_payload_bodies_by_range_v1_result(
+    result: GetPayloadBodiesByRangeV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_bodies_array_json(result.value.value, invalid_err);
+}
+
+fn validate_get_blobs_v1_params(
+    params: GetBlobsV1Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_hash32_array_json(params.blob_versioned_hashes.value, invalid_err);
+}
+
+fn validate_get_blobs_v1_result(
+    result: GetBlobsV1Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_blob_and_proof_array_json(result.value.value, invalid_err, false);
+}
+
+fn validate_get_blobs_v2_params(
+    params: GetBlobsV2Params,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_hash32_array_json(params.blob_versioned_hashes.value, invalid_err);
+}
+
+fn validate_get_blobs_v2_result(
+    result: GetBlobsV2Result,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_blob_and_proof_array_json(result.value.value, invalid_err, true);
+}
+
+fn validate_get_payload_v3_or_v4_or_v5_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+    comptime requires_execution_requests: bool,
+    comptime use_blobs_bundle_v2: bool,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    const execution_payload = obj.get("executionPayload") orelse return invalid_err;
+    try validate_execution_payload_v3_json(execution_payload, invalid_err);
+
+    const block_value = obj.get("blockValue") orelse return invalid_err;
+    switch (block_value) {
+        .string => |s| _ = try parse_quantity_hex_u256(s, invalid_err),
+        else => return invalid_err,
+    }
+
+    const blobs_bundle = obj.get("blobsBundle") orelse return invalid_err;
+    if (comptime use_blobs_bundle_v2) {
+        try validate_blobs_bundle_v2_json(blobs_bundle, invalid_err);
+    } else {
+        try validate_blobs_bundle_v1_json(blobs_bundle, invalid_err);
+    }
+
+    const should_override_builder = obj.get("shouldOverrideBuilder") orelse return invalid_err;
+    if (should_override_builder != .bool) return invalid_err;
+
+    if (comptime requires_execution_requests) {
+        const execution_requests = obj.get("executionRequests") orelse return invalid_err;
+        try validate_bytes_array_json(execution_requests, invalid_err);
+    }
+}
+
 fn validate_execution_payload_v1_or_v2_json(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
@@ -639,6 +1214,155 @@ fn validate_execution_payload_v1_or_v2_json(
 
     const withdrawals = value.object.get("withdrawals") orelse return;
     try validate_withdrawals_v1_json(withdrawals, invalid_err);
+}
+
+fn validate_execution_payload_v3_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v1_or_v2_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+    try validate_json_quantity_u64_field(obj, "blobGasUsed", invalid_err);
+    try validate_json_quantity_u64_field(obj, "excessBlobGas", invalid_err);
+    if (obj.get("blockAccessList") != null) return invalid_err;
+    if (obj.get("slotNumber") != null) return invalid_err;
+}
+
+fn validate_execution_payload_v4_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_execution_payload_v3_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+    try validate_json_data_max_size_field(obj, "blockAccessList", std.math.maxInt(usize) / 2, invalid_err);
+    try validate_json_quantity_u64_field(obj, "slotNumber", invalid_err);
+}
+
+fn validate_hash32_array_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+    for (value.array.items) |item| {
+        switch (item) {
+            .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
+            else => return invalid_err,
+        }
+    }
+}
+
+fn validate_bytes_array_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+    for (value.array.items) |item| {
+        switch (item) {
+            .string => |s| try validate_data_hex_max_size(s, std.math.maxInt(usize) / 2, invalid_err),
+            else => return invalid_err,
+        }
+    }
+}
+
+fn validate_blobs_bundle_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    const commitments = obj.get("commitments") orelse return invalid_err;
+    if (commitments != .array) return invalid_err;
+    for (commitments.array.items) |commitment| {
+        switch (commitment) {
+            .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+            else => return invalid_err,
+        }
+    }
+
+    const proofs = obj.get("proofs") orelse return invalid_err;
+    if (proofs != .array) return invalid_err;
+    for (proofs.array.items) |proof| {
+        switch (proof) {
+            .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+            else => return invalid_err,
+        }
+    }
+
+    const blobs = obj.get("blobs") orelse return invalid_err;
+    try validate_bytes_array_json(blobs, invalid_err);
+}
+
+fn validate_blobs_bundle_v2_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_blobs_bundle_v1_json(value, invalid_err);
+}
+
+fn validate_payload_bodies_array_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+    for (value.array.items) |body| {
+        try validate_payload_body_v1_json(body, invalid_err);
+    }
+}
+
+fn validate_payload_body_v1_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    const txs = obj.get("transactions") orelse return invalid_err;
+    try validate_bytes_array_json(txs, invalid_err);
+
+    if (obj.get("withdrawals")) |withdrawals| {
+        switch (withdrawals) {
+            .null => {},
+            .array => try validate_withdrawals_v1_json(withdrawals, invalid_err),
+            else => return invalid_err,
+        }
+    }
+}
+
+fn validate_blob_and_proof_array_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+    comptime with_cell_proofs: bool,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+    for (value.array.items) |entry| {
+        if (entry != .object) return invalid_err;
+        const obj = entry.object;
+        const blob = obj.get("blob") orelse return invalid_err;
+        switch (blob) {
+            .string => |s| try validate_data_hex_max_size(s, std.math.maxInt(usize) / 2, invalid_err),
+            else => return invalid_err,
+        }
+
+        if (comptime with_cell_proofs) {
+            const proofs = obj.get("proofs") orelse return invalid_err;
+            if (proofs != .array) return invalid_err;
+            for (proofs.array.items) |proof| {
+                switch (proof) {
+                    .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+                    else => return invalid_err,
+                }
+            }
+        } else {
+            const proof = obj.get("proof") orelse return invalid_err;
+            switch (proof) {
+                .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+                else => return invalid_err,
+            }
+        }
+    }
 }
 
 fn validate_withdrawals_v1_json(
@@ -859,6 +1583,38 @@ fn validate_payload_attributes_v1_json(
     try validate_json_fixed_data_field(obj, "suggestedFeeRecipient", 20, invalid_err);
 }
 
+fn validate_payload_attributes_v1_or_v2_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .object) return invalid_err;
+    if (value.object.get("withdrawals") != null) {
+        return validate_payload_attributes_v2_json(value, invalid_err);
+    }
+    return validate_payload_attributes_v1_json(value, invalid_err);
+}
+
+fn validate_payload_attributes_v2_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_attributes_v1_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+    const withdrawals = obj.get("withdrawals") orelse return invalid_err;
+    try validate_withdrawals_v1_json(withdrawals, invalid_err);
+}
+
+fn validate_payload_attributes_v3_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_attributes_v2_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+    try validate_json_fixed_data_field(obj, "parentBeaconBlockRoot", 32, invalid_err);
+}
+
 fn is_slice_of_byte_slices(comptime T: type) bool {
     const info = @typeInfo(T);
     if (info != .pointer or info.pointer.size != .slice) return false;
@@ -940,17 +1696,43 @@ const DummyEngine = struct {
     transition_result: ExchangeTransitionConfigurationV1Result = undefined,
     new_payload_result: NewPayloadV1Result = undefined,
     new_payload_v2_result: NewPayloadV2Result = undefined,
+    new_payload_v3_result: NewPayloadV3Result = undefined,
+    new_payload_v4_result: NewPayloadV4Result = undefined,
+    new_payload_v5_result: NewPayloadV5Result = undefined,
     forkchoice_updated_result: ForkchoiceUpdatedV1Result = undefined,
+    forkchoice_updated_v2_result: ForkchoiceUpdatedV2Result = undefined,
+    forkchoice_updated_v3_result: ForkchoiceUpdatedV3Result = undefined,
     get_payload_result: GetPayloadV1Result = undefined,
     get_payload_v2_result: GetPayloadV2Result = undefined,
+    get_payload_v3_result: GetPayloadV3Result = undefined,
+    get_payload_v4_result: GetPayloadV4Result = undefined,
+    get_payload_v5_result: GetPayloadV5Result = undefined,
+    get_payload_v6_result: GetPayloadV6Result = undefined,
+    get_payload_bodies_by_hash_v1_result: GetPayloadBodiesByHashV1Result = undefined,
+    get_payload_bodies_by_range_v1_result: GetPayloadBodiesByRangeV1Result = undefined,
+    get_blobs_v1_result: GetBlobsV1Result = undefined,
+    get_blobs_v2_result: GetBlobsV2Result = undefined,
     called: bool = false,
     client_version_called: bool = false,
     transition_called: bool = false,
     new_payload_called: bool = false,
     new_payload_v2_called: bool = false,
+    new_payload_v3_called: bool = false,
+    new_payload_v4_called: bool = false,
+    new_payload_v5_called: bool = false,
     forkchoice_updated_called: bool = false,
+    forkchoice_updated_v2_called: bool = false,
+    forkchoice_updated_v3_called: bool = false,
     get_payload_called: bool = false,
     get_payload_v2_called: bool = false,
+    get_payload_v3_called: bool = false,
+    get_payload_v4_called: bool = false,
+    get_payload_v5_called: bool = false,
+    get_payload_v6_called: bool = false,
+    get_payload_bodies_by_hash_v1_called: bool = false,
+    get_payload_bodies_by_range_v1_called: bool = false,
+    get_blobs_v1_called: bool = false,
+    get_blobs_v2_called: bool = false,
 
     fn exchange_capabilities(
         ptr: *anyopaque,
@@ -1002,6 +1784,36 @@ const DummyEngine = struct {
         return self.new_payload_v2_result;
     }
 
+    fn new_payload_v3(
+        ptr: *anyopaque,
+        params: NewPayloadV3Params,
+    ) EngineApi.Error!NewPayloadV3Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.new_payload_v3_called = true;
+        return self.new_payload_v3_result;
+    }
+
+    fn new_payload_v4(
+        ptr: *anyopaque,
+        params: NewPayloadV4Params,
+    ) EngineApi.Error!NewPayloadV4Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.new_payload_v4_called = true;
+        return self.new_payload_v4_result;
+    }
+
+    fn new_payload_v5(
+        ptr: *anyopaque,
+        params: NewPayloadV5Params,
+    ) EngineApi.Error!NewPayloadV5Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.new_payload_v5_called = true;
+        return self.new_payload_v5_result;
+    }
+
     fn forkchoice_updated_v1(
         ptr: *anyopaque,
         params: ForkchoiceUpdatedV1Params,
@@ -1010,6 +1822,26 @@ const DummyEngine = struct {
         _ = params;
         self.forkchoice_updated_called = true;
         return self.forkchoice_updated_result;
+    }
+
+    fn forkchoice_updated_v2(
+        ptr: *anyopaque,
+        params: ForkchoiceUpdatedV2Params,
+    ) EngineApi.Error!ForkchoiceUpdatedV2Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.forkchoice_updated_v2_called = true;
+        return self.forkchoice_updated_v2_result;
+    }
+
+    fn forkchoice_updated_v3(
+        ptr: *anyopaque,
+        params: ForkchoiceUpdatedV3Params,
+    ) EngineApi.Error!ForkchoiceUpdatedV3Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.forkchoice_updated_v3_called = true;
+        return self.forkchoice_updated_v3_result;
     }
 
     fn get_payload_v1(
@@ -1031,6 +1863,86 @@ const DummyEngine = struct {
         self.get_payload_v2_called = true;
         return self.get_payload_v2_result;
     }
+
+    fn get_payload_v3(
+        ptr: *anyopaque,
+        params: GetPayloadV3Params,
+    ) EngineApi.Error!GetPayloadV3Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_v3_called = true;
+        return self.get_payload_v3_result;
+    }
+
+    fn get_payload_v4(
+        ptr: *anyopaque,
+        params: GetPayloadV4Params,
+    ) EngineApi.Error!GetPayloadV4Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_v4_called = true;
+        return self.get_payload_v4_result;
+    }
+
+    fn get_payload_v5(
+        ptr: *anyopaque,
+        params: GetPayloadV5Params,
+    ) EngineApi.Error!GetPayloadV5Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_v5_called = true;
+        return self.get_payload_v5_result;
+    }
+
+    fn get_payload_v6(
+        ptr: *anyopaque,
+        params: GetPayloadV6Params,
+    ) EngineApi.Error!GetPayloadV6Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_v6_called = true;
+        return self.get_payload_v6_result;
+    }
+
+    fn get_payload_bodies_by_hash_v1(
+        ptr: *anyopaque,
+        params: GetPayloadBodiesByHashV1Params,
+    ) EngineApi.Error!GetPayloadBodiesByHashV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_bodies_by_hash_v1_called = true;
+        return self.get_payload_bodies_by_hash_v1_result;
+    }
+
+    fn get_payload_bodies_by_range_v1(
+        ptr: *anyopaque,
+        params: GetPayloadBodiesByRangeV1Params,
+    ) EngineApi.Error!GetPayloadBodiesByRangeV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_payload_bodies_by_range_v1_called = true;
+        return self.get_payload_bodies_by_range_v1_result;
+    }
+
+    fn get_blobs_v1(
+        ptr: *anyopaque,
+        params: GetBlobsV1Params,
+    ) EngineApi.Error!GetBlobsV1Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_blobs_v1_called = true;
+        return self.get_blobs_v1_result;
+    }
+
+    fn get_blobs_v2(
+        ptr: *anyopaque,
+        params: GetBlobsV2Params,
+    ) EngineApi.Error!GetBlobsV2Result {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.get_blobs_v2_called = true;
+        return self.get_blobs_v2_result;
+    }
 };
 
 const dummy_vtable = EngineApi.VTable{
@@ -1039,9 +1951,22 @@ const dummy_vtable = EngineApi.VTable{
     .exchange_transition_configuration_v1 = DummyEngine.exchange_transition_configuration_v1,
     .new_payload_v1 = DummyEngine.new_payload_v1,
     .new_payload_v2 = DummyEngine.new_payload_v2,
+    .new_payload_v3 = DummyEngine.new_payload_v3,
+    .new_payload_v4 = DummyEngine.new_payload_v4,
+    .new_payload_v5 = DummyEngine.new_payload_v5,
     .forkchoice_updated_v1 = DummyEngine.forkchoice_updated_v1,
+    .forkchoice_updated_v2 = DummyEngine.forkchoice_updated_v2,
+    .forkchoice_updated_v3 = DummyEngine.forkchoice_updated_v3,
     .get_payload_v1 = DummyEngine.get_payload_v1,
     .get_payload_v2 = DummyEngine.get_payload_v2,
+    .get_payload_v3 = DummyEngine.get_payload_v3,
+    .get_payload_v4 = DummyEngine.get_payload_v4,
+    .get_payload_v5 = DummyEngine.get_payload_v5,
+    .get_payload_v6 = DummyEngine.get_payload_v6,
+    .get_payload_bodies_by_hash_v1 = DummyEngine.get_payload_bodies_by_hash_v1,
+    .get_payload_bodies_by_range_v1 = DummyEngine.get_payload_bodies_by_range_v1,
+    .get_blobs_v1 = DummyEngine.get_blobs_v1,
+    .get_blobs_v2 = DummyEngine.get_blobs_v2,
 };
 
 fn make_api(dummy: *DummyEngine) EngineApi {
@@ -2090,7 +3015,7 @@ test "engine api rejects forkchoiceUpdatedV1 params with non-canonical payload a
     try std.testing.expect(!dummy.forkchoice_updated_called);
 }
 
-test "engine api accepts forkchoiceUpdatedV1 response without payloadId" {
+test "engine api rejects forkchoiceUpdatedV1 response without payloadId" {
     const alloc = std.testing.allocator;
 
     var state_obj = std.json.ObjectMap.init(alloc);
@@ -2122,7 +3047,7 @@ test "engine api accepts forkchoiceUpdatedV1 response without payloadId" {
     var dummy = DummyEngine{ .result = exchange_result, .forkchoice_updated_result = result_value };
     const api = make_api(&dummy);
 
-    _ = try api.forkchoice_updated_v1(params);
+    try std.testing.expectError(EngineApi.Error.InternalError, api.forkchoice_updated_v1(params));
     try std.testing.expect(dummy.forkchoice_updated_called);
 }
 
@@ -2241,15 +3166,17 @@ test "engine api generic dispatcher routes forkchoiceUpdatedV1" {
 }
 
 test "engine api generic dispatcher rejects unknown method" {
-    const GetPayloadV3 = @FieldType(jsonrpc.engine.EngineMethod, "engine_getPayloadV3");
-    const GetPayloadV3Params = @FieldType(GetPayloadV3, "params");
-    const params: GetPayloadV3Params = undefined;
+    const UnknownMethod = struct {
+        params: struct {},
+        result: struct {},
+    };
+    const params: @FieldType(UnknownMethod, "params") = .{};
     const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
 
     var dummy = DummyEngine{ .result = exchange_result };
     const api = make_api(&dummy);
 
-    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(GetPayloadV3, params));
+    try std.testing.expectError(EngineApi.Error.MethodNotFound, api.dispatch(UnknownMethod, params));
 }
 
 test "engine api rejects invalid client version params" {
