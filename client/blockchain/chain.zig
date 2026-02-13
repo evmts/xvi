@@ -357,26 +357,31 @@ pub fn common_ancestor_hash_local(
     // Level heights by walking down the taller side first.
     while (ha > hb) : (ha -= 1) {
         const blk = get_block_local(chain, ah) orelse return null;
-        if (blk.header.number == 0) break; // genesis has no parent
+        if (blk.header.number != ha) return null;
+        if (ha == 0) return null;
         ah = blk.header.parent_hash;
     }
     while (hb > ha) : (hb -= 1) {
         const blk = get_block_local(chain, bh) orelse return null;
-        if (blk.header.number == 0) break; // genesis has no parent
+        if (blk.header.number != hb) return null;
+        if (hb == 0) return null;
         bh = blk.header.parent_hash;
     }
 
     // Walk in lockstep until hashes match or ancestry is missing locally.
     // In a valid chain, both sides can move up at most `ha + 1` times.
     // This guarantees termination even under malformed/cyclic ancestry.
+    var level = ha;
     var remaining_hops = ha + 1;
     while (remaining_hops > 0) : (remaining_hops -= 1) {
-        if (Hash.equals(&ah, &bh)) return ah;
         const ab = get_block_local(chain, ah) orelse return null;
         const bb = get_block_local(chain, bh) orelse return null;
-        if (ab.header.number == 0 or bb.header.number == 0) return null; // diverged to different geneses or missing
+        if (ab.header.number != level or bb.header.number != level) return null;
+        if (Hash.equals(&ah, &bh)) return ah;
+        if (level == 0) return null;
         ah = ab.header.parent_hash;
         bh = bb.header.parent_hash;
+        level -= 1;
     }
     return null;
 }
