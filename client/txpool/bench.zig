@@ -3,7 +3,6 @@
 /// Focus areas:
 /// - Admission sizing: `fits_size_limits` across mixed tx types
 /// - Fee sorting hot path: `compare_fee_market_priority` (standalone + sort)
-/// - Allocation behavior: ensure memory is returned (GPA) and report bytes/op
 ///
 /// Notes:
 /// - Voltaire primitives do not expose EIP-2930 transactions in this build; the
@@ -46,7 +45,7 @@ noinline fn fits_size_limits_ok(tx: anytype, cfg: txpool.TxPoolConfig) !void {
     try txpool.fits_size_limits(tx, cfg);
 }
 
-fn bench_admission(_: std.mem.Allocator, n_per_type: usize) !bench.BenchResult {
+fn bench_admission(n_per_type: usize) !bench.BenchResult {
     // Config with generous size caps (should all pass)
     var cfg = txpool.TxPoolConfig{};
     cfg.max_tx_size = 256 * 1024; // legacy/1559/2930/7702
@@ -377,19 +376,6 @@ fn bench_lookup_dispatch(n: usize) struct { is_known: bench.BenchResult, contain
     };
 }
 
-fn bench_admission_memory(n_per_type: usize) !struct { elapsed_ns: u64, bytes_per_op: usize } {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
-    defer _ = gpa.deinit();
-
-    const before_bytes: usize = gpa.total_requested_bytes;
-    const res = try bench_admission(gpa.allocator(), n_per_type);
-    const after_bytes: usize = gpa.total_requested_bytes;
-
-    const total_ops: usize = n_per_type * 4; // 4 tx types in this bench
-    const per_op = if (total_ops > 0) (after_bytes - before_bytes) / total_ops else 0;
-    return .{ .elapsed_ns = res.elapsed_ns, .bytes_per_op = per_op };
-}
-
 /// Benchmark executable entrypoint for txpool admission/sorting hot paths.
 pub fn main() !void {
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
@@ -397,24 +383,14 @@ pub fn main() !void {
     std.debug.print("  Warmup: implicit in generation; timings averaged per run\n", .{});
     std.debug.print("=" ** 100 ++ "\n\n", .{});
 
-    // Admission (fits_size_limits) using GPA to ensure frees reclaim memory
-    std.debug.print("--- Admission: fits_size_limits (GPA allocator) ---\n", .{});
+    // Admission (fits_size_limits) hot path.
+    std.debug.print("--- Admission: fits_size_limits ---\n", .{});
     {
-        const r_small = try bench_admission(std.heap.c_allocator, N_ADMISSION_SMALL);
+        const r_small = try bench_admission(N_ADMISSION_SMALL);
         bench.print_result(r_small);
 
-        const r_med = try bench_admission(std.heap.c_allocator, N_ADMISSION_MED);
+        const r_med = try bench_admission(N_ADMISSION_MED);
         bench.print_result(r_med);
-    }
-    std.debug.print("\n", .{});
-
-    // Allocation behavior (bytes/op) with GPA accounting
-    std.debug.print("--- Allocation Behavior (GPA observed) ---\n", .{});
-    {
-        const m = try bench_admission_memory(2_000);
-        const time_str = bench.format_ns(m.elapsed_ns);
-        std.debug.print("  fits_size_limits: ~{d} bytes/op (2k/tx-type), time={s}\n", .{ m.bytes_per_op, &time_str });
-        std.debug.print("  Note: using GPA to ensure frees are honored; Arena would retain until deinit.\n", .{});
     }
     std.debug.print("\n", .{});
 
