@@ -48,13 +48,7 @@ pub fn NetApi(comptime Provider: type) type {
                 .missing => return, // JSON-RPC notification: no response
                 .present => |id| {
                     const network_id: NetworkId = self.provider.getNetworkId();
-
-                    var result_buf: [22]u8 = undefined; // quote + 20 digits + quote
-                    result_buf[0] = '"';
-                    const digits = try std.fmt.bufPrint(result_buf[1 .. result_buf.len - 1], "{}", .{primitives.NetworkId.toNumber(network_id)});
-                    result_buf[1 + digits.len] = '"';
-
-                    try Response.write_success_raw(writer, id, result_buf[0 .. digits.len + 2]);
+                    try Response.write_success_decimal_u64(writer, id, primitives.NetworkId.toNumber(network_id));
                 },
             }
         }

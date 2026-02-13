@@ -66,6 +66,20 @@ pub const Response = struct {
         try writer.writeAll("}");
     }
 
+    /// Write a JSON decimal string from a u64 (for `uintDecimal` RPC results).
+    pub fn write_decimal_string_u64(writer: anytype, value: u64) !void {
+        try writer.writeByte('"');
+        try std.fmt.format(writer, "{}", .{value});
+        try writer.writeByte('"');
+    }
+
+    /// Convenience: full success envelope with decimal-string(u64) result.
+    pub fn write_success_decimal_u64(writer: anytype, id: envelope.Id, value: u64) !void {
+        try write_success_result_prefix(writer, id);
+        try write_decimal_string_u64(writer, value);
+        try writer.writeAll("}");
+    }
+
     // ---------------------------------------------------------------------
     // Internals
     // ---------------------------------------------------------------------
@@ -201,6 +215,23 @@ test "response.write_success_quantity_u64: full envelope" {
     try Response.write_success_quantity_u64(buf.writer(), .{ .number = "7" }, 26);
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1a\"}",
+        buf.items,
+    );
+}
+
+test "response.write_decimal_string_u64: encodes decimal string" {
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try Response.write_decimal_string_u64(buf.writer(), 11155111);
+    try std.testing.expectEqualStrings("\"11155111\"", buf.items);
+}
+
+test "response.write_success_decimal_u64: full envelope" {
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try Response.write_success_decimal_u64(buf.writer(), .{ .string = "abc-123" }, 1);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"abc-123\",\"result\":\"1\"}",
         buf.items,
     );
 }
