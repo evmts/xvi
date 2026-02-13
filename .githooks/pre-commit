@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+# Prevent committing local runtime artifacts and enforce atomic fixture commits.
+
+set -eu
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -z "$staged_files" ] && exit 0
+
+# 1) Never commit local DB / SQLite / workflow log artifacts.
+blocked_artifacts="$(printf '%s\n' "$staged_files" | grep -E '(^|/)([^/]+\.db|[^/]+\.db-shm|[^/]+\.db-wal|[^/]+\.sqlite3?(-shm|-wal)?|smithers_run\.log)$|^scripts/guillotine-workflow/db-backups/' || true)"
+if [ -n "$blocked_artifacts" ]; then
+  echo "✖ Refusing commit: artifact files are staged." >&2
+  printf '%s\n' "$blocked_artifacts" >&2
+  echo "  Remove these from the index and commit code changes only." >&2
+  exit 1
+fi
+
+# 2) Keep generated fixture updates atomic (no mixed code+fixture commits).
+generated_fixture_pattern='^test/specs/generated(_state)?/'
+has_generated="$(printf '%s\n' "$staged_files" | grep -E "$generated_fixture_pattern" || true)"
+if [ -n "$has_generated" ]; then
+  has_non_generated="$(printf '%s\n' "$staged_files" | grep -Ev "$generated_fixture_pattern" || true)"
+  if [ -n "$has_non_generated" ]; then
+    echo "✖ Refusing commit: generated fixture files are mixed with non-generated changes." >&2
+    echo "  Commit generated fixtures separately to keep commits atomic." >&2
+    echo "  Generated files:" >&2
+    printf '%s\n' "$has_generated" >&2
+    echo "  Non-generated files:" >&2
+    printf '%s\n' "$has_non_generated" >&2
+    exit 1
+  fi
+fi
+
+exit 0
