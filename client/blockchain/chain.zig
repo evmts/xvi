@@ -602,14 +602,17 @@ fn reorg_depth_context_local(
 ///   canonical.
 pub const ReorgDepthError = ReorgDepthContextError || error{MalformedReorgContext};
 
+fn reorg_depth_from_ancestor(descendant_number: u64, ancestor_number: u64) ReorgDepthError!u64 {
+    if (ancestor_number > descendant_number) return error.MalformedReorgContext;
+    return descendant_number - ancestor_number;
+}
+
 pub fn canonical_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
 ) ReorgDepthError!u64 {
     const ctx = try reorg_depth_context_local(chain, candidate_head);
-
-    if (ctx.ancestor_number > ctx.canonical_head_number) return error.MalformedReorgContext;
-    return ctx.canonical_head_number - ctx.ancestor_number;
+    return reorg_depth_from_ancestor(ctx.canonical_head_number, ctx.ancestor_number);
 }
 
 /// Returns local-only candidate-branch depth from candidate head to common ancestor.
@@ -629,9 +632,13 @@ pub fn candidate_reorg_depth_local(
     candidate_head: Hash.Hash,
 ) ReorgDepthError!u64 {
     const ctx = try reorg_depth_context_local(chain, candidate_head);
+    return reorg_depth_from_ancestor(ctx.candidate_head_number, ctx.ancestor_number);
+}
 
-    if (ctx.ancestor_number > ctx.candidate_head_number) return error.MalformedReorgContext;
-    return ctx.candidate_head_number - ctx.ancestor_number;
+test "Chain - reorg_depth_from_ancestor validates ordering and computes distance" {
+    try std.testing.expectError(error.MalformedReorgContext, reorg_depth_from_ancestor(1, 2));
+    try std.testing.expectEqual(@as(u64, 0), try reorg_depth_from_ancestor(2, 2));
+    try std.testing.expectEqual(@as(u64, 3), try reorg_depth_from_ancestor(5, 2));
 }
 
 test "Chain - common_ancestor_hash_local returns typed error when either missing" {
