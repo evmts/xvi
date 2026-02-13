@@ -814,11 +814,7 @@ fn validate_new_payload_v2_result(
     result: NewPayloadV2Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_status_v1_json(
-        result.value.value,
-        invalid_err,
-        is_payload_status_no_invalid_block_hash_status,
-    );
+    try validate_payload_status_without_invalid_block_hash(result.value.value, invalid_err);
 }
 
 fn validate_new_payload_v3_params(
@@ -827,21 +823,14 @@ fn validate_new_payload_v3_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    switch (params.root_of_the_parent_beacon_block.value) {
-        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
-        else => return invalid_err,
-    }
+    try validate_hash32_value_json(params.root_of_the_parent_beacon_block.value, invalid_err);
 }
 
 fn validate_new_payload_v3_result(
     result: NewPayloadV3Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_status_v1_json(
-        result.value.value,
-        invalid_err,
-        is_payload_status_no_invalid_block_hash_status,
-    );
+    try validate_payload_status_without_invalid_block_hash(result.value.value, invalid_err);
 }
 
 fn validate_new_payload_v4_params(
@@ -850,10 +839,7 @@ fn validate_new_payload_v4_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    switch (params.root_of_the_parent_beacon_block.value) {
-        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
-        else => return invalid_err,
-    }
+    try validate_hash32_value_json(params.root_of_the_parent_beacon_block.value, invalid_err);
     try validate_bytes_array_json(params.execution_requests.value, invalid_err);
 }
 
@@ -861,11 +847,7 @@ fn validate_new_payload_v4_result(
     result: NewPayloadV4Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_status_v1_json(
-        result.value.value,
-        invalid_err,
-        is_payload_status_no_invalid_block_hash_status,
-    );
+    try validate_payload_status_without_invalid_block_hash(result.value.value, invalid_err);
 }
 
 fn validate_new_payload_v5_params(
@@ -874,10 +856,7 @@ fn validate_new_payload_v5_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v4_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    switch (params.parent_beacon_block_root.value) {
-        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
-        else => return invalid_err,
-    }
+    try validate_hash32_value_json(params.parent_beacon_block_root.value, invalid_err);
     try validate_bytes_array_json(params.execution_requests.value, invalid_err);
 }
 
@@ -885,11 +864,7 @@ fn validate_new_payload_v5_result(
     result: NewPayloadV5Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_status_v1_json(
-        result.value.value,
-        invalid_err,
-        is_payload_status_no_invalid_block_hash_status,
-    );
+    try validate_payload_status_without_invalid_block_hash(result.value.value, invalid_err);
 }
 
 fn validate_execution_payload_v2_version_gate_json(
@@ -985,11 +960,7 @@ fn validate_get_payload_v1_params(
     params: GetPayloadV1Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    const payload_id = params.payload_id.value;
-    switch (payload_id) {
-        .string => |s| try validate_data_hex_exact_size(s, 8, invalid_err),
-        else => return invalid_err,
-    }
+    try validate_payload_id_json(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v1_result(
@@ -1509,6 +1480,20 @@ fn validate_data_hex_max_size(
     const hex_digits_len = data.len - 2;
     if (hex_digits_len % 2 != 0) return invalid_err;
     if (hex_digits_len > max_size_bytes * 2) return invalid_err;
+}
+
+fn validate_hash32_value_json(value: std.json.Value, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
+    switch (value) {
+        .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
+        else => return invalid_err,
+    }
+}
+
+fn validate_payload_status_without_invalid_block_hash(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_status_v1_json(value, invalid_err, is_payload_status_no_invalid_block_hash_status);
 }
 
 fn validate_payload_status_v1_json(
