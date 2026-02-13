@@ -1238,6 +1238,34 @@ const TestForkchoice = struct {
     }
 };
 
+const RacingHeadChain = struct {
+    head_number: std.atomic.Value(u64) = std.atomic.Value(u64).init(1),
+    slow_first_lookup: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    first_block: Block.Block,
+    second_block: Block.Block,
+
+    pub fn getHeadBlockNumber(self: *@This()) ?u64 {
+        return self.head_number.load(.acquire);
+    }
+
+    pub fn getBlockByNumber(self: *@This(), number: u64) !?Block.Block {
+        if (number == 1 and self.slow_first_lookup.swap(false, .acq_rel)) {
+            // Allow the mover thread to advance head between before/after reads.
+            std.Thread.sleep(2 * std.time.ns_per_ms);
+        }
+        return switch (number) {
+            1 => self.first_block,
+            2 => self.second_block,
+            else => null,
+        };
+    }
+
+    pub fn moveHeadAfterDelay(self: *@This(), next_head: u64, delay_ns: u64) void {
+        std.Thread.sleep(delay_ns);
+        self.head_number.store(next_head, .release);
+    }
+};
+
 test "Chain - missing blocks return null" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -1772,6 +1800,57 @@ test "Chain - generic head helpers are race-resilient" {
     try std.testing.expect(h1 != null);
     const b1 = try head_block_of(&chain);
     try std.testing.expect(b1 != null);
+}
+
+test "Chain - head snapshot helpers tolerate concurrent head movement" {
+    const allocator = std.testing.allocator;
+
+    const genesis = try Block.genesis(1, allocator);
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+
+    // Single-attempt policy must return a consistent snapshot from the initial head.
+    {
+        var mock_one_attempt = RacingHeadChain{
+            .first_block = genesis,
+            .second_block = b1,
+        };
+        const mover = try std.Thread.spawn(.{}, RacingHeadChain.moveHeadAfterDelay, .{
+            &mock_one_attempt,
+            @as(u64, 2),
+            1 * std.time.ns_per_ms,
+        });
+        defer mover.join();
+
+        const one = try head_block_of_with_policy(&mock_one_attempt, 1);
+        try std.testing.expect(one != null);
+        try std.testing.expectEqualSlices(u8, &genesis.hash, &one.?.hash);
+    }
+
+    // Default policy (2 attempts) should converge to the moved head.
+    {
+        var mock_two_attempts = RacingHeadChain{
+            .first_block = genesis,
+            .second_block = b1,
+        };
+        const mover = try std.Thread.spawn(.{}, RacingHeadChain.moveHeadAfterDelay, .{
+            &mock_two_attempts,
+            @as(u64, 2),
+            1 * std.time.ns_per_ms,
+        });
+        defer mover.join();
+
+        const two = try head_block_of_with_policy(&mock_two_attempts, 2);
+        try std.testing.expect(two != null);
+        try std.testing.expectEqualSlices(u8, &b1.hash, &two.?.hash);
+
+        const hh = try head_hash_of(&mock_two_attempts);
+        try std.testing.expect(hh != null);
+        try std.testing.expectEqualSlices(u8, &b1.hash, &hh.?);
+    }
 }
 
 test "Chain - head_block_of_with_policy returns head snapshot" {
