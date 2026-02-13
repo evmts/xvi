@@ -69,32 +69,32 @@ pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErro
 /// `max_batch_size`; authenticated contexts bypass this check.
 ///
 /// Returns `null` when accepted, otherwise `.limit_exceeded`.
-pub fn validate_batch_size(config: RpcServerConfig, batch_size: usize, is_authenticated: bool) ?errors.JsonRpcErrorCode {
+fn validate_batch_size(config: RpcServerConfig, batch_size: usize, is_authenticated: bool) ?errors.JsonRpcErrorCode {
     if (is_authenticated) return null;
     if (batch_size > config.max_batch_size) return errors.code.limit_exceeded;
     return null;
 }
 
 /// Top-level request kind used by the pre-dispatch request pipeline.
-pub const RequestKind = union(enum) {
+const RequestKind = union(enum) {
     object,
     batch: usize,
 };
 
 /// Pre-dispatch parse result with either request kind or EIP-1474 error code.
-pub const ParseRequestKindResult = union(enum) {
+const ParseRequestKindResult = union(enum) {
     request: RequestKind,
     err: errors.JsonRpcErrorCode,
 };
 
 /// Parsed single-request dispatch metadata produced from one scan pass.
-pub const ParsedSingleRequest = struct {
+const ParsedSingleRequest = struct {
     namespace: std.meta.Tag(jsonrpc.JsonRpcMethod),
     id: envelope.RequestId,
 };
 
 /// Single-request parse result (namespace + request id), or EIP-1474 error code.
-pub const ParseSingleRequestResult = union(enum) {
+const ParseSingleRequestResult = union(enum) {
     request: ParsedSingleRequest,
     err: errors.JsonRpcErrorCode,
 };
@@ -104,7 +104,7 @@ pub const ParseSingleRequestResult = union(enum) {
 /// Mirrors Nethermind's object-vs-array split in `JsonRpcProcessor`:
 /// - object: routed to single-request method dispatch
 /// - array: count entries and enforce `max_batch_size` for unauthenticated calls
-pub fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const u8, is_authenticated: bool) ParseRequestKindResult {
+fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const u8, is_authenticated: bool) ParseRequestKindResult {
     var i: usize = 0;
     if (request.len >= 3 and request[0] == 0xEF and request[1] == 0xBB and request[2] == 0xBF) i = 3;
     while (i < request.len and std.ascii.isWhitespace(request[i])) : (i += 1) {}
@@ -136,7 +136,7 @@ pub fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const
 /// - request-id extraction (including notification detection)
 ///
 /// ...without reparsing the same payload in dispatch and handler stages.
-pub fn parse_single_request_for_dispatch(request: []const u8) ParseSingleRequestResult {
+fn parse_single_request_for_dispatch(request: []const u8) ParseSingleRequestResult {
     const fields = switch (scan.scan_and_validate_request_fields(request)) {
         .fields => |value| value,
         .err => |code| return .{ .err = code },

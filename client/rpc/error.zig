@@ -67,7 +67,7 @@ pub fn default_message(err_code: JsonRpcErrorCode) []const u8 {
     };
 }
 
-// Aliases / Legacy mappings (Nethermind compatibility)
+/// Aliases for legacy/Nethermind-compatible error semantics.
 pub const Legacy = struct {
     pub const resource_not_found_legacy: JsonRpcErrorCode = code.invalid_input;
     pub const default: JsonRpcErrorCode = code.invalid_input;

@@ -37,7 +37,7 @@ fn resolve_known_method_namespace(
 /// - `.eth` for Ethereum API
 /// - `.debug` for Debug API
 /// - `null` if the method is unknown to all namespaces
-pub fn resolve_namespace(method_name: []const u8) ?std.meta.Tag(jsonrpc.JsonRpcMethod) {
+fn resolve_namespace(method_name: []const u8) ?std.meta.Tag(jsonrpc.JsonRpcMethod) {
     // Fast prefix short-circuit: only probe the relevant namespace
     if (std.mem.startsWith(u8, method_name, "eth_")) {
         return resolve_known_method_namespace(jsonrpc.eth.EthMethod, method_name, .eth);
@@ -86,7 +86,7 @@ test "resolve_namespace returns null for unknown" {
 /// Minimal JSON-RPC request parser that extracts the `method` string and
 /// resolves it to a root namespace tag. Returns an EIP-1474 error code for
 /// unknown methods without allocating or fully parsing the JSON.
-pub const ParseNamespaceResult = union(enum) {
+const ParseNamespaceResult = union(enum) {
     namespace: std.meta.Tag(jsonrpc.JsonRpcMethod),
     err: errors.JsonRpcErrorCode,
 };
@@ -95,7 +95,7 @@ pub const ParseNamespaceResult = union(enum) {
 /// resolved namespace tag. If the method is unknown, returns
 /// `.error(.method_not_found)`. If the field is missing or malformed,
 /// returns `.error(.invalid_request)` per EIP-1474.
-pub fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
+fn parse_request_namespace(request: []const u8) ParseNamespaceResult {
     const fields = switch (scan.scan_and_validate_request_fields(request)) {
         .fields => |value| value,
         .err => |code| return .{ .err = code },
