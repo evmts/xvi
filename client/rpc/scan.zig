@@ -115,6 +115,8 @@ fn skip_whitespace(input: []const u8, index: *usize) void {
     while (index.* < input.len and std.ascii.isWhitespace(input[index.*])) : (index.* += 1) {}
 }
 
+const max_json_nesting_depth: usize = 64;
+
 fn parse_json_string(input: []const u8, index: *usize) ScanRequestError!void {
     if (index.* >= input.len or input[index.*] != '"') return error.ParseError;
     index.* += 1;
@@ -179,7 +181,8 @@ fn parse_json_literal(input: []const u8, index: *usize, comptime lit: []const u8
     index.* += lit.len;
 }
 
-fn parse_json_object_value(input: []const u8, index: *usize) ScanRequestError!void {
+fn parse_json_object_value(input: []const u8, index: *usize, depth: usize) ScanRequestError!void {
+    if (depth > max_json_nesting_depth) return error.ParseError;
     if (index.* >= input.len or input[index.*] != '{') return error.ParseError;
     index.* += 1;
     skip_whitespace(input, index);
@@ -195,7 +198,7 @@ fn parse_json_object_value(input: []const u8, index: *usize) ScanRequestError!vo
         if (index.* >= input.len or input[index.*] != ':') return error.ParseError;
         index.* += 1;
         skip_whitespace(input, index);
-        try parse_json_value(input, index);
+        try parse_json_value(input, index, depth + 1);
         skip_whitespace(input, index);
         if (index.* >= input.len) return error.ParseError;
         if (input[index.*] == '}') {
@@ -208,7 +211,8 @@ fn parse_json_object_value(input: []const u8, index: *usize) ScanRequestError!vo
     }
 }
 
-fn parse_json_array(input: []const u8, index: *usize) ScanRequestError!void {
+fn parse_json_array(input: []const u8, index: *usize, depth: usize) ScanRequestError!void {
+    if (depth > max_json_nesting_depth) return error.ParseError;
     if (index.* >= input.len or input[index.*] != '[') return error.ParseError;
     index.* += 1;
     skip_whitespace(input, index);
@@ -219,7 +223,7 @@ fn parse_json_array(input: []const u8, index: *usize) ScanRequestError!void {
     }
 
     while (true) {
-        try parse_json_value(input, index);
+        try parse_json_value(input, index, depth + 1);
         skip_whitespace(input, index);
         if (index.* >= input.len) return error.ParseError;
         if (input[index.*] == ']') {
@@ -232,7 +236,8 @@ fn parse_json_array(input: []const u8, index: *usize) ScanRequestError!void {
     }
 }
 
-fn parse_json_array_count(input: []const u8, index: *usize) ScanRequestError!usize {
+fn parse_json_array_count(input: []const u8, index: *usize, depth: usize) ScanRequestError!usize {
+    if (depth > max_json_nesting_depth) return error.ParseError;
     if (index.* >= input.len or input[index.*] != '[') return error.ParseError;
     index.* += 1;
     skip_whitespace(input, index);
@@ -244,7 +249,7 @@ fn parse_json_array_count(input: []const u8, index: *usize) ScanRequestError!usi
 
     var count: usize = 0;
     while (true) {
-        try parse_json_value(input, index);
+        try parse_json_value(input, index, depth + 1);
         count += 1;
         skip_whitespace(input, index);
         if (index.* >= input.len) return error.ParseError;
@@ -258,12 +263,13 @@ fn parse_json_array_count(input: []const u8, index: *usize) ScanRequestError!usi
     }
 }
 
-fn parse_json_value(input: []const u8, index: *usize) ScanRequestError!void {
+fn parse_json_value(input: []const u8, index: *usize, depth: usize) ScanRequestError!void {
+    if (depth > max_json_nesting_depth) return error.ParseError;
     if (index.* >= input.len) return error.ParseError;
     switch (input[index.*]) {
         '"' => try parse_json_string(input, index),
-        '{' => try parse_json_object_value(input, index),
-        '[' => try parse_json_array(input, index),
+        '{' => try parse_json_object_value(input, index, depth),
+        '[' => try parse_json_array(input, index, depth),
         't' => try parse_json_literal(input, index, "true"),
         'f' => try parse_json_literal(input, index, "false"),
         'n' => try parse_json_literal(input, index, "null"),
@@ -282,11 +288,11 @@ pub fn parse_top_level_request_kind(input: []const u8) ScanRequestError!TopLevel
 
     const kind: TopLevelRequestKind = switch (input[i]) {
         '{' => blk: {
-            try parse_json_object_value(input, &i);
+            try parse_json_object_value(input, &i, 1);
             break :blk .object;
         },
         '[' => blk: {
-            const count = try parse_json_array_count(input, &i);
+            const count = try parse_json_array_count(input, &i, 1);
             break :blk .{ .array = count };
         },
         else => return error.InvalidRequest,
@@ -326,7 +332,7 @@ pub fn scan_request_fields(input: []const u8) ScanRequestError!RequestFieldSpans
         skip_whitespace(input, &i);
 
         const value_start = i;
-        try parse_json_value(input, &i);
+        try parse_json_value(input, &i, 2);
         const value_end = i;
 
         if (fields.jsonrpc == null and std.mem.eql(u8, key_token, "\"jsonrpc\"")) {
@@ -451,4 +457,13 @@ test "parse_top_level_request_kind rejects non-object non-array roots" {
 
 test "parse_top_level_request_kind rejects malformed json" {
     try std.testing.expectError(error.ParseError, parse_top_level_request_kind("[{\"jsonrpc\":\"2.0\"}"));
+}
+
+test "parse_top_level_request_kind enforces nesting depth limit" {
+    const depth = max_json_nesting_depth + 1;
+    var input: [2 * (max_json_nesting_depth + 1) + 1]u8 = undefined;
+    for (0..depth) |idx| input[idx] = '[';
+    input[depth] = '0';
+    for (0..depth) |idx| input[depth + 1 + idx] = ']';
+    try std.testing.expectError(error.ParseError, parse_top_level_request_kind(input[0 .. (2 * depth) + 1]));
 }
