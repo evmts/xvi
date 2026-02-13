@@ -58,6 +58,18 @@ pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErro
     return scan.validate_jsonrpc_version_token(request, fields);
 }
 
+/// Validate JSON-RPC batch size against server configuration.
+///
+/// Mirrors Nethermind behavior: unauthenticated requests are limited by
+/// `max_batch_size`; authenticated contexts bypass this check.
+///
+/// Returns `null` when accepted, otherwise `.limit_exceeded`.
+pub fn validate_batch_size(config: RpcServerConfig, batch_size: usize, is_authenticated: bool) ?errors.JsonRpcErrorCode {
+    if (is_authenticated) return null;
+    if (batch_size > config.max_batch_size) return .limit_exceeded;
+    return null;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -147,4 +159,19 @@ test "validate_request_jsonrpc_version returns parse_error on unterminated versi
         "  \"params\": []\n" ++
         "}";
     try std.testing.expectEqual(errors.JsonRpcErrorCode.parse_error, validate_request_jsonrpc_version(req).?);
+}
+
+test "validate_batch_size accepts batches at configured limit" {
+    const cfg = RpcServerConfig{ .max_batch_size = 4 };
+    try std.testing.expect(validate_batch_size(cfg, 4, false) == null);
+}
+
+test "validate_batch_size rejects oversized unauthenticated batches" {
+    const cfg = RpcServerConfig{ .max_batch_size = 4 };
+    try std.testing.expectEqual(errors.JsonRpcErrorCode.limit_exceeded, validate_batch_size(cfg, 5, false).?);
+}
+
+test "validate_batch_size allows oversized authenticated batches" {
+    const cfg = RpcServerConfig{ .max_batch_size = 4 };
+    try std.testing.expect(validate_batch_size(cfg, 10, true) == null);
 }
