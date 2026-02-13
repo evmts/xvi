@@ -48,6 +48,29 @@ inline fn rlp_len_of_access_list(list: []const tx_mod.AccessListItem) usize {
     return rlp_len_of_list(items_total);
 }
 
+/// Compute RLP-encoded length of a nullable `to` field.
+inline fn rlp_len_of_optional_to(to: ?Address) usize {
+    return if (to != null) rlp_len_of_bytes(20, null) else rlp_len_of_bytes(0, null);
+}
+
+/// Compute RLP-encoded length of a calldata bytes field.
+inline fn rlp_len_of_data(data: []const u8) usize {
+    const first: ?u8 = if (data.len == 1) data[0] else null;
+    return rlp_len_of_bytes(data.len, first);
+}
+
+/// Compute RLP-encoded length of a `(parity_or_v, r, s)` signature triplet.
+inline fn rlp_len_of_signature_triplet(parity_or_v: anytype) usize {
+    return rlp_len_of_uint(parity_or_v) +
+        rlp_len_of_bytes(32, null) +
+        rlp_len_of_bytes(32, null);
+}
+
+/// Compute final length for typed transaction envelopes (`type || rlp(payload)`).
+inline fn rlp_len_of_typed_tx(payload_len: usize) usize {
+    return 1 + rlp_len_of_list(payload_len);
+}
+
 // -----------------------------------------------------------------------------
 // Public helpers (no allocations)
 // -----------------------------------------------------------------------------
@@ -57,7 +80,7 @@ inline fn rlp_len_of_access_list(list: []const tx_mod.AccessListItem) usize {
 /// - Otherwise returns `error.TxGasLimitExceeded` when `tx.gas_limit > cfg.gas_limit`.
 ///
 /// Uses Voltaire primitives exclusively. Applies uniformly to all canonical
-/// transaction types (legacy, 2930, 1559, 4844, 7702).
+/// transaction types (legacy, 1559, 4844, 7702).
 pub fn fits_gas_limit(tx: anytype, cfg: TxPoolConfig) error{TxGasLimitExceeded}!void {
     const T = @TypeOf(tx);
     comptime {
@@ -145,18 +168,11 @@ pub fn fits_size_limits(
         payload_len += rlp_len_of_uint(tx.nonce);
         payload_len += rlp_len_of_uint(tx.gas_price);
         payload_len += rlp_len_of_uint(tx.gas_limit);
-        if (tx.to) |_| {
-            payload_len += rlp_len_of_bytes(20, null);
-        } else {
-            payload_len += rlp_len_of_bytes(0, null);
-        }
+        payload_len += rlp_len_of_optional_to(tx.to);
         payload_len += rlp_len_of_uint(tx.value);
-        const first_legacy: ?u8 = if (tx.data.len == 1) tx.data[0] else null;
-        payload_len += rlp_len_of_bytes(tx.data.len, first_legacy);
+        payload_len += rlp_len_of_data(tx.data);
         // Signature fields are part of the on-wire encoding
-        payload_len += rlp_len_of_uint(tx.v);
-        payload_len += rlp_len_of_bytes(32, null); // r (encoded as bytes in primitives)
-        payload_len += rlp_len_of_bytes(32, null); // s (encoded as bytes in primitives)
+        payload_len += rlp_len_of_signature_triplet(tx.v);
         len = rlp_len_of_list(payload_len);
     } else if (comptime T == tx_mod.Eip1559Transaction) {
         // Allocation-free, wire-accurate typed-2 sizing (always includes y_parity,r,s)
@@ -166,20 +182,13 @@ pub fn fits_size_limits(
         payload_len += rlp_len_of_uint(tx.max_priority_fee_per_gas);
         payload_len += rlp_len_of_uint(tx.max_fee_per_gas);
         payload_len += rlp_len_of_uint(tx.gas_limit);
-        if (tx.to) |_| {
-            payload_len += rlp_len_of_bytes(20, null);
-        } else {
-            payload_len += rlp_len_of_bytes(0, null);
-        }
+        payload_len += rlp_len_of_optional_to(tx.to);
         payload_len += rlp_len_of_uint(tx.value);
-        const first1559: ?u8 = if (tx.data.len == 1) tx.data[0] else null;
-        payload_len += rlp_len_of_bytes(tx.data.len, first1559);
+        payload_len += rlp_len_of_data(tx.data);
         payload_len += rlp_len_of_access_list(tx.access_list);
         // Always account for signature triplet for on-wire size
-        payload_len += rlp_len_of_uint(tx.y_parity);
-        payload_len += rlp_len_of_bytes(32, null); // r (encoded as bytes in primitives)
-        payload_len += rlp_len_of_bytes(32, null); // s (encoded as bytes in primitives)
-        len = 1 + rlp_len_of_list(payload_len);
+        payload_len += rlp_len_of_signature_triplet(tx.y_parity);
+        len = rlp_len_of_typed_tx(payload_len);
     } else if (comptime T == tx_mod.Eip4844Transaction) {
         // Length-only sizing for EIP-4844 to minimize allocations.
         var payload_len: usize = 0;
@@ -193,8 +202,7 @@ pub fn fits_size_limits(
         // value
         payload_len += rlp_len_of_uint(tx.value);
         // data
-        const first: ?u8 = if (tx.data.len == 1) tx.data[0] else null;
-        payload_len += rlp_len_of_bytes(tx.data.len, first);
+        payload_len += rlp_len_of_data(tx.data);
         // access_list (length-only)
         payload_len += rlp_len_of_access_list(tx.access_list);
         // max_fee_per_blob_gas
@@ -206,13 +214,11 @@ pub fn fits_size_limits(
 
         // Optional signature: y_parity, r, s
         if (has_signature(tx.y_parity, tx.r, tx.s)) {
-            payload_len += rlp_len_of_uint(tx.y_parity);
-            payload_len += rlp_len_of_bytes(32, null);
-            payload_len += rlp_len_of_bytes(32, null);
+            payload_len += rlp_len_of_signature_triplet(tx.y_parity);
         }
 
         // Type prefix (0x03) + RLP(list header+payload). Blobs are NOT included.
-        len = 1 + rlp_len_of_list(payload_len);
+        len = rlp_len_of_typed_tx(payload_len);
     } else if (comptime T == tx_mod.Eip7702Transaction) {
         // Length-only sizing for EIP-7702 (typed-4) to minimize allocations.
         var payload_len: usize = 0;
@@ -224,16 +230,11 @@ pub fn fits_size_limits(
         payload_len += rlp_len_of_uint(tx.gas_limit);
 
         // to (nullable)
-        if (tx.to) |_| {
-            payload_len += rlp_len_of_bytes(20, null);
-        } else {
-            payload_len += rlp_len_of_bytes(0, null);
-        }
+        payload_len += rlp_len_of_optional_to(tx.to);
 
         // value, data
         payload_len += rlp_len_of_uint(tx.value);
-        const first7702: ?u8 = if (tx.data.len == 1) tx.data[0] else null;
-        payload_len += rlp_len_of_bytes(tx.data.len, first7702);
+        payload_len += rlp_len_of_data(tx.data);
 
         // access_list (length-only)
         payload_len += rlp_len_of_access_list(tx.access_list);
@@ -255,13 +256,11 @@ pub fn fits_size_limits(
 
         // Optional transaction signature (y_parity, r, s)
         if (has_signature(tx.y_parity, tx.r, tx.s)) {
-            payload_len += rlp_len_of_uint(tx.y_parity);
-            payload_len += rlp_len_of_bytes(32, null);
-            payload_len += rlp_len_of_bytes(32, null);
+            payload_len += rlp_len_of_signature_triplet(tx.y_parity);
         }
 
         // Final typed envelope size
-        len = 1 + rlp_len_of_list(payload_len);
+        len = rlp_len_of_typed_tx(payload_len);
     }
     // EIP-4844: Prefer specific blob-envelope limit when configured;
     // otherwise, fall back to the generic `max_tx_size` check below.
