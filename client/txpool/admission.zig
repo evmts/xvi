@@ -18,7 +18,10 @@ pub fn precheck_duplicate(
     tx_type: TransactionType,
 ) AcceptTxResult {
     if (pool.is_known(tx_hash)) return AcceptTxResult.already_known;
-    if (pool.contains_tx(tx_hash, tx_type)) return AcceptTxResult.already_known;
+    if (pool.contains_tx(tx_hash, tx_type)) {
+        pool.mark_known_for_current_scope(tx_hash);
+        return AcceptTxResult.already_known;
+    }
     pool.mark_known_for_current_scope(tx_hash);
     return AcceptTxResult.accepted;
 }
@@ -184,14 +187,16 @@ test "precheck_duplicate matches typed containment semantics" {
 
     const typed_duplicate = precheck_duplicate(pool, typed_hash, .eip4844);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.already_known, typed_duplicate));
+    try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
+    try std.testing.expectEqualDeep(typed_hash, impl.last_marked);
 
     const other_typed = precheck_duplicate(pool, typed_hash, .legacy);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, other_typed));
-    try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
+    try std.testing.expectEqual(@as(u32, 2), impl.mark_calls);
     try std.testing.expectEqualDeep(typed_hash, impl.last_marked);
 
     const fresh = precheck_duplicate(pool, [_]u8{0x03} ** 32, .legacy);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, fresh));
-    try std.testing.expectEqual(@as(u32, 2), impl.mark_calls);
+    try std.testing.expectEqual(@as(u32, 3), impl.mark_calls);
     try std.testing.expectEqualDeep([_]u8{0x03} ** 32, impl.last_marked);
 }
