@@ -1465,7 +1465,10 @@ fn validate_payload_bodies_array_json(
 ) EngineApi.Error!void {
     if (value != .array) return invalid_err;
     for (value.array.items) |body| {
-        try validate_payload_body_v1_json(body, invalid_err);
+        switch (body) {
+            .null => {},
+            else => try validate_payload_body_v1_json(body, invalid_err),
+        }
     }
 }
 
@@ -2632,6 +2635,25 @@ fn make_execution_payload_v2_object(allocator: std.mem.Allocator) !struct {
     };
 }
 
+fn make_execution_payload_body_v1_object(allocator: std.mem.Allocator) !struct {
+    transactions: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var transactions = std.json.Array.init(allocator);
+    errdefer transactions.deinit();
+    try transactions.append(.{ .string = "0x01" });
+
+    var obj = std.json.ObjectMap.init(allocator);
+    errdefer obj.deinit();
+    try obj.put("transactions", .{ .array = transactions });
+    try obj.put("withdrawals", .{ .null = {} });
+
+    return .{
+        .transactions = transactions,
+        .object = obj,
+    };
+}
+
 test "engine api dispatches exchangeTransitionConfigurationV1" {
     const allocator = std.testing.allocator;
     var obj = try make_transition_config_object(
@@ -3223,6 +3245,75 @@ test "engine api generic dispatcher routes getPayloadV2" {
     const out = try api.dispatch(GetPayloadV2Method, params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.get_payload_v2_called);
+}
+
+test "engine api accepts null placeholders in getPayloadBodiesByHashV1 result" {
+    const alloc = std.testing.allocator;
+
+    var hashes = std.json.Array.init(alloc);
+    defer hashes.deinit();
+    try hashes.append(.{ .string = zero_hash32_hex });
+    try hashes.append(.{ .string = zero_hash32_hex });
+    const params = GetPayloadBodiesByHashV1Params{
+        .array_of_block_hashes = Quantity{ .value = .{ .array = hashes } },
+    };
+
+    var body = try make_execution_payload_body_v1_object(alloc);
+    defer body.transactions.deinit();
+    defer body.object.deinit();
+
+    var bodies = std.json.Array.init(alloc);
+    defer bodies.deinit();
+    try bodies.append(.{ .object = body.object });
+    try bodies.append(.{ .null = {} });
+
+    const result_value = GetPayloadBodiesByHashV1Result{
+        .value = Quantity{ .value = .{ .array = bodies } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .get_payload_bodies_by_hash_v1_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_bodies_by_hash_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_bodies_by_hash_v1_called);
+}
+
+test "engine api accepts null placeholders in getPayloadBodiesByRangeV1 result" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadBodiesByRangeV1Params{
+        .starting_block_number = Quantity{ .value = .{ .string = "0x1" } },
+        .number_of_blocks_to_return = Quantity{ .value = .{ .string = "0x2" } },
+    };
+
+    var body = try make_execution_payload_body_v1_object(alloc);
+    defer body.transactions.deinit();
+    defer body.object.deinit();
+
+    var bodies = std.json.Array.init(alloc);
+    defer bodies.deinit();
+    try bodies.append(.{ .object = body.object });
+    try bodies.append(.{ .null = {} });
+
+    const result_value = GetPayloadBodiesByRangeV1Result{
+        .value = Quantity{ .value = .{ .array = bodies } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .get_payload_bodies_by_range_v1_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_bodies_by_range_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_bodies_by_range_v1_called);
 }
 
 test "engine api dispatches forkchoiceUpdatedV1" {
