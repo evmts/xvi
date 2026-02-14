@@ -220,6 +220,23 @@ pub const TxPool = struct {
 // Tests
 // ============================================================================
 
+fn vtable_for(comptime Impl: type) TxPool.VTable {
+    return .{
+        .pending_count = Impl.pending_count,
+        .pending_blob_count = Impl.pending_blob_count,
+        .get_pending_transactions = Impl.get_pending_transactions,
+        .supports_blobs = Impl.supports_blobs,
+        .get_pending_count_for_sender = Impl.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = Impl.get_pending_transactions_by_sender,
+        .is_known = Impl.is_known,
+        .mark_known_for_current_scope = Impl.mark_known_for_current_scope,
+        .contains_tx = Impl.contains_tx,
+        .try_get_pending_transaction = Impl.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = Impl.try_get_pending_blob_transaction,
+        .submit_tx = Impl.submit_tx,
+    };
+}
+
 test "txpool interface dispatches pending counts" {
     const DummyPool = struct {
         pending: u32,
@@ -325,20 +342,7 @@ test "txpool interface dispatches pending counts" {
         .known_pending_tx = .{ .raw = &[_]u8{ 0x02, 0xc0 } },
         .known_blob_pending_tx = .{ .raw = &[_]u8{ 0x03, 0xc0 } },
     };
-    const vtable = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_transactions = DummyPool.get_pending_transactions,
-        .supports_blobs = DummyPool.supports_blobs,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
-        .is_known = DummyPool.is_known,
-        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
-        .contains_tx = DummyPool.contains_tx,
-        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
-        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
-        .submit_tx = DummyPool.submit_tx,
-    };
+    const vtable = vtable_for(DummyPool);
 
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
     try std.testing.expectEqual(@as(u32, 42), pool.pending_count());
@@ -441,20 +445,7 @@ test "txpool interface dispatches pending transactions by sender" {
         .match_sender = target,
         .sender_pending = &expected,
     };
-    const vtable = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_transactions = DummyPool.get_pending_transactions,
-        .supports_blobs = DummyPool.supports_blobs,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
-        .is_known = DummyPool.is_known,
-        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
-        .contains_tx = DummyPool.contains_tx,
-        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
-        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
-        .submit_tx = DummyPool.submit_tx,
-    };
+    const vtable = vtable_for(DummyPool);
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
 
     const got_all = pool.get_pending_transactions();
