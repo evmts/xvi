@@ -1026,7 +1026,7 @@ fn validate_new_payload_v4_params(
     try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
     try validate_hash32_value_json(params.root_of_the_parent_beacon_block.value, invalid_err);
-    try validate_bytes_array_json(params.execution_requests.value, invalid_err);
+    try validate_execution_requests_json(params.execution_requests.value, invalid_err);
 }
 
 fn validate_new_payload_v4_result(
@@ -1043,7 +1043,7 @@ fn validate_new_payload_v5_params(
     try validate_execution_payload_v4_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
     try validate_hash32_value_json(params.parent_beacon_block_root.value, invalid_err);
-    try validate_bytes_array_json(params.execution_requests.value, invalid_err);
+    try validate_execution_requests_json(params.execution_requests.value, invalid_err);
 }
 
 fn validate_new_payload_v5_result(
@@ -1262,7 +1262,7 @@ fn validate_get_payload_v6_result(
     if (should_override_builder != .bool) return invalid_err;
 
     const execution_requests = obj.get("executionRequests") orelse return invalid_err;
-    try validate_bytes_array_json(execution_requests, invalid_err);
+    try validate_execution_requests_json(execution_requests, invalid_err);
 }
 
 fn validate_get_payload_bodies_by_hash_v1_params(
@@ -1367,7 +1367,7 @@ fn validate_get_payload_v3_or_v4_or_v5_json(
 
     if (comptime requires_execution_requests) {
         const execution_requests = obj.get("executionRequests") orelse return invalid_err;
-        try validate_bytes_array_json(execution_requests, invalid_err);
+        try validate_execution_requests_json(execution_requests, invalid_err);
     }
 }
 
@@ -1429,6 +1429,45 @@ fn validate_bytes_array_json(
             .string => |s| try validate_data_hex_max_size(s, std.math.maxInt(usize) / 2, invalid_err),
             else => return invalid_err,
         }
+    }
+}
+
+fn parse_hex_byte(
+    hex: []const u8,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!u8 {
+    if (hex.len < 4) return invalid_err;
+    const high = std.fmt.charToDigit(hex[2], 16) catch return invalid_err;
+    const low = std.fmt.charToDigit(hex[3], 16) catch return invalid_err;
+    return @as(u8, @intCast((high << 4) | low));
+}
+
+fn validate_execution_requests_json(
+    value: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    if (value != .array) return invalid_err;
+
+    var previous_request_type: ?u8 = null;
+    for (value.array.items) |item| {
+        const request = switch (item) {
+            .string => |s| s,
+            else => return invalid_err,
+        };
+
+        try validate_data_hex_max_size(request, std.math.maxInt(usize) / 2, invalid_err);
+
+        // EIP-7685 request bytes are [request_type || request_data], so
+        // lengths <= 1 byte are invalid by Prague Engine API rules.
+        const request_len_bytes = (request.len - 2) / 2;
+        if (request_len_bytes <= 1) return invalid_err;
+
+        const request_type = try parse_hex_byte(request, invalid_err);
+        if (previous_request_type) |prev| {
+            // Strictly increasing request types enforces ordering and uniqueness.
+            if (request_type <= prev) return invalid_err;
+        }
+        previous_request_type = request_type;
     }
 }
 
@@ -2649,6 +2688,26 @@ fn make_execution_payload_v2_object(allocator: std.mem.Allocator) !struct {
     };
 }
 
+fn make_execution_payload_v3_object(allocator: std.mem.Allocator) !struct {
+    transactions: std.json.Array,
+    withdrawals: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var payload = try make_execution_payload_v2_object(allocator);
+    errdefer payload.withdrawals.deinit();
+    errdefer payload.transactions.deinit();
+    errdefer payload.object.deinit();
+
+    try payload.object.put("blobGasUsed", .{ .string = "0x0" });
+    try payload.object.put("excessBlobGas", .{ .string = "0x0" });
+
+    return .{
+        .transactions = payload.transactions,
+        .withdrawals = payload.withdrawals,
+        .object = payload.object,
+    };
+}
+
 fn make_execution_payload_body_v1_object(allocator: std.mem.Allocator) !struct {
     transactions: std.json.Array,
     object: std.json.ObjectMap,
@@ -3089,6 +3148,70 @@ test "engine api generic dispatcher routes newPayloadV2" {
     const out = try api.dispatch(NewPayloadV2Method, params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.new_payload_v2_called);
+}
+
+test "engine api execution requests validator allows empty list" {
+    const alloc = std.testing.allocator;
+    var requests = std.json.Array.init(alloc);
+    defer requests.deinit();
+    try validate_execution_requests_json(.{ .array = requests }, EngineApi.Error.InvalidParams);
+}
+
+test "engine api execution requests validator rejects elements with length <= 1 byte" {
+    const alloc = std.testing.allocator;
+    var requests = std.json.Array.init(alloc);
+    defer requests.deinit();
+    try requests.append(.{ .string = "0x01" });
+
+    try std.testing.expectError(
+        EngineApi.Error.InvalidParams,
+        validate_execution_requests_json(.{ .array = requests }, EngineApi.Error.InvalidParams),
+    );
+}
+
+test "engine api execution requests validator rejects non-increasing request types" {
+    const alloc = std.testing.allocator;
+    var requests = std.json.Array.init(alloc);
+    defer requests.deinit();
+    try requests.append(.{ .string = "0x0201" });
+    try requests.append(.{ .string = "0x0101" });
+
+    try std.testing.expectError(
+        EngineApi.Error.InvalidParams,
+        validate_execution_requests_json(.{ .array = requests }, EngineApi.Error.InvalidParams),
+    );
+}
+
+test "engine api rejects newPayloadV4 params with invalid execution request ordering" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var expected_blob_hashes = std.json.Array.init(alloc);
+    defer expected_blob_hashes.deinit();
+    try expected_blob_hashes.append(.{ .string = zero_hash32_hex });
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0201" });
+    try execution_requests.append(.{ .string = "0x0101" });
+
+    const params = NewPayloadV4Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+        .expected_blob_versioned_hashes = Quantity{ .value = .{ .array = expected_blob_hashes } },
+        .root_of_the_parent_beacon_block = Quantity{ .value = .{ .string = zero_hash32_hex } },
+        .execution_requests = Quantity{ .value = .{ .array = execution_requests } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.new_payload_v4(params));
+    try std.testing.expect(!dummy.new_payload_v4_called);
 }
 
 test "engine api dispatches getPayloadV1" {
