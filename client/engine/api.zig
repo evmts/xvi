@@ -220,6 +220,49 @@ fn dispatch_result(comptime Method: type) type {
     return @FieldType(Method, "result");
 }
 
+const supported_capability_method_names_static = [_][]const u8{
+    "engine_getClientVersionV1",
+    "engine_exchangeTransitionConfigurationV1",
+    "engine_newPayloadV1",
+    "engine_newPayloadV2",
+    "engine_newPayloadV3",
+    "engine_newPayloadV4",
+    "engine_newPayloadV5",
+    "engine_forkchoiceUpdatedV1",
+    "engine_forkchoiceUpdatedV2",
+    "engine_forkchoiceUpdatedV3",
+    "engine_getPayloadV1",
+    "engine_getPayloadV2",
+    "engine_getPayloadV3",
+    "engine_getPayloadV4",
+    "engine_getPayloadV5",
+    "engine_getPayloadV6",
+    "engine_getPayloadBodiesByHashV1",
+    "engine_getPayloadBodiesByRangeV1",
+    "engine_getBlobsV1",
+    "engine_getBlobsV2",
+};
+
+/// Returns the Engine API method names this EL surface currently supports.
+///
+/// Per execution-apis/common.md, `engine_exchangeCapabilities` is intentionally
+/// excluded from the advertised response list.
+pub fn supported_capability_method_names() []const []const u8 {
+    return supported_capability_method_names_static[0..];
+}
+
+fn is_supported_capability_method_name(name: []const u8) bool {
+    for (supported_capability_method_names_static) |method| {
+        if (std.mem.eql(u8, method, name)) return true;
+    }
+    return false;
+}
+
+fn is_valid_supported_response_capability(name: []const u8) bool {
+    return method_name.is_valid_advertisable_engine_method_name(name) and
+        is_supported_capability_method_name(name);
+}
+
 // Method-name validation logic is centralized in client/engine/method_name.zig
 
 /// Vtable-based Engine API interface.
@@ -737,7 +780,7 @@ fn validate_json_string_array(
 }
 
 fn validate_response_capabilities(list: anytype, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
-    return validate_string_list(list, invalid_err, method_name.is_valid_advertisable_engine_method_name);
+    return validate_string_list(list, invalid_err, is_valid_supported_response_capability);
 }
 
 fn validate_client_version_v1_params(params: ClientVersionV1Params, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
@@ -1682,6 +1725,24 @@ test "engine api error codes match engine api spec" {
     try std.testing.expectEqual(@as(Code, -38005), EngineApi.ErrorCode.unsupported_fork);
 }
 
+test "engine api supported capabilities are advertisable and unique" {
+    const methods = supported_capability_method_names();
+    try std.testing.expect(methods.len != 0);
+
+    var has_get_client_version = false;
+    for (methods, 0..) |method, i| {
+        try std.testing.expect(method_name.is_valid_advertisable_engine_method_name(method));
+        if (std.mem.eql(u8, method, "engine_getClientVersionV1")) {
+            has_get_client_version = true;
+        }
+        for (methods[i + 1 ..]) |other| {
+            try std.testing.expect(!std.mem.eql(u8, method, other));
+        }
+    }
+
+    try std.testing.expect(has_get_client_version);
+}
+
 fn deinit_methods_payload(payload: anytype) void {
     if (payload.array) |*array| array.deinit();
 }
@@ -2254,6 +2315,33 @@ test "engine api rejects response containing unversioned engine methods" {
     const api = make_api(&dummy);
 
     // Violation must surface as InternalError (bad executor response)
+    try std.testing.expectError(EngineApi.Error.InternalError, api.exchange_capabilities(params));
+    try std.testing.expect(dummy.called);
+}
+
+test "engine api rejects response containing unsupported engine methods" {
+    const allocator = std.testing.allocator;
+
+    var consensus_payload = try make_methods_payload(ConsensusType, allocator, &[_][]const u8{
+        "engine_newPayloadV1",
+    });
+    defer deinit_methods_payload(&consensus_payload);
+
+    var result_payload = try make_methods_payload(ResultType, allocator, &[_][]const u8{
+        "engine_fooV1",
+    });
+    defer deinit_methods_payload(&result_payload);
+
+    const params = ExchangeCapabilitiesParams{
+        .consensus_client_methods = consensus_payload.value,
+    };
+    const result_value = ExchangeCapabilitiesResult{
+        .value = result_payload.value,
+    };
+
+    var dummy = DummyEngine{ .result = result_value };
+    const api = make_api(&dummy);
+
     try std.testing.expectError(EngineApi.Error.InternalError, api.exchange_capabilities(params));
     try std.testing.expect(dummy.called);
 }
