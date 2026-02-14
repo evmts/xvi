@@ -23,6 +23,16 @@ pub const init_mac_states = mac_mod.init_mac_states;
 pub const decode_eip8_size_prefixed_body = handshake_packet_mod.decode_eip8_size_prefixed_body;
 /// Stable error set for EIP-8 size-prefixed packet decoding.
 pub const HandshakePacketError = handshake_packet_mod.HandshakePacketError;
+/// Minimal decoded EIP-8 auth-body values used by handshake key agreement.
+pub const Eip8AuthBody = handshake_packet_mod.Eip8AuthBody;
+/// Minimal decoded EIP-8 ack-body values used by handshake key agreement.
+pub const Eip8AckBody = handshake_packet_mod.Eip8AckBody;
+/// Stable error set for EIP-8 auth/ack RLP body decoding.
+pub const HandshakeBodyDecodeError = handshake_packet_mod.HandshakeBodyDecodeError;
+/// EIP-8 auth-body RLP decoder with forward-compatibility tolerance.
+pub const decode_eip8_auth_body = handshake_packet_mod.decode_eip8_auth_body;
+/// EIP-8 ack-body RLP decoder with forward-compatibility tolerance.
+pub const decode_eip8_ack_body = handshake_packet_mod.decode_eip8_ack_body;
 test {
     @import("std").testing.refAllDecls(@This());
 }
