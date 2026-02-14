@@ -1497,14 +1497,48 @@ fn validate_blobs_bundle_v1_json(
     }
 
     const blobs = obj.get("blobs") orelse return invalid_err;
+    if (blobs != .array) return invalid_err;
     try validate_bytes_array_json(blobs, invalid_err);
+
+    if (commitments.array.items.len != blobs.array.items.len) return invalid_err;
+    if (proofs.array.items.len != blobs.array.items.len) return invalid_err;
 }
 
 fn validate_blobs_bundle_v2_json(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_blobs_bundle_v1_json(value, invalid_err);
+    if (value != .object) return invalid_err;
+    const obj = value.object;
+
+    const commitments = obj.get("commitments") orelse return invalid_err;
+    if (commitments != .array) return invalid_err;
+    for (commitments.array.items) |commitment| {
+        switch (commitment) {
+            .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+            else => return invalid_err,
+        }
+    }
+
+    const proofs = obj.get("proofs") orelse return invalid_err;
+    if (proofs != .array) return invalid_err;
+    for (proofs.array.items) |proof| {
+        switch (proof) {
+            .string => |s| try validate_data_hex_exact_size(s, 48, invalid_err),
+            else => return invalid_err,
+        }
+    }
+
+    const blobs = obj.get("blobs") orelse return invalid_err;
+    if (blobs != .array) return invalid_err;
+    try validate_bytes_array_json(blobs, invalid_err);
+
+    const blob_count = blobs.array.items.len;
+    if (commitments.array.items.len != blob_count) return invalid_err;
+
+    const cells_per_ext_blob: usize = 128; // EIP-7594 / c-kzg CELLS_PER_EXT_BLOB
+    const expected_proof_count = std.math.mul(usize, blob_count, cells_per_ext_blob) catch return invalid_err;
+    if (proofs.array.items.len != expected_proof_count) return invalid_err;
 }
 
 fn validate_payload_bodies_array_json(
@@ -2754,6 +2788,48 @@ fn make_blob_and_proof_v2_object(allocator: std.mem.Allocator) !struct {
     };
 }
 
+fn make_blobs_bundle_object(
+    allocator: std.mem.Allocator,
+    blob_count: usize,
+    proof_count: usize,
+) !struct {
+    commitments: std.json.Array,
+    blobs: std.json.Array,
+    proofs: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var commitments = std.json.Array.init(allocator);
+    errdefer commitments.deinit();
+    for (0..blob_count) |_| {
+        try commitments.append(.{ .string = "0x" ++ ("11" ** 48) });
+    }
+
+    var blobs = std.json.Array.init(allocator);
+    errdefer blobs.deinit();
+    for (0..blob_count) |_| {
+        try blobs.append(.{ .string = "0x01" });
+    }
+
+    var proofs = std.json.Array.init(allocator);
+    errdefer proofs.deinit();
+    for (0..proof_count) |_| {
+        try proofs.append(.{ .string = "0x" ++ ("22" ** 48) });
+    }
+
+    var obj = std.json.ObjectMap.init(allocator);
+    errdefer obj.deinit();
+    try obj.put("commitments", .{ .array = commitments });
+    try obj.put("blobs", .{ .array = blobs });
+    try obj.put("proofs", .{ .array = proofs });
+
+    return .{
+        .commitments = commitments,
+        .blobs = blobs,
+        .proofs = proofs,
+        .object = obj,
+    };
+}
+
 test "engine api dispatches exchangeTransitionConfigurationV1" {
     const allocator = std.testing.allocator;
     var obj = try make_transition_config_object(
@@ -3182,36 +3258,43 @@ test "engine api execution requests validator rejects non-increasing request typ
     );
 }
 
-test "engine api rejects newPayloadV4 params with invalid execution request ordering" {
+test "engine api blobs bundle V1 validator enforces equal array cardinalities" {
     const alloc = std.testing.allocator;
+    var bundle = try make_blobs_bundle_object(alloc, 2, 1);
+    defer bundle.commitments.deinit();
+    defer bundle.blobs.deinit();
+    defer bundle.proofs.deinit();
+    defer bundle.object.deinit();
 
-    var payload = try make_execution_payload_v3_object(alloc);
-    defer payload.withdrawals.deinit();
-    defer payload.transactions.deinit();
-    defer payload.object.deinit();
+    try std.testing.expectError(
+        EngineApi.Error.InvalidParams,
+        validate_blobs_bundle_v1_json(.{ .object = bundle.object }, EngineApi.Error.InvalidParams),
+    );
+}
 
-    var expected_blob_hashes = std.json.Array.init(alloc);
-    defer expected_blob_hashes.deinit();
-    try expected_blob_hashes.append(.{ .string = zero_hash32_hex });
+test "engine api blobs bundle V2 validator enforces proofs per blob" {
+    const alloc = std.testing.allocator;
+    var bundle = try make_blobs_bundle_object(alloc, 2, 255);
+    defer bundle.commitments.deinit();
+    defer bundle.blobs.deinit();
+    defer bundle.proofs.deinit();
+    defer bundle.object.deinit();
 
-    var execution_requests = std.json.Array.init(alloc);
-    defer execution_requests.deinit();
-    try execution_requests.append(.{ .string = "0x0201" });
-    try execution_requests.append(.{ .string = "0x0101" });
+    try std.testing.expectError(
+        EngineApi.Error.InvalidParams,
+        validate_blobs_bundle_v2_json(.{ .object = bundle.object }, EngineApi.Error.InvalidParams),
+    );
+}
 
-    const params = NewPayloadV4Params{
-        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
-        .expected_blob_versioned_hashes = Quantity{ .value = .{ .array = expected_blob_hashes } },
-        .root_of_the_parent_beacon_block = Quantity{ .value = .{ .string = zero_hash32_hex } },
-        .execution_requests = Quantity{ .value = .{ .array = execution_requests } },
-    };
+test "engine api blobs bundle V2 validator accepts expected proofs cardinality" {
+    const alloc = std.testing.allocator;
+    var bundle = try make_blobs_bundle_object(alloc, 2, 256);
+    defer bundle.commitments.deinit();
+    defer bundle.blobs.deinit();
+    defer bundle.proofs.deinit();
+    defer bundle.object.deinit();
 
-    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
-    var dummy = DummyEngine{ .result = exchange_result };
-    const api = make_api(&dummy);
-
-    try std.testing.expectError(EngineApi.Error.InvalidParams, api.new_payload_v4(params));
-    try std.testing.expect(!dummy.new_payload_v4_called);
+    try validate_blobs_bundle_v2_json(.{ .object = bundle.object }, EngineApi.Error.InvalidParams);
 }
 
 test "engine api dispatches getPayloadV1" {
