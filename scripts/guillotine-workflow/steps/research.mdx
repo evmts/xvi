@@ -1,0 +1,46 @@
+RESEARCH PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Description: {props.ticketDescription}
+Category: {props.ticketCategory}
+
+Your job is to gather all reference materials needed to implement this ticket.
+
+## Steps
+
+1. **Read the PRD** — prd/GUILLOTINE_CLIENT_PLAN.md — find the section relevant to this ticket's category
+2. **Read the Ethereum specs** — prd/ETHEREUM_SPECS_REFERENCE.md — find relevant specs
+3. **Find Nethermind reference code** — Browse nethermind/src/Nethermind/ for the equivalent module
+4. **Find Voltaire APIs** — Browse /Users/williamcory/voltaire/packages/voltaire-zig/src/ for relevant primitives
+5. **Read existing implementation** — Read any files listed in the ticket's relevantFiles
+6. **Find test fixtures** — Browse ethereum-tests/ for relevant test vectors
+7. **Read execution-specs** — Browse execution-specs/ for the authoritative Python implementation
+8. **Write context file** — Write docs/context/{props.ticketId}.md with all paths and summaries
+
+{props.referenceFiles && props.referenceFiles.length > 0 ? `\nHinted reference files:\n${props.referenceFiles.map(f => `- ${f}`).join('\n')}` : ''}
+
+{props.relevantFiles && props.relevantFiles.length > 0 ? `\nRelevant codebase files:\n${props.relevantFiles.map(f => `- ${f}`).join('\n')}` : ''}
+
+## Commit
+
+After writing the context file:
+```
+git add docs/context/{props.ticketId}.md
+git commit -m "♻️ refactor({props.ticketCategory}): gather research for {props.ticketId}"
+git pull --rebase origin main && git push
+```
+
+**REQUIRED OUTPUT** — You MUST end with this exact JSON structure:
+```json
+{'{'}
+  "ticketId": "{props.ticketId}",
+  "nethermindFiles": ["file1.cs"],
+  "specFiles": ["file1.py"],
+  "voltaireApis": ["module.Type"],
+  "existingFiles": ["src/host.zig"],
+  "testFixtures": ["ethereum-tests/path"],
+  "contextFilePath": "docs/context/{props.ticketId}.md",
+  "summary": "What was gathered"
+{'}'}
+```
+DO NOT skip the JSON output. The workflow will fail without it.

@@ -1,4 +1,4 @@
-export const phases = [
+export const categories = [
   { id: "phase-0-db", name: "DB Abstraction Layer" },
   { id: "phase-1-trie", name: "Merkle Patricia Trie" },
   { id: "phase-2-world-state", name: "World State (Journal + Snapshot/Restore)" },
@@ -12,4 +12,4 @@ export const phases = [
   { id: "phase-10-runner", name: "Runner (Entry Point + CLI)" },
 ] as const;
 
-export type PhaseId = (typeof phases)[number]["id"];
+export type CategoryId = (typeof categories)[number]["id"];

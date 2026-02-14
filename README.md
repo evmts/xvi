@@ -46,6 +46,7 @@ Two parallel client implementations, both mirroring [Nethermind](https://github.
 | [client](./client) | Zig | Execution client (Zig implementation) |
 | [client-ts](./client-ts) | Effect-TS | Execution client (TypeScript implementation) |
 | [smithers](./smithers) | TSX/React | AI workflow orchestrator that generates the code |
+| [workflow](./scripts/guillotine-workflow) | TSX | Smithers workflow scripts for AI-driven development |
 | [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (fetched from npm/GitHub releases) |
 
 ## How Smithers works

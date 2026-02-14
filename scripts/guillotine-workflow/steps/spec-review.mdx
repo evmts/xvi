@@ -1,0 +1,65 @@
+SPEC COMPLIANCE REVIEW — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Category: {props.ticketCategory}
+
+You are reviewing this ticket's implementation for **spec compliance only**.
+You are NOT reviewing code quality — that's a separate review.
+
+## Files to Review
+
+{props.filesCreated && props.filesCreated.length > 0 ? `Created:\n${props.filesCreated.map(f => `- ${f}`).join('\n')}` : ''}
+{props.filesModified && props.filesModified.length > 0 ? `Modified:\n${props.filesModified.map(f => `- ${f}`).join('\n')}` : ''}
+
+## Test Results
+
+- Unit tests: {props.unitTests}
+- Spec tests: {props.specTests}
+- Integration: {props.integrationTests}
+- Nethermind diff: {props.nethermindDiff}
+{props.failingSummary ? `Failures: ${props.failingSummary}` : ''}
+
+## Review Checklist
+
+READ every file modified/created. For each, verify:
+
+1. **Execution-specs compliance** — Read the relevant Python code in execution-specs/ and compare line-by-line
+   - Gas calculations match exactly
+   - State transitions match exactly
+   - Error conditions match exactly
+   - Hardfork guards are correct
+
+2. **EIP compliance** — Read the relevant EIPs/ and verify:
+   - All MUST/SHOULD/MAY requirements are implemented
+   - Edge cases from the EIP are handled
+   - Activation conditions are correct
+
+3. **Nethermind architecture** — Read the equivalent Nethermind C# code:
+   - Architecture matches Nethermind's structure
+   - Module boundaries are consistent
+   - Interface contracts match
+
+4. **Ethereum test vectors** — Check that:
+   - All relevant official test fixtures pass
+   - No test-specific hacks or workarounds
+   - Edge cases from test fixtures are covered
+
+Flag ALL spec compliance issues. Be thorough — a single gas cost mismatch is a critical bug.
+
+Severity levels:
+- "critical" — Spec violation that would cause consensus failure
+- "major" — Architectural deviation or missing spec requirement
+- "minor" — Non-critical deviation (documentation, naming mismatch vs spec)
+- "none" — Perfect spec compliance
+
+**REQUIRED OUTPUT** — You MUST end with this exact JSON structure:
+```json
+{'{'}
+  "issues": ["Issue 1 description", "Issue 2 description"],
+  "severity": "major",
+  "feedback": "Overall spec compliance feedback",
+  "specFilesChecked": ["execution-specs/path/file.py"]
+{'}'}
+```
+Use severity "none" only if there are absolutely no spec compliance issues.
+DO NOT skip the JSON output. The workflow will fail without it.

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Run the Guillotine build workflow
-# Usage: ./run.sh [phase] [target]
-# Example: ./run.sh phase0_db effect
+# Usage: ./run.sh [target]
+# Example: ./run.sh effect
 
 set -euo pipefail
 
-PHASE="${1:-phase0_db}"
-TARGET="${2:-zig}"
+TARGET="${1:-zig}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -21,11 +20,6 @@ export USE_CLI_AGENTS=1
 # Show engine errors instead of swallowing them
 export SMITHERS_DEBUG=1
 
-# Skip phases that are already implemented
-# Comma-separated list of phase IDs from phases.ts
-# Override with SKIP_PHASES="" to run all phases
-export SKIP_PHASES="${SKIP_PHASES:-phase-0-db,phase-1-trie,phase-2-world-state,phase-3-evm-state,phase-10-runner}"
-
 # Target-specific DB isolation
 export WORKFLOW_TARGET="$TARGET"
 
@@ -39,9 +33,9 @@ if [[ ! -f "$SMITHERS_CLI" ]]; then
   exit 1
 fi
 
-echo "Starting Guillotine build workflow — Phase: $PHASE, Target: $TARGET"
+echo "Starting Guillotine build workflow — Target: $TARGET"
 echo "Root directory: $ROOT_DIR"
 echo "Press Ctrl+C to stop."
 echo ""
 
-bun run "$SMITHERS_CLI" run workflow.tsx --input "{\"phase\": \"$PHASE\", \"target\": \"$TARGET\"}" --root-dir "$ROOT_DIR"
+bun run "$SMITHERS_CLI" run workflow.tsx --input "{\"target\": \"$TARGET\"}" --root-dir "$ROOT_DIR"

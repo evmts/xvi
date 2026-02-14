@@ -3,12 +3,15 @@ import type { tables } from "../smithers";
 
 export type Ctx = SmithersCtx<any>;
 
-export type ContextRow = typeof tables.context.$inferSelect;
+export type CategoryReviewRow = typeof tables.category_review.$inferSelect;
+export type DiscoverRow = typeof tables.discover.$inferSelect;
+export type ResearchRow = typeof tables.research.$inferSelect;
+export type PlanRow = typeof tables.plan.$inferSelect;
 export type ImplementRow = typeof tables.implement.$inferSelect;
 export type TestRow = typeof tables.test_results.$inferSelect;
-export type ReviewRow = typeof tables.review.$inferSelect;
-export type ReviewFixRow = typeof tables.review_fix.$inferSelect;
-export type ReviewResponseRow = typeof tables.review_response.$inferSelect;
 export type BenchmarkRow = typeof tables.benchmark.$inferSelect;
-export type FinalReviewRow = typeof tables.final_review.$inferSelect;
-export type OutputRow = typeof tables.output.$inferSelect;
+export type SpecReviewRow = typeof tables.spec_review.$inferSelect;
+export type CodeReviewRow = typeof tables.code_review.$inferSelect;
+export type ReviewFixRow = typeof tables.review_fix.$inferSelect;
+export type ReportRow = typeof tables.report.$inferSelect;
+export type ProgressRow = typeof tables.progress.$inferSelect;

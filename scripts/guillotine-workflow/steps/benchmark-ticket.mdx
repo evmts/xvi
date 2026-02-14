@@ -1,0 +1,55 @@
+BENCHMARK PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Category: {props.ticketCategory}
+
+{props.filesCreated && props.filesCreated.length > 0 ? (
+<>
+Files created:
+{props.filesCreated.map(f => `- ${f}`).join('\n')}
+</>
+) : null}
+
+{props.filesModified && props.filesModified.length > 0 ? (
+<>
+Files modified:
+{props.filesModified.map(f => `- ${f}`).join('\n')}
+</>
+) : null}
+
+{props.whatWasDone ? `What was implemented: ${props.whatWasDone}` : null}
+
+For the code built in this ticket:
+
+1. If applicable, write simple benchmarks:
+   - Trie: insert N keys, measure time
+   - State: apply N state changes, measure time
+   - Block processing: process N blocks, measure time
+
+2. Check allocation patterns:
+   - Use arena allocator for transaction-scoped memory
+   - No heap allocations in hot paths
+   - Verify no memory leaks (all arenas freed)
+
+3. Compare against expectations:
+   - Nethermind processes ~700 MGas/s on mainnet
+   - Our target is to match or beat this
+
+4. Profile if possible:
+   - zig build -Doptimize=ReleaseFast
+   - Run benchmarks in release mode
+
+If you create benchmark files, commit them:
+- Format: "⚡ perf(SCOPE): add benchmarks for COMPONENT"
+- After committing: git pull --rebase origin main && git push
+
+**REQUIRED OUTPUT** — You MUST end with this exact JSON structure:
+```json
+{'{'}
+  "ticketId": "{props.ticketId}",
+  "results": "Detailed benchmark results and timings",
+  "meetsTargets": true,
+  "suggestions": "Performance improvement suggestions (or null if meets targets)"
+{'}'}
+```
+DO NOT skip the JSON output. The workflow will fail without it.

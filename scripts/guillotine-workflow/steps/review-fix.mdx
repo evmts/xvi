@@ -1,0 +1,55 @@
+REVIEW FIX PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Category: {props.ticketCategory}
+
+Two reviews have been completed. Fix ALL issues from BOTH reviews.
+
+## Spec Review Issues
+Severity: {props.specSeverity}
+Feedback: {props.specFeedback}
+Issues:
+{props.specIssues && props.specIssues.length > 0 ? props.specIssues.map((issue, i) => `${i + 1}. ${issue}`).join('\n') : 'None'}
+
+## Code Review Issues
+Severity: {props.codeSeverity}
+Feedback: {props.codeFeedback}
+Issues:
+{props.codeIssues && props.codeIssues.length > 0 ? props.codeIssues.map((issue, i) => `${i + 1}. ${issue}`).join('\n') : 'None'}
+
+## Your Task
+
+For EACH issue from both reviews:
+1. Read the relevant file
+2. Determine if the issue is valid or a false positive
+3. If valid: make the fix
+4. If false positive: document why in your output
+5. After each fix: run `zig fmt client/ && zig build && zig build test`
+
+## Refactoring
+
+While fixing issues, also look for refactoring opportunities:
+- Code duplication — extract shared logic
+- Naming consistency — match Zig conventions
+- Public API surface — minimize what's public
+- Dead code — remove unused functions
+- Import cleanup
+
+## GIT COMMIT RULES
+- Make atomic commits — one fix per commit
+- Use emoji prefixes: 🐛 fix, ♻️ refactor, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Do NOT batch all fixes into one commit
+- After committing: git pull --rebase origin main && git push
+
+**REQUIRED OUTPUT** — You MUST end with this exact JSON structure:
+```json
+{'{'}
+  "fixesMade": ["Fix 1 description", "Fix 2 description"],
+  "falsePositiveComments": ["Issue X is false positive because..."],
+  "commitMessages": ["🐛 fix(scope): description"],
+  "allIssuesResolved": true,
+  "summary": "Summary of all fixes and refactoring applied"
+{'}'}
+```
+DO NOT skip the JSON output. The workflow will fail without it.
