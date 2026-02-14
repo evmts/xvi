@@ -6,6 +6,7 @@ const std = @import("std");
 const jsonrpc = @import("jsonrpc");
 const primitives = @import("primitives");
 const method_name = @import("method_name.zig");
+const Hardfork = primitives.Hardfork;
 
 const ExchangeCapabilitiesMethod = @FieldType(jsonrpc.engine.EngineMethod, "engine_exchangeCapabilities");
 const ExchangeTransitionConfigurationV1Method =
@@ -250,6 +251,108 @@ const supported_capability_method_names_static = [_][]const u8{
 pub fn supported_capability_method_names() []const []const u8 {
     return supported_capability_method_names_static[0..];
 }
+
+/// Minimal fork/spec feature flags used to derive Engine capability advertising.
+///
+/// Mirrors Nethermind's capability gating inputs (withdrawals, 4844, requests,
+/// op-isthmus, 7594), with an explicit Amsterdam toggle for V5/V6 method names
+/// currently present in the Voltaire Engine method catalog.
+pub const EngineCapabilitiesSpecState = struct {
+    withdrawals_enabled: bool,
+    eip4844_enabled: bool,
+    requests_enabled: bool,
+    op_isthmus_enabled: bool = false,
+    eip7594_enabled: bool,
+    amsterdam_enabled: bool = false,
+
+    /// Derive capability feature flags from a canonical Voltaire hardfork.
+    pub fn from_hardfork(hardfork: Hardfork) EngineCapabilitiesSpecState {
+        return .{
+            .withdrawals_enabled = hardfork.isAtLeast(.SHANGHAI),
+            .eip4844_enabled = hardfork.hasEIP4844(),
+            .requests_enabled = hardfork.isAtLeast(.PRAGUE),
+            .op_isthmus_enabled = false,
+            .eip7594_enabled = hardfork.isAtLeast(.OSAKA),
+            .amsterdam_enabled = false,
+        };
+    }
+};
+
+/// Fork/spec-aware provider for `engine_exchangeCapabilities` response methods.
+///
+/// This unit reuses `supported_capability_method_names()` as the source catalog
+/// and filters it according to the enabled spec features.
+pub const EngineCapabilitiesProvider = struct {
+    spec_state: EngineCapabilitiesSpecState,
+
+    pub const Error = error{NoSpace};
+
+    /// Writes enabled capability names into `out` and returns the used prefix.
+    ///
+    /// Callers should size `out` to at least `supported_capability_method_names().len`
+    /// to avoid `error.NoSpace`.
+    pub fn enabled_capability_method_names(
+        self: EngineCapabilitiesProvider,
+        out: [][]const u8,
+    ) Error![]const []const u8 {
+        var count: usize = 0;
+        for (supported_capability_method_names()) |method| {
+            if (!self.is_enabled(method)) continue;
+            if (count >= out.len) return error.NoSpace;
+            out[count] = method;
+            count += 1;
+        }
+        return out[0..count];
+    }
+
+    fn is_enabled(self: EngineCapabilitiesProvider, method: []const u8) bool {
+        if (std.mem.eql(u8, method, "engine_getClientVersionV1") or
+            std.mem.eql(u8, method, "engine_exchangeTransitionConfigurationV1") or
+            std.mem.eql(u8, method, "engine_newPayloadV1") or
+            std.mem.eql(u8, method, "engine_forkchoiceUpdatedV1") or
+            std.mem.eql(u8, method, "engine_getPayloadV1"))
+        {
+            return true;
+        }
+
+        if (std.mem.eql(u8, method, "engine_newPayloadV2") or
+            std.mem.eql(u8, method, "engine_forkchoiceUpdatedV2") or
+            std.mem.eql(u8, method, "engine_getPayloadV2") or
+            std.mem.eql(u8, method, "engine_getPayloadBodiesByHashV1") or
+            std.mem.eql(u8, method, "engine_getPayloadBodiesByRangeV1"))
+        {
+            return self.spec_state.withdrawals_enabled;
+        }
+
+        if (std.mem.eql(u8, method, "engine_newPayloadV3") or
+            std.mem.eql(u8, method, "engine_forkchoiceUpdatedV3") or
+            std.mem.eql(u8, method, "engine_getPayloadV3") or
+            std.mem.eql(u8, method, "engine_getBlobsV1"))
+        {
+            return self.spec_state.eip4844_enabled;
+        }
+
+        if (std.mem.eql(u8, method, "engine_newPayloadV4") or
+            std.mem.eql(u8, method, "engine_getPayloadV4"))
+        {
+            return self.spec_state.requests_enabled or self.spec_state.op_isthmus_enabled;
+        }
+
+        if (std.mem.eql(u8, method, "engine_getPayloadV5") or
+            std.mem.eql(u8, method, "engine_getBlobsV2"))
+        {
+            return self.spec_state.eip7594_enabled;
+        }
+
+        if (std.mem.eql(u8, method, "engine_newPayloadV5") or
+            std.mem.eql(u8, method, "engine_getPayloadV6"))
+        {
+            return self.spec_state.amsterdam_enabled;
+        }
+
+        return false;
+    }
+};
 
 fn is_supported_capability_method_name(name: []const u8) bool {
     for (supported_capability_method_names_static) |method| {
@@ -1706,6 +1809,13 @@ fn is_slice_of_byte_slices(comptime T: type) bool {
     return child_info.pointer.child == u8;
 }
 
+fn has_method(methods: []const []const u8, needle: []const u8) bool {
+    for (methods) |method| {
+        if (std.mem.eql(u8, method, needle)) return true;
+    }
+    return false;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1741,6 +1851,89 @@ test "engine api supported capabilities are advertisable and unique" {
     }
 
     try std.testing.expect(has_get_client_version);
+}
+
+test "engine capability spec state derives flags from hardfork" {
+    const merge = EngineCapabilitiesSpecState.from_hardfork(.MERGE);
+    try std.testing.expect(!merge.withdrawals_enabled);
+    try std.testing.expect(!merge.eip4844_enabled);
+    try std.testing.expect(!merge.requests_enabled);
+    try std.testing.expect(!merge.eip7594_enabled);
+    try std.testing.expect(!merge.amsterdam_enabled);
+
+    const shanghai = EngineCapabilitiesSpecState.from_hardfork(.SHANGHAI);
+    try std.testing.expect(shanghai.withdrawals_enabled);
+    try std.testing.expect(!shanghai.eip4844_enabled);
+
+    const cancun = EngineCapabilitiesSpecState.from_hardfork(.CANCUN);
+    try std.testing.expect(cancun.withdrawals_enabled);
+    try std.testing.expect(cancun.eip4844_enabled);
+    try std.testing.expect(!cancun.requests_enabled);
+
+    const prague = EngineCapabilitiesSpecState.from_hardfork(.PRAGUE);
+    try std.testing.expect(prague.requests_enabled);
+    try std.testing.expect(!prague.eip7594_enabled);
+
+    const osaka = EngineCapabilitiesSpecState.from_hardfork(.OSAKA);
+    try std.testing.expect(osaka.eip7594_enabled);
+}
+
+test "engine capabilities provider filters methods by fork/spec features" {
+    var out: [supported_capability_method_names_static.len][]const u8 = undefined;
+
+    const merge_provider = EngineCapabilitiesProvider{
+        .spec_state = EngineCapabilitiesSpecState.from_hardfork(.MERGE),
+    };
+    const merge_methods = try merge_provider.enabled_capability_method_names(out[0..]);
+    try std.testing.expect(has_method(merge_methods, "engine_getPayloadV1"));
+    try std.testing.expect(!has_method(merge_methods, "engine_newPayloadV2"));
+    try std.testing.expect(!has_method(merge_methods, "engine_newPayloadV5"));
+
+    const prague_provider = EngineCapabilitiesProvider{
+        .spec_state = EngineCapabilitiesSpecState.from_hardfork(.PRAGUE),
+    };
+    const prague_methods = try prague_provider.enabled_capability_method_names(out[0..]);
+    try std.testing.expect(has_method(prague_methods, "engine_newPayloadV4"));
+    try std.testing.expect(has_method(prague_methods, "engine_getPayloadV4"));
+    try std.testing.expect(!has_method(prague_methods, "engine_getPayloadV5"));
+    try std.testing.expect(!has_method(prague_methods, "engine_newPayloadV5"));
+
+    var amsterdam_state = EngineCapabilitiesSpecState.from_hardfork(.OSAKA);
+    amsterdam_state.amsterdam_enabled = true;
+    const amsterdam_provider = EngineCapabilitiesProvider{
+        .spec_state = amsterdam_state,
+    };
+    const amsterdam_methods = try amsterdam_provider.enabled_capability_method_names(out[0..]);
+    try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV5"));
+    try std.testing.expect(has_method(amsterdam_methods, "engine_getBlobsV2"));
+    try std.testing.expect(has_method(amsterdam_methods, "engine_newPayloadV5"));
+    try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV6"));
+}
+
+test "engine capabilities provider enables v4 methods when op-isthmus is enabled" {
+    var out: [supported_capability_method_names_static.len][]const u8 = undefined;
+    const provider = EngineCapabilitiesProvider{
+        .spec_state = .{
+            .withdrawals_enabled = true,
+            .eip4844_enabled = true,
+            .requests_enabled = false,
+            .op_isthmus_enabled = true,
+            .eip7594_enabled = false,
+        },
+    };
+
+    const methods = try provider.enabled_capability_method_names(out[0..]);
+    try std.testing.expect(has_method(methods, "engine_newPayloadV4"));
+    try std.testing.expect(has_method(methods, "engine_getPayloadV4"));
+}
+
+test "engine capabilities provider returns NoSpace when output is too small" {
+    var out: [1][]const u8 = undefined;
+    const provider = EngineCapabilitiesProvider{
+        .spec_state = EngineCapabilitiesSpecState.from_hardfork(.MERGE),
+    };
+
+    try std.testing.expectError(error.NoSpace, provider.enabled_capability_method_names(out[0..]));
 }
 
 fn deinit_methods_payload(payload: anytype) void {
