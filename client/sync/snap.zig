@@ -8,6 +8,8 @@ const Hash = primitives.Hash;
 /// Message shape from devp2p snap/1:
 /// `[reqID, rootHash, startingHash, limitHash, responseBytes]`
 pub const AccountRangeRequest = struct {
+    pub const DEFAULT_RESPONSE_BYTES: u64 = 1_000_000;
+
     req_id: u64,
     root_hash: Hash.Hash,
     starting_hash: Hash.Hash,
@@ -27,7 +29,7 @@ pub const AccountRangeRequest = struct {
             .root_hash = root_hash,
             .starting_hash = starting_hash,
             .limit_hash = limit_hash,
-            .response_bytes = response_bytes,
+            .response_bytes = if (response_bytes == 0) DEFAULT_RESPONSE_BYTES else response_bytes,
         };
     }
 };
@@ -86,7 +88,7 @@ test "AccountRangeRequest.init assigns all fields" {
     try std.testing.expectEqualSlices(u8, &limit_hash, &request.limit_hash);
 }
 
-test "AccountRangeRequest.init accepts zero response bytes" {
+test "AccountRangeRequest.init normalizes zero response bytes to default soft limit" {
     const request = AccountRangeRequest.init(
         7,
         [_]u8{0xaa} ** 32,
@@ -96,7 +98,7 @@ test "AccountRangeRequest.init accepts zero response bytes" {
     );
 
     try std.testing.expectEqual(@as(u64, 7), request.req_id);
-    try std.testing.expectEqual(@as(u64, 0), request.response_bytes);
+    try std.testing.expectEqual(AccountRangeRequest.DEFAULT_RESPONSE_BYTES, request.response_bytes);
 }
 
 test "StorageRangeRequest.init assigns all fields preserving account hash order" {
