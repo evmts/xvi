@@ -242,6 +242,50 @@ test "decode_eip8_auth_body rejects invalid signature length" {
     try std.testing.expectError(error.InvalidSignatureLength, decode_eip8_auth_body(encoded));
 }
 
+test "decode_eip8_auth_body rejects invalid public key length" {
+    const signature = [_]u8{0xAA} ** SignatureSize;
+    const short_public_key = [_]u8{0xBB} ** (PublicKeySize - 1);
+    const initiator_nonce = [_]u8{0xCC} ** NonceSize;
+    const encoded = try Rlp.encode(std.testing.allocator, [_][]const u8{
+        &signature,
+        &short_public_key,
+        &initiator_nonce,
+        &[_]u8{0x04},
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectError(error.InvalidPublicKeyLength, decode_eip8_auth_body(encoded));
+}
+
+test "decode_eip8_auth_body rejects invalid nonce length" {
+    const signature = [_]u8{0xAA} ** SignatureSize;
+    const initiator_public_key = [_]u8{0xBB} ** PublicKeySize;
+    const short_nonce = [_]u8{0xCC} ** (NonceSize - 1);
+    const encoded = try Rlp.encode(std.testing.allocator, [_][]const u8{
+        &signature,
+        &initiator_public_key,
+        &short_nonce,
+        &[_]u8{0x04},
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectError(error.InvalidNonceLength, decode_eip8_auth_body(encoded));
+}
+
+test "decode_eip8_auth_body rejects malformed rlp body" {
+    try std.testing.expectError(
+        error.InvalidRlpBody,
+        decode_eip8_auth_body(&[_]u8{ 0xf8, 0x10, 0x80 }),
+    );
+}
+
+test "decode_eip8_auth_body rejects non-list rlp body" {
+    const encoded = try Rlp.encode(std.testing.allocator, &[_]u8{0xAA});
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectError(error.InvalidRlpBody, decode_eip8_auth_body(encoded));
+}
+
 test "decode_eip8_ack_body tolerates version mismatch, extra elements, and trailing bytes" {
     var recipient_ephemeral_public_key: [PublicKeySize]u8 = undefined;
     for (&recipient_ephemeral_public_key, 0..) |*byte, i| byte.* = @as(u8, @intCast(i + 3));
@@ -326,4 +370,31 @@ test "decode_eip8_ack_body rejects invalid public key length" {
     defer std.testing.allocator.free(encoded);
 
     try std.testing.expectError(error.InvalidPublicKeyLength, decode_eip8_ack_body(encoded));
+}
+
+test "decode_eip8_ack_body rejects invalid nonce length" {
+    const recipient_ephemeral_public_key = [_]u8{0xDD} ** PublicKeySize;
+    const short_nonce = [_]u8{0xEE} ** (NonceSize - 1);
+    const encoded = try Rlp.encode(std.testing.allocator, [_][]const u8{
+        &recipient_ephemeral_public_key,
+        &short_nonce,
+        &[_]u8{0x04},
+    });
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectError(error.InvalidNonceLength, decode_eip8_ack_body(encoded));
+}
+
+test "decode_eip8_ack_body rejects malformed rlp body" {
+    try std.testing.expectError(
+        error.InvalidRlpBody,
+        decode_eip8_ack_body(&[_]u8{ 0xf8, 0x10, 0x80 }),
+    );
+}
+
+test "decode_eip8_ack_body rejects non-list rlp body" {
+    const encoded = try Rlp.encode(std.testing.allocator, &[_]u8{0xAA});
+    defer std.testing.allocator.free(encoded);
+
+    try std.testing.expectError(error.InvalidRlpBody, decode_eip8_ack_body(encoded));
 }
