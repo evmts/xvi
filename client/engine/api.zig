@@ -1284,11 +1284,17 @@ fn validate_get_payload_bodies_by_range_v1_params(
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
     switch (params.starting_block_number.value) {
-        .string => |s| _ = try parse_quantity_hex_u64(s, invalid_err),
+        .string => |s| {
+            const start = try parse_quantity_hex_u64(s, invalid_err);
+            if (start < 1) return invalid_err;
+        },
         else => return invalid_err,
     }
     switch (params.number_of_blocks_to_return.value) {
-        .string => |s| _ = try parse_quantity_hex_u64(s, invalid_err),
+        .string => |s| {
+            const count = try parse_quantity_hex_u64(s, invalid_err);
+            if (count < 1) return invalid_err;
+        },
         else => return invalid_err,
     }
 }
@@ -3349,6 +3355,34 @@ test "engine api accepts null placeholders in getPayloadBodiesByRangeV1 result" 
     const out = try api.get_payload_bodies_by_range_v1(params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.get_payload_bodies_by_range_v1_called);
+}
+
+test "engine api rejects getPayloadBodiesByRangeV1 params with start below one" {
+    const params = GetPayloadBodiesByRangeV1Params{
+        .starting_block_number = Quantity{ .value = .{ .string = "0x0" } },
+        .number_of_blocks_to_return = Quantity{ .value = .{ .string = "0x1" } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.get_payload_bodies_by_range_v1(params));
+    try std.testing.expect(!dummy.get_payload_bodies_by_range_v1_called);
+}
+
+test "engine api rejects getPayloadBodiesByRangeV1 params with count below one" {
+    const params = GetPayloadBodiesByRangeV1Params{
+        .starting_block_number = Quantity{ .value = .{ .string = "0x1" } },
+        .number_of_blocks_to_return = Quantity{ .value = .{ .string = "0x0" } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.get_payload_bodies_by_range_v1(params));
+    try std.testing.expect(!dummy.get_payload_bodies_by_range_v1_called);
 }
 
 test "engine api accepts null items in getBlobsV1 result" {
