@@ -124,6 +124,31 @@ pub fn Web3Api(comptime Provider: type) type {
             }
         }
 
+        /// Optimized `web3_sha3` entrypoint for pre-parsed request IDs.
+        ///
+        /// Dispatch pipelines that already extracted `id` can call this to avoid
+        /// rescanning envelope fields and only parse the `params` payload.
+        pub fn handle_sha3_from_request_with_id(
+            self: *const Self,
+            writer: anytype,
+            request_id: envelope.RequestId,
+            request_bytes: []const u8,
+        ) !void {
+            switch (request_id) {
+                .missing => return, // JSON-RPC notification: no response
+                .present => |id| {
+                    const data_hex = switch (extract_sha3_param_data(request_bytes)) {
+                        .data_hex => |value| value,
+                        .err => |code| {
+                            try Response.write_error(writer, id, code, errors.default_message(code), null);
+                            return;
+                        },
+                    };
+                    try self.handle_sha3(writer, .{ .present = id }, data_hex);
+                },
+            }
+        }
+
         fn write_success_string(writer: anytype, id: envelope.Id, value: []const u8) !void {
             try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
             try write_id(writer, id);
@@ -691,4 +716,48 @@ test "Web3Api.handleSha3FromRequest: extra params -> invalid params" {
     var fba = std.io.fixedBufferStream(&expect_buf);
     try Response.write_error(fba.writer(), .{ .number = "1" }, code, errors.default_message(code), null);
     try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
+}
+
+test "Web3Api.handleSha3FromRequestWithId: pre-parsed id routes sha3" {
+    const Provider = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/linux-zig";
+        }
+    };
+    const Api = Web3Api(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 11,\n" ++
+        "  \"method\": \"web3_sha3\",\n" ++
+        "  \"params\": [\"0x68656c6c6f20776f726c64\"]\n" ++
+        "}";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_sha3_from_request_with_id(buf.writer(), .{ .present = .{ .number = "11" } }, req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":11,\"result\":\"0x47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad\"}",
+        buf.items,
+    );
+}
+
+test "Web3Api.handleSha3FromRequestWithId: missing id emits no response" {
+    const Provider = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/linux-zig";
+        }
+    };
+    const Api = Web3Api(Provider);
+    const provider = Provider{};
+    var api = Api{ .provider = &provider };
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"web3_sha3\", \"params\": [123] }";
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try api.handle_sha3_from_request_with_id(buf.writer(), .missing, req);
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }

@@ -104,11 +104,16 @@ pub fn SingleRequestProcessor(comptime EthProvider: type, comptime NetProvider: 
                 },
             };
 
+            try self.handle_parsed(writer, request, parsed);
+        }
+
+        /// Execute one JSON-RPC request with pre-parsed routing metadata.
+        pub fn handle_parsed(self: *const Self, writer: anytype, request: []const u8, parsed: ParsedSingleRequest) !void {
             switch (parsed.method) {
                 .eth_chainId => try self.eth_api.handle_chain_id(writer, parsed.id),
                 .net_version => try self.net_api.handle_version(writer, parsed.id),
                 .web3_clientVersion => try self.web3_api.handle_client_version(writer, parsed.id),
-                .web3_sha3 => try self.web3_api.handle_sha3_from_request(writer, request),
+                .web3_sha3 => try self.web3_api.handle_sha3_from_request_with_id(writer, parsed.id, request),
                 .unknown => switch (parsed.id) {
                     .missing => return,
                     .present => |id| {
@@ -176,6 +181,9 @@ pub fn BatchRequestExecutor(comptime EthProvider: type, comptime NetProvider: ty
             };
             index += 1; // past '['
 
+            var entry_buf = std.array_list.Managed(u8).init(self.allocator);
+            defer entry_buf.deinit();
+
             const max_batch_response_body_size = if (is_authenticated) null else self.config.max_batch_response_body_size;
             var response_size: usize = 0;
             var emitted: usize = 0;
@@ -193,9 +201,12 @@ pub fn BatchRequestExecutor(comptime EthProvider: type, comptime NetProvider: ty
                     return;
                 };
 
-                var entry_buf = std.array_list.Managed(u8).init(self.allocator);
-                defer entry_buf.deinit();
-                try self.single_processor.handle(entry_buf.writer(), request[entry_start..entry_end]);
+                entry_buf.clearRetainingCapacity();
+                const entry_request = request[entry_start..entry_end];
+                switch (parse_single_request_for_dispatch(entry_request)) {
+                    .request => |parsed| try self.single_processor.handle_parsed(entry_buf.writer(), entry_request, parsed),
+                    .err => |code| try write_null_id_error(entry_buf.writer(), code),
+                }
 
                 if (entry_buf.items.len != 0) {
                     if (emitted == 0) {
