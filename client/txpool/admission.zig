@@ -76,6 +76,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
         }
 
+        fn try_get_pending_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -99,6 +103,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
@@ -158,6 +163,10 @@ test "precheck_duplicate matches typed containment semantics" {
             return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
         }
 
+        fn try_get_pending_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -181,6 +190,7 @@ test "precheck_duplicate matches typed containment semantics" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };

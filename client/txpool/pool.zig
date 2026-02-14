@@ -126,6 +126,10 @@ pub const TxPool = struct {
         mark_known_for_current_scope: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) void,
         /// Returns whether the pool already contains this hash and tx type.
         contains_tx: *const fn (ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool,
+        /// Looks up a pending transaction by hash.
+        ///
+        /// Mirrors Nethermind's `TryGetPendingTransaction(Hash256, out Transaction)`.
+        try_get_pending_transaction: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) ?PendingTransaction,
         /// Submits a typed transaction to the pool with handling flags.
         ///
         /// Mirrors Nethermind's `SubmitTx(Transaction, TxHandlingOptions)`.
@@ -190,6 +194,11 @@ pub const TxPool = struct {
         return self.vtable.contains_tx(self.ptr, tx_hash, tx_type);
     }
 
+    /// Returns a pending transaction for `tx_hash`, if present.
+    pub fn try_get_pending_transaction(self: TxPool, tx_hash: TransactionHash) ?PendingTransaction {
+        return self.vtable.try_get_pending_transaction(self.ptr, tx_hash);
+    }
+
     /// Submits `tx` to the pool using the specified handling options.
     ///
     /// Mirrors Nethermind's `SubmitTx(Transaction, TxHandlingOptions)`.
@@ -211,6 +220,7 @@ test "txpool interface dispatches pending counts" {
         pending_for_sender: u32,
         known_hash: TransactionHash,
         known_type: TransactionType,
+        known_pending_tx: TxPool.PendingTransaction,
         submit_result: AcceptTxResult = AcceptTxResult.syncing,
         submit_calls: u32 = 0,
         last_submit_len: usize = 0,
@@ -265,6 +275,13 @@ test "txpool interface dispatches pending counts" {
             return std.mem.eql(u8, &self.known_hash, &tx_hash) and self.known_type == tx_type;
         }
 
+        fn try_get_pending_transaction(ptr: *anyopaque, tx_hash: TransactionHash) ?TxPool.PendingTransaction {
+            const Self = @This();
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            if (std.mem.eql(u8, &self.known_hash, &tx_hash)) return self.known_pending_tx;
+            return null;
+        }
+
         fn submit_tx(ptr: *anyopaque, tx: *const TxPool.PendingTransaction, handling_options: TxHandlingOptions) AcceptTxResult {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
@@ -285,6 +302,7 @@ test "txpool interface dispatches pending counts" {
         .pending_for_sender = 3,
         .known_hash = known_hash,
         .known_type = .eip1559,
+        .known_pending_tx = .{ .raw = &[_]u8{ 0x02, 0xc0 } },
     };
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
@@ -296,6 +314,7 @@ test "txpool interface dispatches pending counts" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
 
@@ -310,6 +329,10 @@ test "txpool interface dispatches pending counts" {
     try std.testing.expect(!pool.is_known([_]u8{0x22} ** 32));
     try std.testing.expect(pool.contains_tx(known_hash, .eip1559));
     try std.testing.expect(!pool.contains_tx(known_hash, .legacy));
+    const known_pending = pool.try_get_pending_transaction(known_hash);
+    try std.testing.expect(known_pending != null);
+    try std.testing.expectEqualDeep(dummy.known_pending_tx, known_pending.?);
+    try std.testing.expectEqual(@as(?TxPool.PendingTransaction, null), pool.try_get_pending_transaction([_]u8{0x22} ** 32));
     const submit_tx = TxPool.PendingTransaction{ .raw = &[_]u8{ 0x02, 0xc0 } };
     const submit_options = TxHandlingOptions.persistent_broadcast;
     const submit_result = pool.submit_tx(&submit_tx, submit_options);
@@ -368,6 +391,10 @@ test "txpool interface dispatches pending transactions by sender" {
             return false;
         }
 
+        fn try_get_pending_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -394,6 +421,7 @@ test "txpool interface dispatches pending transactions by sender" {
         .is_known = DummyPool.is_known,
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
+        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
