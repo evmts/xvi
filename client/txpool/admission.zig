@@ -10,18 +10,14 @@ const Address = primitives.Address;
 
 /// Nethermind-parity duplicate filter for txpool admission.
 ///
-/// Ordering mirrors `AlreadyKnownTxFilter`: prefer the hash-cache check, then
-/// fall back to typed pool containment for concrete duplicate detection.
+/// Semantics mirror `AlreadyKnownTxFilter`: check only the hash cache for
+/// current-scope duplicates, then mark this hash as known for the scope.
 pub fn precheck_duplicate(
     pool: TxPool,
     tx_hash: TransactionHash,
-    tx_type: TransactionType,
+    _: TransactionType,
 ) AcceptTxResult {
     if (pool.is_known(tx_hash)) return AcceptTxResult.already_known;
-    if (pool.contains_tx(tx_hash, tx_type)) {
-        pool.mark_known_for_current_scope(tx_hash);
-        return AcceptTxResult.already_known;
-    }
     pool.mark_known_for_current_scope(tx_hash);
     return AcceptTxResult.accepted;
 }
@@ -120,11 +116,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
     try std.testing.expectEqual(@as(u32, 0), impl.mark_calls);
 }
 
-test "precheck_duplicate matches typed containment semantics" {
+test "precheck_duplicate accepts hash-cache misses without typed pool probing" {
     const DummyPool = struct {
         known_hash: TransactionHash,
-        typed_hash: TransactionHash,
-        typed_kind: TransactionType,
+        contains_calls: u32 = 0,
         mark_calls: u32 = 0,
         last_marked: TransactionHash = [_]u8{0} ** 32,
 
@@ -165,7 +160,10 @@ test "precheck_duplicate matches typed containment semantics" {
 
         fn contains_tx(ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool {
             const self: *@This() = @ptrCast(@alignCast(ptr));
-            return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
+            _ = tx_hash;
+            _ = tx_type;
+            self.contains_calls += 1;
+            return false;
         }
 
         fn try_get_pending_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
@@ -182,11 +180,9 @@ test "precheck_duplicate matches typed containment semantics" {
     };
 
     const known_hash: TransactionHash = [_]u8{0x01} ** 32;
-    const typed_hash: TransactionHash = [_]u8{0x02} ** 32;
+    const miss_hash: TransactionHash = [_]u8{0x02} ** 32;
     var impl = DummyPool{
         .known_hash = known_hash,
-        .typed_hash = typed_hash,
-        .typed_kind = .eip4844,
     };
 
     const vtable = TxPool.VTable{
@@ -205,18 +201,15 @@ test "precheck_duplicate matches typed containment semantics" {
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
 
-    const typed_duplicate = precheck_duplicate(pool, typed_hash, .eip4844);
-    try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.already_known, typed_duplicate));
+    const miss = precheck_duplicate(pool, miss_hash, .eip4844);
+    try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, miss));
     try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
-    try std.testing.expectEqualDeep(typed_hash, impl.last_marked);
+    try std.testing.expectEqualDeep(miss_hash, impl.last_marked);
+    try std.testing.expectEqual(@as(u32, 0), impl.contains_calls);
 
-    const other_typed = precheck_duplicate(pool, typed_hash, .legacy);
-    try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, other_typed));
-    try std.testing.expectEqual(@as(u32, 2), impl.mark_calls);
-    try std.testing.expectEqualDeep(typed_hash, impl.last_marked);
-
-    const fresh = precheck_duplicate(pool, [_]u8{0x03} ** 32, .legacy);
-    try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, fresh));
-    try std.testing.expectEqual(@as(u32, 3), impl.mark_calls);
-    try std.testing.expectEqualDeep([_]u8{0x03} ** 32, impl.last_marked);
+    const known = precheck_duplicate(pool, known_hash, .legacy);
+    try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.already_known, known));
+    try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
+    try std.testing.expectEqualDeep(miss_hash, impl.last_marked);
+    try std.testing.expectEqual(@as(u32, 0), impl.contains_calls);
 }
