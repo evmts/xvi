@@ -104,10 +104,19 @@ pub const MemoryDatabase = struct {
 
     /// Return a `Database` vtable interface backed by this MemoryDatabase.
     pub fn database(self: *MemoryDatabase) Database {
-        return .{
-            .ptr = @ptrCast(self),
-            .vtable = &vtable,
-        };
+        return Database.init(MemoryDatabase, self, .{
+            .name = name_impl,
+            .get = get_impl,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_impl,
+            .iterator = iterator_impl,
+            .snapshot = snapshot_impl,
+            .flush = flush_impl,
+            .clear = clear_impl,
+            .compact = compact_impl,
+            .gather_metric = gather_metric_impl,
+        });
     }
 
     // -- Direct (non-vtable) methods ------------------------------------------
@@ -307,67 +316,44 @@ pub const MemoryDatabase = struct {
 
     // -- VTable implementation ------------------------------------------------
 
-    const vtable = Database.VTable{
-        .name = name_impl,
-        .get = get_impl,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_impl,
-        .iterator = iterator_impl,
-        .snapshot = snapshot_impl,
-        .flush = flush_impl,
-        .clear = clear_impl,
-        .compact = compact_impl,
-        .gather_metric = gather_metric_impl,
-    };
-
-    fn name_impl(ptr: *anyopaque) DbName {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn name_impl(self: *MemoryDatabase) DbName {
         return self.name;
     }
 
-    fn get_impl(ptr: *anyopaque, key: []const u8, flags: ReadFlags) Error!?DbValue {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn get_impl(self: *MemoryDatabase, key: []const u8, flags: ReadFlags) Error!?DbValue {
         return self.get_with_flags(key, flags);
     }
 
-    fn put_impl(ptr: *anyopaque, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn put_impl(self: *MemoryDatabase, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
         return self.put_with_flags(key, value, flags);
     }
 
-    fn delete_impl(ptr: *anyopaque, key: []const u8, flags: WriteFlags) Error!void {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn delete_impl(self: *MemoryDatabase, key: []const u8, flags: WriteFlags) Error!void {
         return self.delete_with_flags(key, flags);
     }
 
-    fn contains_impl(ptr: *anyopaque, key: []const u8) Error!bool {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn contains_impl(self: *MemoryDatabase, key: []const u8) Error!bool {
         return self.contains(key);
     }
 
-    fn iterator_impl(ptr: *anyopaque, ordered: bool) Error!DbIterator {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn iterator_impl(self: *MemoryDatabase, ordered: bool) Error!DbIterator {
         return make_iterator(self, ordered);
     }
 
-    fn snapshot_impl(ptr: *anyopaque) Error!DbSnapshot {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn snapshot_impl(self: *MemoryDatabase) Error!DbSnapshot {
         const snapshot = try MemorySnapshot.init(self);
         return snapshot.snapshot();
     }
 
-    fn flush_impl(_: *anyopaque, _: bool) Error!void {}
+    fn flush_impl(_: *MemoryDatabase, _: bool) Error!void {}
 
-    fn clear_impl(ptr: *anyopaque) Error!void {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn clear_impl(self: *MemoryDatabase) Error!void {
         self.clear();
     }
 
-    fn compact_impl(_: *anyopaque) Error!void {}
+    fn compact_impl(_: *MemoryDatabase) Error!void {}
 
-    fn gather_metric_impl(ptr: *anyopaque) Error!DbMetric {
-        const self: *MemoryDatabase = @ptrCast(@alignCast(ptr));
+    fn gather_metric_impl(self: *MemoryDatabase) Error!DbMetric {
         return .{
             .size = @intCast(self.map.count()),
             .total_reads = self.reads_count,
