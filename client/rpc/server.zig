@@ -166,6 +166,200 @@ pub fn SingleRequestProcessor(comptime EthProvider: type, comptime NetProvider: 
     };
 }
 
+/// Batch-request JSON-RPC executor using comptime-injected namespace backends.
+///
+/// Reuses `SingleRequestProcessor` for each top-level batch entry and emits a
+/// JSON-RPC batch response array containing only entries that produced output
+/// (notifications are omitted).
+pub fn BatchRequestExecutor(comptime EthProvider: type, comptime NetProvider: type, comptime Web3Provider: type) type {
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        config: RpcServerConfig,
+        single_processor: SingleRequestProcessor(EthProvider, NetProvider, Web3Provider),
+
+        /// Construct a batch executor from concrete namespace providers.
+        pub fn init(
+            allocator: std.mem.Allocator,
+            config: RpcServerConfig,
+            eth_provider: *const EthProvider,
+            net_provider: *const NetProvider,
+            web3_provider: *const Web3Provider,
+        ) Self {
+            return .{
+                .allocator = allocator,
+                .config = config,
+                .single_processor = SingleRequestProcessor(EthProvider, NetProvider, Web3Provider).init(
+                    eth_provider,
+                    net_provider,
+                    web3_provider,
+                ),
+            };
+        }
+
+        /// Execute one JSON-RPC batch request array and write response(s), if any.
+        pub fn handle(self: *const Self, writer: anytype, request: []const u8, is_authenticated: bool) !void {
+            const batch_count = switch (parse_request_kind_for_dispatch(self.config, request, is_authenticated)) {
+                .request => |kind| switch (kind) {
+                    .batch => |count| count,
+                    .object => {
+                        try write_null_id_error(writer, errors.code.invalid_request);
+                        return;
+                    },
+                },
+                .err => |code| {
+                    try write_null_id_error(writer, code);
+                    return;
+                },
+            };
+            _ = batch_count;
+
+            var index = batch_array_open_index(request) orelse {
+                try write_null_id_error(writer, errors.code.parse_error);
+                return;
+            };
+            index += 1; // past '['
+
+            var emitted: usize = 0;
+            while (true) {
+                skip_ascii_whitespace(request, &index);
+                if (index >= request.len) {
+                    try write_null_id_error(writer, errors.code.parse_error);
+                    return;
+                }
+                if (request[index] == ']') break;
+
+                const entry_start = index;
+                const entry_end = scan_batch_entry_end(request, index) catch {
+                    try write_null_id_error(writer, errors.code.parse_error);
+                    return;
+                };
+
+                var entry_buf = std.array_list.Managed(u8).init(self.allocator);
+                defer entry_buf.deinit();
+                try self.single_processor.handle(entry_buf.writer(), request[entry_start..entry_end]);
+
+                if (entry_buf.items.len != 0) {
+                    if (emitted == 0) {
+                        try writer.writeByte('[');
+                    } else {
+                        try writer.writeByte(',');
+                    }
+                    try writer.writeAll(entry_buf.items);
+                    emitted += 1;
+                }
+
+                index = entry_end;
+                skip_ascii_whitespace(request, &index);
+                if (index >= request.len) {
+                    try write_null_id_error(writer, errors.code.parse_error);
+                    return;
+                }
+                switch (request[index]) {
+                    ',' => index += 1,
+                    ']' => break,
+                    else => {
+                        try write_null_id_error(writer, errors.code.parse_error);
+                        return;
+                    },
+                }
+            }
+
+            if (emitted != 0) {
+                try writer.writeByte(']');
+            }
+        }
+
+        fn write_null_id_error(writer: anytype, code: errors.JsonRpcErrorCode) !void {
+            try Response.write_error(writer, .null, code, errors.default_message(code), null);
+        }
+
+        fn batch_array_open_index(input: []const u8) ?usize {
+            var i: usize = 0;
+            if (input.len >= 3 and input[0] == 0xEF and input[1] == 0xBB and input[2] == 0xBF) i = 3;
+            skip_ascii_whitespace(input, &i);
+            if (i >= input.len or input[i] != '[') return null;
+            return i;
+        }
+
+        fn skip_ascii_whitespace(input: []const u8, index: *usize) void {
+            while (index.* < input.len and std.ascii.isWhitespace(input[index.*])) : (index.* += 1) {}
+        }
+
+        fn scan_batch_entry_end(input: []const u8, start: usize) scan.ScanRequestError!usize {
+            if (start >= input.len) return error.ParseError;
+            return switch (input[start]) {
+                '{', '[' => scan_composite_end(input, start),
+                '"' => scan_string_end(input, start),
+                else => scan_primitive_end(input, start),
+            };
+        }
+
+        fn scan_composite_end(input: []const u8, start: usize) scan.ScanRequestError!usize {
+            var depth: usize = 0;
+            var in_string = false;
+            var escaped = false;
+            var i = start;
+            while (i < input.len) : (i += 1) {
+                const c = input[i];
+                if (in_string) {
+                    if (escaped) {
+                        escaped = false;
+                        continue;
+                    }
+                    if (c == '\\') {
+                        escaped = true;
+                        continue;
+                    }
+                    if (c == '"') in_string = false;
+                    continue;
+                }
+                switch (c) {
+                    '"' => in_string = true,
+                    '{', '[' => depth += 1,
+                    '}', ']' => {
+                        if (depth == 0) return error.ParseError;
+                        depth -= 1;
+                        if (depth == 0) return i + 1;
+                    },
+                    else => {},
+                }
+            }
+            return error.ParseError;
+        }
+
+        fn scan_string_end(input: []const u8, start: usize) scan.ScanRequestError!usize {
+            var escaped = false;
+            var i = start + 1;
+            while (i < input.len) : (i += 1) {
+                const c = input[i];
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (c == '"') return i + 1;
+                if (c < 0x20) return error.ParseError;
+            }
+            return error.ParseError;
+        }
+
+        fn scan_primitive_end(input: []const u8, start: usize) scan.ScanRequestError!usize {
+            var i = start;
+            while (i < input.len) : (i += 1) {
+                const c = input[i];
+                if (c == ',' or c == ']' or std.ascii.isWhitespace(c)) break;
+            }
+            if (i == start) return error.ParseError;
+            return i;
+        }
+    };
+}
+
 /// Validate JSON-RPC batch size against server configuration.
 ///
 /// Mirrors Nethermind behavior: unauthenticated requests are limited by
@@ -651,4 +845,196 @@ test "SingleRequestProcessor.handle emits no response for unknown notification" 
     defer buf.deinit();
     try processor.handle(buf.writer(), req);
     try std.testing.expectEqual(@as(usize, 0), buf.items.len);
+}
+
+test "BatchRequestExecutor.init + handle routes batch and omits notifications" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const cfg = RpcServerConfig{ .max_batch_size = 8 };
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, cfg, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"web3_clientVersion\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":\"n1\",\"method\":\"net_version\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, false);
+    try std.testing.expectEqualStrings(
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":\"n1\",\"result\":\"1\"}]",
+        buf.items,
+    );
+}
+
+test "BatchRequestExecutor.handle emits no response when batch is notifications only" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, RpcServerConfig{}, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"web3_clientVersion\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"method\":\"foo_bar\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, false);
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
+}
+
+test "BatchRequestExecutor.handle rejects oversized unauthenticated batch" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const cfg = RpcServerConfig{ .max_batch_size = 1 };
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, cfg, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, false);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32005,\"message\":\"Limit exceeded\"}}",
+        buf.items,
+    );
+}
+
+test "BatchRequestExecutor.handle allows oversized authenticated batch" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const cfg = RpcServerConfig{ .max_batch_size = 1 };
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, cfg, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, true);
+    try std.testing.expectEqualStrings(
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x1\"}]",
+        buf.items,
+    );
+}
+
+test "BatchRequestExecutor.handle includes per-entry invalid_request errors" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, RpcServerConfig{}, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  1,\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, false);
+    try std.testing.expectEqualStrings(
+        "[{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"Invalid request\"}},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x1\"}]",
+        buf.items,
+    );
 }
