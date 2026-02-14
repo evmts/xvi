@@ -83,6 +83,29 @@ pub fn is_canonical(chain: *Chain, hash: Hash.Hash) bool {
     return Hash.equals(&canonical, &hash);
 }
 
+/// Strict local canonicality check with optional missing-hash error.
+///
+/// Mirrors Nethermind `IsMainChain(hash, throwOnMissingHash)` semantics:
+/// - If `hash` is unknown locally and `throw_on_missing_hash` is `true`,
+///   returns `error.MissingBlock`.
+/// - If `hash` is unknown locally and `throw_on_missing_hash` is `false`,
+///   returns `false`.
+/// - Otherwise returns whether `hash` is canonical at its recorded block number.
+/// - Never consults the fork cache and performs no allocations.
+pub const IsCanonicalStrictError = error{MissingBlock};
+
+pub fn is_canonical_strict(
+    chain: *Chain,
+    hash: Hash.Hash,
+    throw_on_missing_hash: bool,
+) IsCanonicalStrictError!bool {
+    const local = get_block_local(chain, hash) orelse {
+        if (throw_on_missing_hash) return error.MissingBlock;
+        return false;
+    };
+    return is_canonical_at(chain, local.header.number, hash);
+}
+
 /// Returns true if the given hash is canonical, allowing fork-cache fetches.
 ///
 /// Semantics:
@@ -1727,6 +1750,22 @@ test "Chain - is_canonical returns false for missing block" {
     try std.testing.expect(!result);
 }
 
+test "Chain - is_canonical_strict returns typed error for missing block when throw enabled" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expectError(error.MissingBlock, is_canonical_strict(&chain, Hash.ZERO, true));
+}
+
+test "Chain - is_canonical_strict returns false for missing block when throw disabled" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expect(!(try is_canonical_strict(&chain, Hash.ZERO, false)));
+}
+
 test "Chain - is_canonical returns true for canonical block" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
@@ -1738,6 +1777,18 @@ test "Chain - is_canonical returns true for canonical block" {
 
     const result_fetch = try is_canonical_or_fetch(&chain, genesis.hash);
     try std.testing.expect(result_fetch);
+}
+
+test "Chain - is_canonical_strict returns true for canonical block" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+    try chain.setCanonicalHead(genesis.hash);
+
+    try std.testing.expect(try is_canonical_strict(&chain, genesis.hash, true));
 }
 
 test "Chain - is_canonical returns false for orphan block" {
@@ -1755,6 +1806,21 @@ test "Chain - is_canonical returns false for orphan block" {
 
     const result = is_canonical(&chain, orphan.hash);
     try std.testing.expect(!result);
+}
+
+test "Chain - is_canonical_strict returns false for known non-canonical block" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    var header = primitives.BlockHeader.init();
+    header.number = 5;
+    header.parent_hash = try Hash.fromHex("0x" ++ ("AA" ** 32));
+    const body = primitives.BlockBody.init();
+    const orphan = try Block.from(&header, &body, allocator);
+    try chain.putBlock(orphan);
+
+    try std.testing.expect(!(try is_canonical_strict(&chain, orphan.hash, true)));
 }
 
 test "Chain - is_canonical propagates RpcPending from fork cache" {

@@ -32,6 +32,8 @@ pub const pending_hash = chain.pending_hash;
 pub const pending_block = chain.pending_block;
 /// Canonicality checks.
 pub const is_canonical = chain.is_canonical;
+/// Strict canonicality check mirroring `IsMainChain(hash, throwOnMissingHash)`.
+pub const is_canonical_strict = chain.is_canonical_strict;
 /// Canonicality check that may use fork-cache backed fetches.
 pub const is_canonical_or_fetch = chain.is_canonical_or_fetch;
 /// Existence check (local or fork-cache).
@@ -144,6 +146,14 @@ test "root exports - is_fork_block forwards fork boundary semantics" {
     defer chain_state.deinit();
 
     try std.testing.expect(!is_fork_block(&chain_state, 0));
+}
+
+test "root exports - is_canonical_strict preserves typed missing-block behavior" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expectError(error.MissingBlock, is_canonical_strict(&chain_state, Hash.ZERO, true));
+    try std.testing.expect(!(try is_canonical_strict(&chain_state, Hash.ZERO, false)));
 }
 
 test "root exports - divergence and reorg helpers preserve typed missing-head errors" {
