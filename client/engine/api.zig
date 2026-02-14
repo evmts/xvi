@@ -1311,7 +1311,7 @@ fn validate_get_blobs_v1_result(
     result: GetBlobsV1Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_blob_and_proof_array_json(result.value.value, invalid_err, false);
+    try validate_blob_and_proof_array_json(result.value.value, invalid_err, false, true);
 }
 
 fn validate_get_blobs_v2_params(
@@ -1325,7 +1325,10 @@ fn validate_get_blobs_v2_result(
     result: GetBlobsV2Result,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_blob_and_proof_array_json(result.value.value, invalid_err, true);
+    switch (result.value.value) {
+        .null => {},
+        else => try validate_blob_and_proof_array_json(result.value.value, invalid_err, true, false),
+    }
 }
 
 fn validate_get_payload_v3_or_v4_or_v5_json(
@@ -1495,9 +1498,14 @@ fn validate_blob_and_proof_array_json(
     value: std.json.Value,
     comptime invalid_err: EngineApi.Error,
     comptime with_cell_proofs: bool,
+    comptime allow_item_null: bool,
 ) EngineApi.Error!void {
     if (value != .array) return invalid_err;
     for (value.array.items) |entry| {
+        if (entry == .null) {
+            if (!allow_item_null) return invalid_err;
+            continue;
+        }
         if (entry != .object) return invalid_err;
         const obj = entry.object;
         const blob = obj.get("blob") orelse return invalid_err;
@@ -2654,6 +2662,33 @@ fn make_execution_payload_body_v1_object(allocator: std.mem.Allocator) !struct {
     };
 }
 
+fn make_blob_and_proof_v1_object(allocator: std.mem.Allocator) !std.json.ObjectMap {
+    var obj = std.json.ObjectMap.init(allocator);
+    errdefer obj.deinit();
+    try obj.put("blob", .{ .string = "0x01" });
+    try obj.put("proof", .{ .string = "0x" ++ ("11" ** 48) });
+    return obj;
+}
+
+fn make_blob_and_proof_v2_object(allocator: std.mem.Allocator) !struct {
+    proofs: std.json.Array,
+    object: std.json.ObjectMap,
+} {
+    var proofs = std.json.Array.init(allocator);
+    errdefer proofs.deinit();
+    try proofs.append(.{ .string = "0x" ++ ("11" ** 48) });
+
+    var obj = std.json.ObjectMap.init(allocator);
+    errdefer obj.deinit();
+    try obj.put("blob", .{ .string = "0x01" });
+    try obj.put("proofs", .{ .array = proofs });
+
+    return .{
+        .proofs = proofs,
+        .object = obj,
+    };
+}
+
 test "engine api dispatches exchangeTransitionConfigurationV1" {
     const allocator = std.testing.allocator;
     var obj = try make_transition_config_object(
@@ -3314,6 +3349,104 @@ test "engine api accepts null placeholders in getPayloadBodiesByRangeV1 result" 
     const out = try api.get_payload_bodies_by_range_v1(params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.get_payload_bodies_by_range_v1_called);
+}
+
+test "engine api accepts null items in getBlobsV1 result" {
+    const alloc = std.testing.allocator;
+
+    var hashes = std.json.Array.init(alloc);
+    defer hashes.deinit();
+    try hashes.append(.{ .string = zero_hash32_hex });
+    try hashes.append(.{ .string = zero_hash32_hex });
+
+    const params = GetBlobsV1Params{
+        .blob_versioned_hashes = Quantity{ .value = .{ .array = hashes } },
+    };
+
+    var blob_and_proof = try make_blob_and_proof_v1_object(alloc);
+    defer blob_and_proof.deinit();
+
+    var blobs = std.json.Array.init(alloc);
+    defer blobs.deinit();
+    try blobs.append(.{ .object = blob_and_proof });
+    try blobs.append(.{ .null = {} });
+
+    const result_value = GetBlobsV1Result{
+        .value = Quantity{ .value = .{ .array = blobs } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .get_blobs_v1_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.get_blobs_v1(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_blobs_v1_called);
+}
+
+test "engine api accepts top-level null in getBlobsV2 result" {
+    const alloc = std.testing.allocator;
+
+    var hashes = std.json.Array.init(alloc);
+    defer hashes.deinit();
+    try hashes.append(.{ .string = zero_hash32_hex });
+
+    const params = GetBlobsV2Params{
+        .blob_versioned_hashes = Quantity{ .value = .{ .array = hashes } },
+    };
+
+    const result_value = GetBlobsV2Result{
+        .value = Quantity{ .value = .{ .null = {} } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .get_blobs_v2_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.get_blobs_v2(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_blobs_v2_called);
+}
+
+test "engine api rejects null items in getBlobsV2 result array" {
+    const alloc = std.testing.allocator;
+
+    var hashes = std.json.Array.init(alloc);
+    defer hashes.deinit();
+    try hashes.append(.{ .string = zero_hash32_hex });
+
+    const params = GetBlobsV2Params{
+        .blob_versioned_hashes = Quantity{ .value = .{ .array = hashes } },
+    };
+
+    var blob_and_proof = try make_blob_and_proof_v2_object(alloc);
+    defer blob_and_proof.proofs.deinit();
+    defer blob_and_proof.object.deinit();
+
+    var blobs = std.json.Array.init(alloc);
+    defer blobs.deinit();
+    try blobs.append(.{ .object = blob_and_proof.object });
+    try blobs.append(.{ .null = {} });
+
+    const invalid_result = GetBlobsV2Result{
+        .value = Quantity{ .value = .{ .array = blobs } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .get_blobs_v2_result = invalid_result,
+    };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.get_blobs_v2(params));
+    try std.testing.expect(dummy.get_blobs_v2_called);
 }
 
 test "engine api dispatches forkchoiceUpdatedV1" {
