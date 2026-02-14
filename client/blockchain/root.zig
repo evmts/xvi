@@ -28,7 +28,7 @@ pub const head_block = chain.head_block;
 pub const head_number = chain.head_number;
 /// Pending hash helper (defaults to canonical head hash, local-only).
 pub const pending_hash = chain.pending_hash;
-/// Pending block helper (defaults to canonical head block, local-only).
+/// Pending block helper (finder-style resolution from pending hash).
 pub const pending_block = chain.pending_block;
 /// Canonicality checks.
 pub const is_canonical = chain.is_canonical;
@@ -113,7 +113,7 @@ test "root exports - head and pending helpers behave consistently" {
     const ph = pending_hash(&chain_state) orelse return error.UnexpectedNull;
     try std.testing.expectEqualSlices(u8, &genesis.hash, &ph);
 
-    const pb = pending_block(&chain_state) orelse return error.UnexpectedNull;
+    const pb = (try pending_block(&chain_state)) orelse return error.UnexpectedNull;
     try std.testing.expectEqual(@as(u64, 0), pb.header.number);
     try std.testing.expectEqualSlices(u8, &genesis.hash, &pb.hash);
 }
