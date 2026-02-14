@@ -65,14 +65,17 @@ fn bench_encode(iterations: usize) bench.BenchResult {
     };
 }
 
-fn bench_decode_header_non_chunked(iterations: usize) bench.BenchResult {
-    const header_data = [_]u8{ 0xC2, 0x80, 0x80 } ++ [_]u8{0} ** 10;
+fn bench_decode_header(
+    iterations: usize,
+    name: []const u8,
+    frame_size: usize,
+    header_data: []const u8,
+) bench.BenchResult {
     var sink: usize = 0;
-    const frame_size: usize = 1024;
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
-        const out = client_network.Frame.decode_header_extensions(frame_size, &header_data, max_packet_size) catch unreachable;
+        const out = client_network.Frame.decode_header_extensions(frame_size, header_data, max_packet_size) catch unreachable;
         sink +%= out.total_packet_size;
         sink +%= @intFromBool(out.is_chunked);
         sink +%= @intFromBool(out.is_first_chunk);
@@ -82,62 +85,42 @@ fn bench_decode_header_non_chunked(iterations: usize) bench.BenchResult {
     std.mem.doNotOptimizeAway(sink);
     const elapsed: u64 = @intCast(end - start);
     return .{
-        .name = "RLPx decode_header_extensions (non-chunked)",
+        .name = name,
         .ops = iterations,
         .elapsed_ns = elapsed,
         .per_op_ns = if (iterations == 0) 0 else @as(u64, @intCast(elapsed / iterations)),
         .ops_per_sec = if (elapsed == 0) std.math.inf(f64) else @as(f64, @floatFromInt(iterations)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0),
     };
+}
+
+fn bench_decode_header_non_chunked(iterations: usize) bench.BenchResult {
+    const header_data = [_]u8{ 0xC2, 0x80, 0x80 } ++ [_]u8{0} ** 10;
+    return bench_decode_header(
+        iterations,
+        "RLPx decode_header_extensions (non-chunked)",
+        1024,
+        &header_data,
+    );
 }
 
 fn bench_decode_header_first_chunk(iterations: usize) bench.BenchResult {
     const header_data = [_]u8{ 0xC5, 0x80, 0x07, 0x82, 0x03, 0xE8 } ++ [_]u8{0} ** 7;
-    var sink: usize = 0;
-    const frame_size: usize = 256;
-    const start = std.time.nanoTimestamp();
-    var i: usize = 0;
-    while (i < iterations) : (i += 1) {
-        const out = client_network.Frame.decode_header_extensions(frame_size, &header_data, max_packet_size) catch unreachable;
-        sink +%= out.total_packet_size;
-        sink +%= @intFromBool(out.is_chunked);
-        sink +%= @intFromBool(out.is_first_chunk);
-        sink +%= out.context_id orelse 0;
-    }
-    const end = std.time.nanoTimestamp();
-    std.mem.doNotOptimizeAway(sink);
-    const elapsed: u64 = @intCast(end - start);
-    return .{
-        .name = "RLPx decode_header_extensions (first-chunk)",
-        .ops = iterations,
-        .elapsed_ns = elapsed,
-        .per_op_ns = if (iterations == 0) 0 else @as(u64, @intCast(elapsed / iterations)),
-        .ops_per_sec = if (elapsed == 0) std.math.inf(f64) else @as(f64, @floatFromInt(iterations)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0),
-    };
+    return bench_decode_header(
+        iterations,
+        "RLPx decode_header_extensions (first-chunk)",
+        256,
+        &header_data,
+    );
 }
 
 fn bench_decode_header_continuation_chunk(iterations: usize) bench.BenchResult {
     const header_data = [_]u8{ 0xC2, 0x80, 0x07 } ++ [_]u8{0} ** 10;
-    var sink: usize = 0;
-    const frame_size: usize = 512;
-    const start = std.time.nanoTimestamp();
-    var i: usize = 0;
-    while (i < iterations) : (i += 1) {
-        const out = client_network.Frame.decode_header_extensions(frame_size, &header_data, max_packet_size) catch unreachable;
-        sink +%= out.total_packet_size;
-        sink +%= @intFromBool(out.is_chunked);
-        sink +%= @intFromBool(out.is_first_chunk);
-        sink +%= out.context_id orelse 0;
-    }
-    const end = std.time.nanoTimestamp();
-    std.mem.doNotOptimizeAway(sink);
-    const elapsed: u64 = @intCast(end - start);
-    return .{
-        .name = "RLPx decode_header_extensions (continuation)",
-        .ops = iterations,
-        .elapsed_ns = elapsed,
-        .per_op_ns = if (iterations == 0) 0 else @as(u64, @intCast(elapsed / iterations)),
-        .ops_per_sec = if (elapsed == 0) std.math.inf(f64) else @as(f64, @floatFromInt(iterations)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0),
-    };
+    return bench_decode_header(
+        iterations,
+        "RLPx decode_header_extensions (continuation)",
+        512,
+        &header_data,
+    );
 }
 
 fn parse_iters_env(alloc: std.mem.Allocator, name: []const u8, default: usize) !usize {
