@@ -1,138 +1,118 @@
 # [pass 1/5] phase-9-sync (Synchronization) Context
 
-## Phase 9 goals from PRD
+## 1) Phase Goal (from PRD)
 Source: `prd/GUILLOTINE_CLIENT_PLAN.md`
 
+- Phase: `phase-9-sync`.
 - Goal: implement chain synchronization strategies.
 - Planned components:
-  - `client/sync/full.zig` for full sync.
-  - `client/sync/snap.zig` for snap sync.
-  - `client/sync/manager.zig` for sync coordination.
+  - `client/sync/full.zig` (full sync)
+  - `client/sync/snap.zig` (snap sync)
+  - `client/sync/manager.zig` (sync coordination)
 - Structural reference: `nethermind/src/Nethermind/Nethermind.Synchronization/`.
-- Design constraints called out in PRD:
-  - Use Voltaire primitives.
-  - Use guillotine-mini EVM (no reimplementation).
-  - Mirror Nethermind module boundaries, implement idiomatically in Zig.
-  - Prefer comptime dependency injection and explicit errors.
 
-## Relevant specifications for phase-9
+## 2) Relevant Specs (from PRD spec map)
 Source: `prd/ETHEREUM_SPECS_REFERENCE.md`
 
-- `devp2p/caps/eth.md` (block/header/receipt exchange over `eth/*`).
-- `devp2p/caps/snap.md` (`snap/1` state synchronization).
-- Phase reference tests: `hive/` sync tests and integration tests.
+Phase-9 references:
+- `devp2p/caps/eth.md` (block/header/receipt exchange)
+- `devp2p/caps/snap.md` (snap state sync)
+- `hive/` sync tests + integration tests
 
-### Notes from `devp2p/caps/eth.md`
-- Session starts with `Status (0x00)` before other `eth` messages.
-- Header/body/receipt pipeline messages used by sync:
-  - `GetBlockHeaders (0x03)` / `BlockHeaders (0x04)`
-  - `GetBlockBodies (0x05)` / `BlockBodies (0x06)`
-  - `GetReceipts (0x0f)` / `Receipts (0x10)`
-- `NewBlockHashes (0x01)` and `BlockRangeUpdate (0x11)` are relevant for near-head tracking.
-- Current protocol changelog includes `eth/69` updates for range signaling.
+### 2.1 `devp2p/caps/eth.md` sync-relevant sections
+- `## Chain Synchronization`
+- `### GetBlockHeaders (0x03)` / `### BlockHeaders (0x04)`
+- `### GetBlockBodies (0x05)` / `### BlockBodies (0x06)`
+- `### GetReceipts (0x0f)` / `### Receipts (0x10)`
+- `### NewBlock (0x07)` / `### NewBlockHashes (0x01)`
+- `### BlockRangeUpdate (0x11)`
 
-### Notes from `devp2p/caps/snap.md`
-- Current snap protocol version is `snap/1`.
-- State sync request/response pairs:
-  - `GetAccountRange (0x00)` / `AccountRange (0x01)`
-  - `GetStorageRanges (0x02)` / `StorageRanges (0x03)`
-  - `GetByteCodes (0x04)` / `ByteCodes (0x05)`
-  - `GetTrieNodes (0x06)` / `TrieNodes (0x07)`
-- The document defines expected reconstruction workflow and `eth` relation for headers/proofs.
+Summary: header-first download, then bodies/receipts, with request-id based pairing and size limits that should shape batching.
 
-## Nethermind DB directory snapshot
-Listed directory: `nethermind/src/Nethermind/Nethermind.Db/`
+### 2.2 `devp2p/caps/snap.md` sync-relevant sections
+- `## Synchronization algorithm`
+- `### GetAccountRange (0x00)` / `### AccountRange (0x01)`
+- `### GetStorageRanges (0x02)` / `### StorageRanges (0x03)`
+- `### GetByteCodes (0x04)` / `### ByteCodes (0x05)`
+- `### GetTrieNodes (0x06)` / `### TrieNodes (0x07)`
 
-Key files observed (for storage abstractions used by sync subsystems):
-- Interfaces:
-  - `IDb.cs`, `IReadOnlyDb.cs`, `IFullDb.cs`, `IColumnsDb.cs`, `IDbFactory.cs`, `IDbProvider.cs`, `IReadOnlyDbProvider.cs`, `IMergeOperator.cs`
-- Provider and wrappers:
-  - `DbProvider.cs`, `ReadOnlyDbProvider.cs`, `ReadOnlyDb.cs`, `CompressingDb.cs`, `DbExtensions.cs`, `DbProviderExtensions.cs`
-- Implementations:
-  - `MemDb.cs`, `MemColumnsDb.cs`, `NullDb.cs`, `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
-- Config and tuning:
-  - `RocksDbSettings.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruningTrigger.cs`, `FullPruningCompletionBehavior.cs`
-- Column/key metadata:
-  - `DbNames.cs`, `MetadataDbKeys.cs`, `ReceiptsColumns.cs`, `BlobTxsColumns.cs`
+Summary: snap is state-range oriented; correctness depends on proof handling and interplay with `eth` header sync.
 
-## Nethermind synchronization architecture to mirror
-Reference directory: `nethermind/src/Nethermind/Nethermind.Synchronization/`
+## 3) Nethermind DB inventory
+Listed: `nethermind/src/Nethermind/Nethermind.Db/`
 
-Key files and roles:
-- `Synchronizer.cs`: top-level coordinator that starts/stops feed components based on sync config/mode.
-- `ParallelSync/SyncDispatcher.cs`: generic dispatch loop (`feed + allocator + downloader`) with concurrency and peer allocation.
-- `Blocks/FullSyncFeed.cs`: full-sync feed activation and request/response bridge.
-- `SnapSync/SnapSyncDownloader.cs`: dispatches snap requests (`GetAccountRange`, `GetStorageRange`, `GetByteCodes`, `GetTrieNodes`) to snap peer protocol.
-- `SyncServer.cs`: serves sync requests and gossips new ranges/blocks to peers.
-- `Peers/SyncPeerPool.cs` and `Peers/PeerInfo.cs`: sync peer inventory and scoring/allocation surfaces.
+Key files to mirror conceptually for storage boundaries used by sync:
+- `IDb.cs`, `IReadOnlyDb.cs`, `IColumnsDb.cs`, `IDbProvider.cs`, `IDbFactory.cs`
+- `DbProvider.cs`, `ReadOnlyDbProvider.cs`, `ReadOnlyDb.cs`
+- `CompressingDb.cs`, `RocksDbSettings.cs`
+- `DbNames.cs`, `MetadataDbKeys.cs`, `ReceiptsColumns.cs`, `BlobTxsColumns.cs`
+- `MemDb.cs`, `MemColumnsDb.cs`, `NullDb.cs`
+- `PruningConfig.cs`, `PruningMode.cs`, `FullPruningTrigger.cs`
 
-## Voltaire APIs relevant to phase-9
-Listed source root: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
+## 4) Nethermind Sync architecture (for structural guidance)
+Listed: `nethermind/src/Nethermind/Nethermind.Synchronization/`
 
-Primary APIs to reuse:
-- Primitives (`primitives/root.zig` exports):
-  - `primitives.BlockHeader`, `primitives.BlockBody`, `primitives.BlockHash`, `primitives.BlockNumber`
-  - `primitives.Receipt`, `primitives.Transaction`, `primitives.Hash`, `primitives.Rlp`
-  - `primitives.PeerId`, `primitives.PeerInfo`, `primitives.ChainHead`, `primitives.ForkId`, `primitives.SyncStatus`
-- Blockchain module:
-  - `blockchain.Blockchain`, `blockchain.BlockStore`, `blockchain.ForkBlockCache`
-- State manager module:
-  - `state-manager.StateManager`, `state-manager.JournaledState`, `state-manager.ForkBackend`
+Key files/subsystems:
+- `Synchronizer.cs`, `SyncServer.cs`, `SyncPointers.cs`
+- `ParallelSync/SyncDispatcher.cs`, `ParallelSync/SyncFeed.cs`, `ParallelSync/SyncMode.cs`
+- `Blocks/BlockDownloader.cs`, `Blocks/FullSyncFeed.cs`
+- `FastBlocks/HeadersSyncDownloader.cs`, `FastBlocks/BodiesSyncDownloader.cs`, `FastBlocks/ReceiptsSyncDownloader.cs`
+- `SnapSync/SnapSyncDownloader.cs`, `SnapSync/SnapSyncFeed.cs`, `SnapSync/SnapProvider.cs`
+- `Peers/SyncPeerPool.cs`, `Peers/PeerInfo.cs`
 
-These cover canonical types and avoid custom duplicates for sync data structures.
+Summary: clear separation of mode selection, feed scheduling, peer allocation, and protocol-specific downloaders.
 
-## Existing Zig code in this repo (phase-9 relevant)
+## 5) Voltaire APIs available (must reuse)
+Listed root: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 
-### Host interface (requested `src/host.zig` equivalent)
-- Actual file in this repo: `guillotine-mini/src/host.zig`.
-- `HostInterface` is a vtable-based adapter over `*anyopaque` with methods:
-  - `getBalance`, `setBalance`
-  - `getCode`, `setCode`
-  - `getStorage`, `setStorage`
-  - `getNonce`, `setNonce`
-- Host uses Voltaire `Address` and builtin `u256`.
+Relevant modules:
+- `blockchain/`: `Blockchain`, `BlockStore`, `ForkBlockCache`
+- `state-manager/`: `StateManager`, `JournaledState`, `ForkBackend`
+- `primitives/` (selected sync-relevant exports):
+  - `BlockHeader`, `BlockBody`, `BlockHash`, `BlockNumber`
+  - `Receipt`, `Transaction`, `Hash`, `Rlp`
+  - `PeerId`, `PeerInfo`, `ChainHead`, `SyncStatus`, `ForkId`
 
-### EVM/host bridge already present
-- `client/evm/host_adapter.zig` adapts Voltaire `StateManager` to guillotine-mini `HostInterface`.
-- Uses fail-fast handling for state errors and test coverage for all host methods.
+Summary: phase-9 data/modeling should stay on Voltaire types; avoid client-local duplicate primitives.
 
-### Existing sync module status
-- `client/sync/root.zig` exports:
-  - `BlocksRequest` and per-peer limits from `client/sync/full.zig`
-  - `SyncMode` from `client/sync/mode.zig`
-  - `HeadersRequest` from `client/sync/headers.zig`
-  - `to_sync_status` helpers from `client/sync/status.zig`
-- Existing files:
-  - `client/sync/full.zig`
-  - `client/sync/headers.zig`
-  - `client/sync/mode.zig`
-  - `client/sync/status.zig`
-  - `client/sync/root.zig`
-- Gap vs PRD plan:
-  - `client/sync/snap.zig` not present.
-  - `client/sync/manager.zig` not present (`mode.zig` exists, but not a coordinator implementation).
+## 6) Existing HostInterface in this repo
+Requested path in prompt: `src/host.zig`.
+Actual file in this repository: `guillotine-mini/src/host.zig`.
 
-## Ethereum-tests directories and fixture paths
+HostInterface summary:
+- Vtable-backed host adapter over `*anyopaque`.
+- Methods:
+  - `getBalance` / `setBalance`
+  - `getCode` / `setCode`
+  - `getStorage` / `setStorage`
+  - `getNonce` / `setNonce`
+- Uses Voltaire `Address` type and `u256` values.
+
+## 7) Ethereum test fixture paths
 Listed under `ethereum-tests/`:
 
-Core sync-adjacent fixture directories:
+Primary fixture directories for sync/block import:
 - `ethereum-tests/BlockchainTests/ValidBlocks/`
 - `ethereum-tests/BlockchainTests/InvalidBlocks/`
-- `ethereum-tests/BlockchainTests/ValidBlocks/bcStateTests/`
-- `ethereum-tests/BlockchainTests/InvalidBlocks/bcStateTests/`
 - `ethereum-tests/TrieTests/`
 - `ethereum-tests/TransactionTests/`
+- `ethereum-tests/DifficultyTests/`
 
-Useful packaged fixture archives in repo:
+Fixture archives present:
 - `ethereum-tests/fixtures_blockchain_tests.tgz`
 - `ethereum-tests/fixtures_general_state_tests.tgz`
 
-Additional phase reference test source:
-- `hive/` (sync/integration scenarios referenced by PRD spec map).
+Additional integration references:
+- `hive/` (sync/network integration scenarios referenced in PRD map)
 
-## Implementation-ready checklist for next pass
-- Build a `client/sync/manager.zig` coordinator shaped like Nethermind `Synchronizer + SyncDispatcher` roles, but with Zig comptime DI.
-- Add `client/sync/snap.zig` request/response containers aligned to `snap/1` message families.
-- Keep all sync payload types on Voltaire primitives (`BlockHeader`, `Hash`, `PeerInfo`, `SyncStatus`).
-- Preserve explicit error propagation; do not add silent `catch {}` paths.
-- Add unit tests for each public function introduced in new sync modules.
+## 8) Current local sync module status
+Present in `client/sync/`:
+- `full.zig`
+- `headers.zig`
+- `manager.zig`
+- `mode.zig`
+- `snap.zig`
+- `status.zig`
+- `root.zig`
+
+Summary: planned phase-9 component files already exist; next work should focus on spec conformance, performance, and test expansion rather than file scaffolding.
