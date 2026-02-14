@@ -75,7 +75,7 @@ pub fn derive_secrets(
     return .{ .shared = shared, .aes = aes, .mac = mac };
 }
 
-test "deriveSecrets: zero vectors match spec composition" {
+test "derive_secrets: zero vectors match spec composition" {
     const zero32: Bytes32 = primitives.Bytes32.ZERO;
 
     // Manual spec composition
@@ -105,7 +105,7 @@ test "deriveSecrets: zero vectors match spec composition" {
     try std.testing.expectEqualSlices(u8, &mac, &got.mac);
 }
 
-test "deriveSecrets: input variation changes outputs" {
+test "derive_secrets: input variation changes outputs" {
     const z: Bytes32 = primitives.Bytes32.ZERO;
     var ones: Bytes32 = z;
     @memset(&ones, 0x01);

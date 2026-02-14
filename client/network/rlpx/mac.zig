@@ -139,7 +139,7 @@ test "init_mac_states: initiator vs recipient seeding per spec" {
     try std.testing.expectEqualSlices(u8, &ref_ingress_rec_digest, &got_ingress_r);
 }
 
-test "init_mac_statesFor(Keccak256) equals default" {
+test "init_mac_states_for(Keccak256) equals default" {
     const zero: Bytes32 = primitives.Bytes32.ZERO;
     var mac: Bytes32 = zero;
     @memset(&mac, 0x33);
