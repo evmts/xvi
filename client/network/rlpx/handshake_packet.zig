@@ -10,7 +10,7 @@ const PrefixSize: usize = Uint16.SIZE;
 const NonceSize: usize = primitives.Bytes32.SIZE;
 const PublicKeySize: usize = 64;
 const SignatureSize: usize = 65;
-const DecodeScratchSize: usize = 1024;
+const MaxEip8DecodedBodySize: usize = @as(usize, std.math.maxInt(u16));
 
 /// Public, stable error set for EIP-8 size-prefixed handshake packets.
 pub const HandshakePacketError = error{
@@ -65,10 +65,9 @@ pub fn decode_eip8_size_prefixed_body(packet: []const u8) HandshakePacketError![
 /// - extra list elements are ignored
 /// - trailing bytes after the top-level list are ignored
 pub fn decode_eip8_auth_body(body: []const u8) HandshakeBodyDecodeError!Eip8AuthBody {
-    var scratch: [DecodeScratchSize]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&scratch);
-    const decoded = Rlp.decode(fba.allocator(), body, true) catch return error.InvalidRlpBody;
-    defer decoded.data.deinit(fba.allocator());
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const decoded = try decode_eip8_handshake_body(arena.allocator(), body);
 
     const items = switch (decoded.data) {
         .List => |list| list,
@@ -103,10 +102,9 @@ pub fn decode_eip8_auth_body(body: []const u8) HandshakeBodyDecodeError!Eip8Auth
 /// - extra list elements are ignored
 /// - trailing bytes after the top-level list are ignored
 pub fn decode_eip8_ack_body(body: []const u8) HandshakeBodyDecodeError!Eip8AckBody {
-    var scratch: [DecodeScratchSize]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&scratch);
-    const decoded = Rlp.decode(fba.allocator(), body, true) catch return error.InvalidRlpBody;
-    defer decoded.data.deinit(fba.allocator());
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const decoded = try decode_eip8_handshake_body(arena.allocator(), body);
 
     const items = switch (decoded.data) {
         .List => |list| list,
@@ -124,6 +122,15 @@ pub fn decode_eip8_ack_body(body: []const u8) HandshakeBodyDecodeError!Eip8AckBo
         .recipient_ephemeral_public_key = recipient_ephemeral_public_key,
         .recipient_nonce = primitives.Bytes32.fromBytes(recipient_nonce_bytes),
     };
+}
+
+fn decode_eip8_handshake_body(
+    allocator: std.mem.Allocator,
+    body: []const u8,
+) HandshakeBodyDecodeError!Rlp.Decoded {
+    // EIP-8 packets are size-prefixed with a 16-bit encrypted-body length.
+    if (body.len > MaxEip8DecodedBodySize) return error.InvalidRlpBody;
+    return Rlp.decode(allocator, body, true) catch return error.InvalidRlpBody;
 }
 
 fn read_rlp_bytes_exact(
@@ -258,6 +265,42 @@ test "decode_eip8_ack_body tolerates version mismatch, extra elements, and trail
     defer std.testing.allocator.free(encoded_with_trailing);
 
     const decoded = try decode_eip8_ack_body(encoded_with_trailing);
+    try std.testing.expectEqualSlices(u8, &recipient_ephemeral_public_key, &decoded.recipient_ephemeral_public_key.bytes);
+    try std.testing.expectEqualSlices(u8, &recipient_nonce, &decoded.recipient_nonce);
+}
+
+test "decode_eip8_auth_body accepts forward-compatible body larger than legacy scratch size" {
+    const signature = [_]u8{0x11} ** SignatureSize;
+    const initiator_public_key = [_]u8{0x22} ** PublicKeySize;
+    const initiator_nonce = [_]u8{0x33} ** NonceSize;
+    const large_extra = [_]u8{0x44} ** 1200;
+    const encoded = try Rlp.encode(std.testing.allocator, [_][]const u8{
+        &signature,
+        &initiator_public_key,
+        &initiator_nonce,
+        &[_]u8{0x04},
+        &large_extra,
+    });
+    defer std.testing.allocator.free(encoded);
+
+    const decoded = try decode_eip8_auth_body(encoded);
+    try std.testing.expectEqualSlices(u8, &initiator_public_key, &decoded.initiator_public_key.bytes);
+    try std.testing.expectEqualSlices(u8, &initiator_nonce, &decoded.initiator_nonce);
+}
+
+test "decode_eip8_ack_body accepts forward-compatible body larger than legacy scratch size" {
+    const recipient_ephemeral_public_key = [_]u8{0x55} ** PublicKeySize;
+    const recipient_nonce = [_]u8{0x66} ** NonceSize;
+    const large_extra = [_]u8{0x77} ** 1200;
+    const encoded = try Rlp.encode(std.testing.allocator, [_][]const u8{
+        &recipient_ephemeral_public_key,
+        &recipient_nonce,
+        &[_]u8{0x04},
+        &large_extra,
+    });
+    defer std.testing.allocator.free(encoded);
+
+    const decoded = try decode_eip8_ack_body(encoded);
     try std.testing.expectEqualSlices(u8, &recipient_ephemeral_public_key, &decoded.recipient_ephemeral_public_key.bytes);
     try std.testing.expectEqualSlices(u8, &recipient_nonce, &decoded.recipient_nonce);
 }
