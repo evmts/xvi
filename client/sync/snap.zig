@@ -39,6 +39,10 @@ pub const AccountRangeRequest = struct {
 /// Message shape from devp2p snap/1:
 /// `[reqID, rootHash, accountHashes, startingHash, limitHash, responseBytes]`
 pub const StorageRangeRequest = struct {
+    pub const InitError = error{
+        EmptyAccountHashes,
+    };
+
     req_id: u64,
     root_hash: Hash.Hash,
     account_hashes: []const Hash.Hash,
@@ -54,7 +58,11 @@ pub const StorageRangeRequest = struct {
         starting_hash: Hash.Hash,
         limit_hash: Hash.Hash,
         response_bytes: u64,
-    ) StorageRangeRequest {
+    ) InitError!StorageRangeRequest {
+        if (account_hashes.len == 0) {
+            return InitError.EmptyAccountHashes;
+        }
+
         return .{
             .req_id = req_id,
             .root_hash = root_hash,
@@ -113,7 +121,7 @@ test "StorageRangeRequest.init assigns all fields preserving account hash order"
     const limit_hash: Hash.Hash = [_]u8{0x65} ** 32;
     const response_bytes: u64 = 1024 * 1024;
 
-    const request = StorageRangeRequest.init(
+    const request = try StorageRangeRequest.init(
         req_id,
         root_hash,
         &account_hashes,
@@ -134,7 +142,7 @@ test "StorageRangeRequest.init assigns all fields preserving account hash order"
     }
 }
 
-test "StorageRangeRequest.init accepts empty account hash list" {
+test "StorageRangeRequest.init rejects empty account hash list" {
     const request = StorageRangeRequest.init(
         99,
         [_]u8{0xaa} ** 32,
@@ -144,7 +152,5 @@ test "StorageRangeRequest.init accepts empty account hash list" {
         4096,
     );
 
-    try std.testing.expectEqual(@as(u64, 99), request.req_id);
-    try std.testing.expectEqual(@as(usize, 0), request.account_hashes.len);
-    try std.testing.expectEqual(@as(u64, 4096), request.response_bytes);
+    try std.testing.expectError(StorageRangeRequest.InitError.EmptyAccountHashes, request);
 }
