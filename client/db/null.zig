@@ -45,10 +45,19 @@ pub const NullDb = struct {
 
     /// Return a `Database` vtable interface backed by this NullDb.
     pub fn database(self: *NullDb) Database {
-        return .{
-            .ptr = @ptrCast(self),
-            .vtable = &vtable,
-        };
+        return Database.init(NullDb, self, .{
+            .name = name_impl,
+            .get = get_impl,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_impl,
+            .iterator = iterator_impl,
+            .snapshot = snapshot_impl,
+            .flush = flush_impl,
+            .clear = clear_impl,
+            .compact = compact_impl,
+            .gather_metric = gather_metric_impl,
+        });
     }
 
     /// No-op — NullDb holds no resources.
@@ -58,41 +67,26 @@ pub const NullDb = struct {
 
     // -- VTable implementation (Null Object pattern) --------------------------
 
-    const vtable = Database.VTable{
-        .name = name_impl,
-        .get = get_impl,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_impl,
-        .iterator = iterator_impl,
-        .snapshot = snapshot_impl,
-        .flush = flush_impl,
-        .clear = clear_impl,
-        .compact = compact_impl,
-        .gather_metric = gather_metric_impl,
-    };
-
-    fn name_impl(ptr: *anyopaque) DbName {
-        const self: *NullDb = @ptrCast(@alignCast(ptr));
+    fn name_impl(self: *NullDb) DbName {
         return self.name;
     }
 
-    fn get_impl(_: *anyopaque, _: []const u8, _: ReadFlags) Error!?DbValue {
+    fn get_impl(_: *NullDb, _: []const u8, _: ReadFlags) Error!?DbValue {
         // Null database: no data stored, always returns null.
         return null;
     }
 
-    fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
+    fn put_impl(_: *NullDb, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
         // Null database: writes are not supported.
         return error.StorageError;
     }
 
-    fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {
+    fn delete_impl(_: *NullDb, _: []const u8, _: WriteFlags) Error!void {
         // Null database: deletes are not supported.
         return error.StorageError;
     }
 
-    fn contains_impl(_: *anyopaque, _: []const u8) Error!bool {
+    fn contains_impl(_: *NullDb, _: []const u8) Error!bool {
         // Null database: no data stored, key never exists.
         return false;
     }
@@ -105,7 +99,7 @@ pub const NullDb = struct {
         fn deinit(_: *EmptyIterator) void {}
     };
 
-    fn iterator_impl(_: *anyopaque, _: bool) Error!adapter.DbIterator {
+    fn iterator_impl(_: *NullDb, _: bool) Error!adapter.DbIterator {
         return adapter.DbIterator.init(
             EmptyIterator,
             &empty_iterator,
@@ -135,7 +129,7 @@ pub const NullDb = struct {
         fn snapshot_deinit(_: *NullSnapshot) void {}
     };
 
-    fn snapshot_impl(_: *anyopaque) Error!DbSnapshot {
+    fn snapshot_impl(_: *NullDb) Error!DbSnapshot {
         return DbSnapshot.init(
             NullSnapshot,
             &null_snapshot,
@@ -146,13 +140,13 @@ pub const NullDb = struct {
         );
     }
 
-    fn flush_impl(_: *anyopaque, _: bool) Error!void {}
+    fn flush_impl(_: *NullDb, _: bool) Error!void {}
 
-    fn clear_impl(_: *anyopaque) Error!void {}
+    fn clear_impl(_: *NullDb) Error!void {}
 
-    fn compact_impl(_: *anyopaque) Error!void {}
+    fn compact_impl(_: *NullDb) Error!void {}
 
-    fn gather_metric_impl(_: *anyopaque) Error!DbMetric {
+    fn gather_metric_impl(_: *NullDb) Error!DbMetric {
         return .{};
     }
 
