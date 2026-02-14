@@ -12,7 +12,7 @@ pub const AccountRangeRequest = struct {
     root_hash: Hash.Hash,
     starting_hash: Hash.Hash,
     limit_hash: Hash.Hash,
-    response_bytes: usize,
+    response_bytes: u64,
 
     /// Construct a GetAccountRange request.
     pub fn init(
@@ -20,7 +20,7 @@ pub const AccountRangeRequest = struct {
         root_hash: Hash.Hash,
         starting_hash: Hash.Hash,
         limit_hash: Hash.Hash,
-        response_bytes: usize,
+        response_bytes: u64,
     ) AccountRangeRequest {
         return .{
             .req_id = req_id,
@@ -42,7 +42,7 @@ pub const StorageRangeRequest = struct {
     account_hashes: []const Hash.Hash,
     starting_hash: Hash.Hash,
     limit_hash: Hash.Hash,
-    response_bytes: usize,
+    response_bytes: u64,
 
     /// Construct a GetStorageRanges request.
     pub fn init(
@@ -51,7 +51,7 @@ pub const StorageRangeRequest = struct {
         account_hashes: []const Hash.Hash,
         starting_hash: Hash.Hash,
         limit_hash: Hash.Hash,
-        response_bytes: usize,
+        response_bytes: u64,
     ) StorageRangeRequest {
         return .{
             .req_id = req_id,
@@ -69,7 +69,7 @@ test "AccountRangeRequest.init assigns all fields" {
     const root_hash: Hash.Hash = [_]u8{0x11} ** 32;
     const starting_hash: Hash.Hash = [_]u8{0x22} ** 32;
     const limit_hash: Hash.Hash = [_]u8{0x33} ** 32;
-    const response_bytes: usize = 512 * 1024;
+    const response_bytes: u64 = 512 * 1024;
 
     const request = AccountRangeRequest.init(
         req_id,
@@ -96,7 +96,7 @@ test "AccountRangeRequest.init accepts zero response bytes" {
     );
 
     try std.testing.expectEqual(@as(u64, 7), request.req_id);
-    try std.testing.expectEqual(@as(usize, 0), request.response_bytes);
+    try std.testing.expectEqual(@as(u64, 0), request.response_bytes);
 }
 
 test "StorageRangeRequest.init assigns all fields preserving account hash order" {
@@ -109,7 +109,7 @@ test "StorageRangeRequest.init assigns all fields preserving account hash order"
     };
     const starting_hash: Hash.Hash = [_]u8{0x54} ** 32;
     const limit_hash: Hash.Hash = [_]u8{0x65} ** 32;
-    const response_bytes: usize = 1024 * 1024;
+    const response_bytes: u64 = 1024 * 1024;
 
     const request = StorageRangeRequest.init(
         req_id,
@@ -144,5 +144,5 @@ test "StorageRangeRequest.init accepts empty account hash list" {
 
     try std.testing.expectEqual(@as(u64, 99), request.req_id);
     try std.testing.expectEqual(@as(usize, 0), request.account_hashes.len);
-    try std.testing.expectEqual(@as(usize, 4096), request.response_bytes);
+    try std.testing.expectEqual(@as(u64, 4096), request.response_bytes);
 }
