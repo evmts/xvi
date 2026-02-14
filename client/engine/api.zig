@@ -258,7 +258,6 @@ const supported_capability_method_names_static = [_][]const u8{
     "engine_getPayloadBodiesByRangeV1",
     "engine_getBlobsV1",
     "engine_getBlobsV2",
-    "engine_getBlobsV3",
 };
 
 /// Returns the Engine API method names this EL surface currently supports.
@@ -356,8 +355,7 @@ pub const EngineCapabilitiesProvider = struct {
         }
 
         if (std.mem.eql(u8, method, "engine_getPayloadV5") or
-            std.mem.eql(u8, method, "engine_getBlobsV2") or
-            std.mem.eql(u8, method, "engine_getBlobsV3"))
+            std.mem.eql(u8, method, "engine_getBlobsV2"))
         {
             return self.spec_state.eip7594_enabled;
         }
@@ -1164,7 +1162,7 @@ fn validate_get_payload_v1_params(
     params: GetPayloadV1Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v1_result(
@@ -1178,7 +1176,7 @@ fn validate_get_payload_v2_params(
     params: GetPayloadV2Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v2_result(
@@ -1208,11 +1206,18 @@ fn validate_payload_id_json(
     }
 }
 
+fn validate_get_payload_params(
+    payload_id: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_payload_id_json(payload_id, invalid_err);
+}
+
 fn validate_get_payload_v3_params(
     params: GetPayloadV3Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v3_result(
@@ -1226,7 +1231,7 @@ fn validate_get_payload_v4_params(
     params: GetPayloadV4Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v4_result(
@@ -1240,7 +1245,7 @@ fn validate_get_payload_v5_params(
     params: GetPayloadV5Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v5_result(
@@ -1254,7 +1259,7 @@ fn validate_get_payload_v6_params(
     params: GetPayloadV6Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_payload_id_json(params.payload_id.value, invalid_err);
+    try validate_get_payload_params(params.payload_id.value, invalid_err);
 }
 
 fn validate_get_payload_v6_result(
@@ -1328,7 +1333,7 @@ fn validate_get_blobs_v1_params(
     params: GetBlobsV1Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_hash32_array_json(params.blob_versioned_hashes.value, invalid_err);
+    try validate_get_blobs_params(params.blob_versioned_hashes.value, invalid_err);
 }
 
 fn validate_get_blobs_v1_result(
@@ -1342,7 +1347,14 @@ fn validate_get_blobs_v2_params(
     params: GetBlobsV2Params,
     comptime invalid_err: EngineApi.Error,
 ) EngineApi.Error!void {
-    try validate_hash32_array_json(params.blob_versioned_hashes.value, invalid_err);
+    try validate_get_blobs_params(params.blob_versioned_hashes.value, invalid_err);
+}
+
+fn validate_get_blobs_params(
+    blob_versioned_hashes: std.json.Value,
+    comptime invalid_err: EngineApi.Error,
+) EngineApi.Error!void {
+    try validate_hash32_array_json(blob_versioned_hashes, invalid_err);
 }
 
 fn validate_get_blobs_v2_result(
@@ -2027,7 +2039,6 @@ test "engine capabilities provider filters methods by fork/spec features" {
     const amsterdam_methods = try amsterdam_provider.enabled_capability_method_names(out[0..]);
     try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV5"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_getBlobsV2"));
-    try std.testing.expect(has_method(amsterdam_methods, "engine_getBlobsV3"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_newPayloadV5"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV6"));
 }
