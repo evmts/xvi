@@ -62,6 +62,8 @@ pub const block_hash_by_number_local_strict = chain.block_hash_by_number_local_s
 pub const last_256_block_hashes_local = chain.last_256_block_hashes_local;
 /// Local-only lowest common ancestor hash lookup between two blocks.
 pub const common_ancestor_hash_local = chain.common_ancestor_hash_local;
+/// Strict local-only common ancestor helper returning typed ancestry errors.
+pub const common_ancestor_hash_local_strict = chain.common_ancestor_hash_local_strict;
 /// Local-only canonical divergence check between current head and candidate head.
 pub const has_canonical_divergence_local = chain.has_canonical_divergence_local;
 /// Local-only reorg depth from canonical head to candidate common ancestor.
@@ -143,11 +145,18 @@ test "root exports - block_hash_by_number_local_strict preserves typed errors" {
     try std.testing.expectError(error.MissingTipBlock, block_hash_by_number_local_strict(&chain_state, Hash.ZERO, 1, 0));
 }
 
-test "root exports - typed ancestry error is preserved" {
+test "root exports - common_ancestor_hash_local is nullable when local ancestry is missing" {
     var chain_state = try Chain.init(std.testing.allocator, null);
     defer chain_state.deinit();
 
-    try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local(&chain_state, Hash.ZERO, Hash.ZERO));
+    try std.testing.expect(common_ancestor_hash_local(&chain_state, Hash.ZERO, Hash.ZERO) == null);
+}
+
+test "root exports - common_ancestor_hash_local_strict preserves typed errors" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local_strict(&chain_state, Hash.ZERO, Hash.ZERO));
 }
 
 test "root exports - is_fork_block forwards fork boundary semantics" {
