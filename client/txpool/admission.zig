@@ -80,6 +80,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
             return null;
         }
 
+        fn try_get_pending_blob_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -104,6 +108,7 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
         .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
@@ -167,6 +172,10 @@ test "precheck_duplicate matches typed containment semantics" {
             return null;
         }
 
+        fn try_get_pending_blob_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -191,6 +200,7 @@ test "precheck_duplicate matches typed containment semantics" {
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
         .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };

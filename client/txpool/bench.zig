@@ -343,6 +343,10 @@ const LookupDummyPool = struct {
         return null;
     }
 
+    fn try_get_pending_blob_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+        return null;
+    }
+
     fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: txpool.TxHandlingOptions) txpool.AcceptTxResult {
         return txpool.AcceptTxResult.accepted;
     }
@@ -364,6 +368,7 @@ fn bench_lookup_dispatch(n: usize) !struct { is_known: bench.BenchResult, contai
         .mark_known_for_current_scope = LookupDummyPool.mark_known_for_current_scope,
         .contains_tx = LookupDummyPool.contains_tx,
         .try_get_pending_transaction = LookupDummyPool.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = LookupDummyPool.try_get_pending_blob_transaction,
         .submit_tx = LookupDummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };

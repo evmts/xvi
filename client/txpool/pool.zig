@@ -130,6 +130,10 @@ pub const TxPool = struct {
         ///
         /// Mirrors Nethermind's `TryGetPendingTransaction(Hash256, out Transaction)`.
         try_get_pending_transaction: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) ?PendingTransaction,
+        /// Looks up a pending blob transaction by hash.
+        ///
+        /// Mirrors Nethermind's `TryGetPendingBlobTransaction(Hash256, out Transaction)`.
+        try_get_pending_blob_transaction: *const fn (ptr: *anyopaque, tx_hash: TransactionHash) ?PendingTransaction,
         /// Submits a typed transaction to the pool with handling flags.
         ///
         /// Mirrors Nethermind's `SubmitTx(Transaction, TxHandlingOptions)`.
@@ -199,6 +203,11 @@ pub const TxPool = struct {
         return self.vtable.try_get_pending_transaction(self.ptr, tx_hash);
     }
 
+    /// Returns a pending blob transaction for `tx_hash`, if present.
+    pub fn try_get_pending_blob_transaction(self: TxPool, tx_hash: TransactionHash) ?PendingTransaction {
+        return self.vtable.try_get_pending_blob_transaction(self.ptr, tx_hash);
+    }
+
     /// Submits `tx` to the pool using the specified handling options.
     ///
     /// Mirrors Nethermind's `SubmitTx(Transaction, TxHandlingOptions)`.
@@ -219,8 +228,10 @@ test "txpool interface dispatches pending counts" {
         match_sender: Address,
         pending_for_sender: u32,
         known_hash: TransactionHash,
+        known_blob_hash: TransactionHash,
         known_type: TransactionType,
         known_pending_tx: TxPool.PendingTransaction,
+        known_blob_pending_tx: TxPool.PendingTransaction,
         submit_result: AcceptTxResult = AcceptTxResult.syncing,
         submit_calls: u32 = 0,
         last_submit_len: usize = 0,
@@ -282,6 +293,13 @@ test "txpool interface dispatches pending counts" {
             return null;
         }
 
+        fn try_get_pending_blob_transaction(ptr: *anyopaque, tx_hash: TransactionHash) ?TxPool.PendingTransaction {
+            const Self = @This();
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            if (std.mem.eql(u8, &self.known_blob_hash, &tx_hash)) return self.known_blob_pending_tx;
+            return null;
+        }
+
         fn submit_tx(ptr: *anyopaque, tx: *const TxPool.PendingTransaction, handling_options: TxHandlingOptions) AcceptTxResult {
             const Self = @This();
             const self: *Self = @ptrCast(@alignCast(ptr));
@@ -294,6 +312,7 @@ test "txpool interface dispatches pending counts" {
 
     const target = Address{ .bytes = [_]u8{0xAB} ++ [_]u8{0} ** 19 };
     const known_hash: TransactionHash = [_]u8{0x11} ** 32;
+    const known_blob_hash: TransactionHash = [_]u8{0x33} ** 32;
     var dummy = DummyPool{
         .pending = 42,
         .pending_blobs = 7,
@@ -301,8 +320,10 @@ test "txpool interface dispatches pending counts" {
         .match_sender = target,
         .pending_for_sender = 3,
         .known_hash = known_hash,
+        .known_blob_hash = known_blob_hash,
         .known_type = .eip1559,
         .known_pending_tx = .{ .raw = &[_]u8{ 0x02, 0xc0 } },
+        .known_blob_pending_tx = .{ .raw = &[_]u8{ 0x03, 0xc0 } },
     };
     const vtable = TxPool.VTable{
         .pending_count = DummyPool.pending_count,
@@ -315,6 +336,7 @@ test "txpool interface dispatches pending counts" {
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
         .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
 
@@ -333,6 +355,10 @@ test "txpool interface dispatches pending counts" {
     try std.testing.expect(known_pending != null);
     try std.testing.expectEqualDeep(dummy.known_pending_tx, known_pending.?);
     try std.testing.expectEqual(@as(?TxPool.PendingTransaction, null), pool.try_get_pending_transaction([_]u8{0x22} ** 32));
+    const known_blob_pending = pool.try_get_pending_blob_transaction(known_blob_hash);
+    try std.testing.expect(known_blob_pending != null);
+    try std.testing.expectEqualDeep(dummy.known_blob_pending_tx, known_blob_pending.?);
+    try std.testing.expectEqual(@as(?TxPool.PendingTransaction, null), pool.try_get_pending_blob_transaction([_]u8{0x22} ** 32));
     const submit_tx = TxPool.PendingTransaction{ .raw = &[_]u8{ 0x02, 0xc0 } };
     const submit_options = TxHandlingOptions.persistent_broadcast;
     const submit_result = pool.submit_tx(&submit_tx, submit_options);
@@ -395,6 +421,10 @@ test "txpool interface dispatches pending transactions by sender" {
             return null;
         }
 
+        fn try_get_pending_blob_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
+            return null;
+        }
+
         fn submit_tx(_: *anyopaque, _: *const TxPool.PendingTransaction, _: TxHandlingOptions) AcceptTxResult {
             return AcceptTxResult.accepted;
         }
@@ -422,6 +452,7 @@ test "txpool interface dispatches pending transactions by sender" {
         .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
         .contains_tx = DummyPool.contains_tx,
         .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
         .submit_tx = DummyPool.submit_tx,
     };
     const pool = TxPool{ .ptr = &dummy, .vtable = &vtable };
