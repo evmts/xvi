@@ -36,7 +36,7 @@ pub const fits_gas_limit = limits.fits_gas_limit;
 pub const enforce_min_priority_fee_for_blobs = limits.enforce_min_priority_fee_for_blobs;
 /// Admission helper: rejects nonces that exceed in-order sender window.
 pub const enforce_nonce_gap = limits.enforce_nonce_gap;
-/// Admission helper: duplicate precheck against hash cache + typed pools.
+/// Admission helper: duplicate precheck against hash cache.
 pub const precheck_duplicate = admission.precheck_duplicate;
 
 test {

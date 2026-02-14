@@ -15,18 +15,32 @@ const Address = primitives.Address;
 pub fn precheck_duplicate(
     pool: TxPool,
     tx_hash: TransactionHash,
-    _: TransactionType,
 ) AcceptTxResult {
     if (pool.is_known(tx_hash)) return AcceptTxResult.already_known;
     pool.mark_known_for_current_scope(tx_hash);
     return AcceptTxResult.accepted;
 }
 
+fn vtable_for(comptime Impl: type) TxPool.VTable {
+    return .{
+        .pending_count = Impl.pending_count,
+        .pending_blob_count = Impl.pending_blob_count,
+        .get_pending_transactions = Impl.get_pending_transactions,
+        .supports_blobs = Impl.supports_blobs,
+        .get_pending_count_for_sender = Impl.get_pending_count_for_sender,
+        .get_pending_transactions_by_sender = Impl.get_pending_transactions_by_sender,
+        .is_known = Impl.is_known,
+        .mark_known_for_current_scope = Impl.mark_known_for_current_scope,
+        .contains_tx = Impl.contains_tx,
+        .try_get_pending_transaction = Impl.try_get_pending_transaction,
+        .try_get_pending_blob_transaction = Impl.try_get_pending_blob_transaction,
+        .submit_tx = Impl.submit_tx,
+    };
+}
+
 test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
     const DummyPool = struct {
         known_hash: TransactionHash,
-        typed_hash: TransactionHash,
-        typed_kind: TransactionType,
         is_known_calls: u32 = 0,
         contains_calls: u32 = 0,
         mark_calls: u32 = 0,
@@ -68,8 +82,10 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
 
         fn contains_tx(ptr: *anyopaque, tx_hash: TransactionHash, tx_type: TransactionType) bool {
             const self: *@This() = @ptrCast(@alignCast(ptr));
+            _ = tx_hash;
+            _ = tx_type;
             self.contains_calls += 1;
-            return std.mem.eql(u8, &self.typed_hash, &tx_hash) and self.typed_kind == tx_type;
+            return false;
         }
 
         fn try_get_pending_transaction(_: *anyopaque, _: TransactionHash) ?TxPool.PendingTransaction {
@@ -86,30 +102,14 @@ test "precheck_duplicate rejects hash-cache hits without probing typed pools" {
     };
 
     const known_hash: TransactionHash = [_]u8{0xAA} ** 32;
-    const typed_hash: TransactionHash = [_]u8{0xBB} ** 32;
     var impl = DummyPool{
         .known_hash = known_hash,
-        .typed_hash = typed_hash,
-        .typed_kind = .eip1559,
     };
 
-    const vtable = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_transactions = DummyPool.get_pending_transactions,
-        .supports_blobs = DummyPool.supports_blobs,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
-        .is_known = DummyPool.is_known,
-        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
-        .contains_tx = DummyPool.contains_tx,
-        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
-        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
-        .submit_tx = DummyPool.submit_tx,
-    };
+    const vtable = vtable_for(DummyPool);
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
 
-    const result = precheck_duplicate(pool, known_hash, .legacy);
+    const result = precheck_duplicate(pool, known_hash);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.already_known, result));
     try std.testing.expectEqual(@as(u32, 1), impl.is_known_calls);
     try std.testing.expectEqual(@as(u32, 0), impl.contains_calls);
@@ -185,29 +185,16 @@ test "precheck_duplicate accepts hash-cache misses without typed pool probing" {
         .known_hash = known_hash,
     };
 
-    const vtable = TxPool.VTable{
-        .pending_count = DummyPool.pending_count,
-        .pending_blob_count = DummyPool.pending_blob_count,
-        .get_pending_transactions = DummyPool.get_pending_transactions,
-        .supports_blobs = DummyPool.supports_blobs,
-        .get_pending_count_for_sender = DummyPool.get_pending_count_for_sender,
-        .get_pending_transactions_by_sender = DummyPool.get_pending_transactions_by_sender,
-        .is_known = DummyPool.is_known,
-        .mark_known_for_current_scope = DummyPool.mark_known_for_current_scope,
-        .contains_tx = DummyPool.contains_tx,
-        .try_get_pending_transaction = DummyPool.try_get_pending_transaction,
-        .try_get_pending_blob_transaction = DummyPool.try_get_pending_blob_transaction,
-        .submit_tx = DummyPool.submit_tx,
-    };
+    const vtable = vtable_for(DummyPool);
     const pool = TxPool{ .ptr = &impl, .vtable = &vtable };
 
-    const miss = precheck_duplicate(pool, miss_hash, .eip4844);
+    const miss = precheck_duplicate(pool, miss_hash);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.accepted, miss));
     try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
     try std.testing.expectEqualDeep(miss_hash, impl.last_marked);
     try std.testing.expectEqual(@as(u32, 0), impl.contains_calls);
 
-    const known = precheck_duplicate(pool, known_hash, .legacy);
+    const known = precheck_duplicate(pool, known_hash);
     try std.testing.expect(AcceptTxResult.eql(AcceptTxResult.already_known, known));
     try std.testing.expectEqual(@as(u32, 1), impl.mark_calls);
     try std.testing.expectEqualDeep(miss_hash, impl.last_marked);
