@@ -64,13 +64,17 @@ fn validate_pos_header_constants(header: *const BlockHeader.BlockHeader) Validat
 
 /// Returns true when `gas_limit` is within the allowed parent delta.
 ///
-/// Rule: `parent.gas_limit ± parent.gas_limit / 1024` (inclusive).
+/// The valid range is strictly between `parent - delta` and `parent + delta`
+/// (exclusive on both ends), matching execution-specs `check_gas_limit`:
+///
+///   `parent_gas_limit - delta < gas_limit < parent_gas_limit + delta`
+///
+/// where `delta = parent_gas_limit // GAS_LIMIT_ADJUSTMENT_FACTOR`.
 inline fn gas_limit_within_delta(gas_limit: u64, parent_gas_limit: u64) bool {
     const max_adjustment_delta = parent_gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
-    const max_gas_limit = parent_gas_limit + max_adjustment_delta;
-    if (gas_limit > max_gas_limit) return false;
-    const min_gas_limit = parent_gas_limit - max_adjustment_delta;
-    return gas_limit >= min_gas_limit;
+    if (gas_limit >= parent_gas_limit + max_adjustment_delta) return false;
+    if (gas_limit <= parent_gas_limit - max_adjustment_delta) return false;
+    return true;
 }
 
 fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) bool {
@@ -752,13 +756,19 @@ test "merge validation boundaries cover gas limit and TTD edges" {
     const parent_gas_limit: u64 = 1_000_000;
     const delta = parent_gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
 
-    try std.testing.expect(check_gas_limit(parent_gas_limit + delta, parent_gas_limit));
-    try std.testing.expect(check_gas_limit(parent_gas_limit - delta, parent_gas_limit));
+    // Per Python spec, exact boundary values are REJECTED (exclusive bounds).
+    try std.testing.expect(!check_gas_limit(parent_gas_limit + delta, parent_gas_limit));
+    try std.testing.expect(!check_gas_limit(parent_gas_limit - delta, parent_gas_limit));
 
+    // One inside each boundary is accepted.
+    try std.testing.expect(check_gas_limit(parent_gas_limit + delta - 1, parent_gas_limit));
+    try std.testing.expect(check_gas_limit(parent_gas_limit - delta + 1, parent_gas_limit));
+
+    // Base fee calculation with a valid gas limit (one inside boundary).
     const parent_gas_used = parent_gas_limit / ELASTICITY_MULTIPLIER;
     const parent_base_fee: u256 = 100;
     const boundary_fee = try calculate_base_fee_per_gas(
-        parent_gas_limit + delta,
+        parent_gas_limit + delta - 1,
         parent_gas_limit,
         parent_gas_used,
         parent_base_fee,
@@ -784,11 +794,12 @@ test "merge validation boundaries cover gas limit and TTD edges" {
 }
 
 /// Ensures the gas limit change from parent to header is within
-/// the allowed per-block delta of parent.gas_limit / 1024 (inclusive).
+/// the allowed per-block delta of parent.gas_limit / 1024 (exclusive).
 ///
-/// This captures the Yellow Paper rule and EIP-1559 constraint on the
-/// maximum change of gas_limit between consecutive blocks. It does not
-/// enforce the absolute minimum gas limit (5000).
+/// Per execution-specs `check_gas_limit`, the valid range is:
+///   `parent - delta < gas_limit < parent + delta`
+/// where `delta = parent.gas_limit // 1024`. Exact boundary values are
+/// rejected. This does not enforce the absolute minimum gas limit (5000).
 pub fn validate_gas_limit_delta(
     header: *const BlockHeader.BlockHeader,
     parent: *const BlockHeader.BlockHeader,
@@ -797,17 +808,35 @@ pub fn validate_gas_limit_delta(
         return ValidationError.InvalidGasLimit;
 }
 
-test "validate_gas_limit_delta - accepts at inclusive bounds" {
+test "validate_gas_limit_delta - rejects at exact boundary (exclusive bounds per spec)" {
     var parent = BlockHeader.init();
     parent.gas_limit = 1_000_000;
 
     var header = BlockHeader.init();
     const delta = parent.gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
 
+    // Exact upper boundary is REJECTED (exclusive): gas_limit >= parent + delta -> invalid
     header.gas_limit = parent.gas_limit + delta;
+    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+
+    // Exact lower boundary is REJECTED (exclusive): gas_limit <= parent - delta -> invalid
+    header.gas_limit = parent.gas_limit - delta;
+    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+}
+
+test "validate_gas_limit_delta - accepts one inside exclusive bounds" {
+    var parent = BlockHeader.init();
+    parent.gas_limit = 1_000_000;
+
+    var header = BlockHeader.init();
+    const delta = parent.gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
+
+    // One less than upper boundary is accepted
+    header.gas_limit = parent.gas_limit + delta - 1;
     try validate_gas_limit_delta(&header, &parent);
 
-    header.gas_limit = parent.gas_limit - delta;
+    // One more than lower boundary is accepted
+    header.gas_limit = parent.gas_limit - delta + 1;
     try validate_gas_limit_delta(&header, &parent);
 }
 
