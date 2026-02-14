@@ -1,56 +1,60 @@
-# Context — [pass 1/5] phase-7-engine-api (Engine API (Consensus Layer Interface))
+# Context - [pass 1/5] phase-7-engine-api (Engine API (Consensus Layer Interface))
 
-## Phase Goal (from `prd/GUILLOTINE_CLIENT_PLAN.md`)
+## Phase goal
+Source: `prd/GUILLOTINE_CLIENT_PLAN.md`
+
 - Phase: `phase-7-engine-api`
-- Goal: Implement the Engine API for consensus-layer communication.
-- Planned units:
-  - `client/engine/api.zig` (Engine API surface + dispatch)
-  - `client/engine/payload.zig` (payload build/retrieval + validation orchestration)
-- Primary structural references:
-  - `nethermind/src/Nethermind/Nethermind.Merge.Plugin/`
-  - `execution-apis/src/engine/`
+- Goal: Implement Engine API for CL <-> EL communication.
+- Planned implementation units:
+- `client/engine/api.zig` (RPC surface and dispatch)
+- `client/engine/payload.zig` (payload build/fetch/validation orchestration)
+- Structural references:
+- `nethermind/src/Nethermind/Nethermind.Merge.Plugin/`
+- `execution-apis/src/engine/`
 
-## Relevant Specs (from `prd/ETHEREUM_SPECS_REFERENCE.md` + direct reads)
+## Specs to read first (required for implementation)
+Sources: `prd/ETHEREUM_SPECS_REFERENCE.md`, `execution-apis/src/engine/*`, `EIPs/EIPS/*`, `execution-specs/src/ethereum/forks/*`
 
-### Engine API specs (authoritative wire behavior)
+### Engine API core
+- `execution-apis/src/engine/README.md`
 - `execution-apis/src/engine/common.md`
-  - Dedicated authenticated Engine endpoint (default port `8551`), ordering constraints for `engine_forkchoiceUpdated*`, Engine error code set (`-38001..-38005`), capabilities exchange.
 - `execution-apis/src/engine/authentication.md`
-  - JWT/`HS256` requirement, `jwt-secret` file handling, `iat` tolerance guidance (`+-60s`).
 - `execution-apis/src/engine/identification.md`
-  - `engine_getClientVersionV1` + `ClientVersionV1`/`ClientCode` conventions.
-- Fork-scoped method/version specs:
-  - `execution-apis/src/engine/paris.md` (V1 baseline)
-  - `execution-apis/src/engine/shanghai.md` (V2 + withdrawals + payload bodies methods)
-  - `execution-apis/src/engine/cancun.md` (V3 + blobs + `engine_getBlobsV1`)
-  - `execution-apis/src/engine/prague.md` (V4 + `executionRequests`)
-  - `execution-apis/src/engine/osaka.md` (V5 payload retrieval semantics + blob method evolution)
-  - `execution-apis/src/engine/amsterdam.md` (V5 `newPayload`, V6 `getPayload`, forkchoice V4, payload bodies V2)
-- OpenRPC method/schema sources:
-  - `execution-apis/src/engine/openrpc/methods/*.yaml`
-  - `execution-apis/src/engine/openrpc/schemas/*.yaml`
 
-### EIPs relevant to Engine API payload/forkchoice validation
-- `EIPs/EIPS/eip-3675.md`
-  - Merge transition, terminal block conditions, PoS forkchoice update mapping.
-- `EIPs/EIPS/eip-4399.md`
-  - `PREVRANDAO` semantics and block field/opcode transition.
-- `EIPs/EIPS/eip-4895.md`
-  - Withdrawals in payload/header and withdrawal-root validation.
-- `EIPs/EIPS/eip-4844.md`
-  - Blob tx semantics, blob gas fields, versioned hash constraints.
-- `EIPs/EIPS/eip-4788.md`
-  - `parent_beacon_block_root` header semantics/system handling.
-- `EIPs/EIPS/eip-7685.md`
-  - `requests_hash` commitment format and request ordering model.
-- `EIPs/EIPS/eip-6110.md`
-  - Deposit requests carried through EL block processing model.
-- `EIPs/EIPS/eip-7002.md`
-  - Withdrawal request system contract + EIP-7685 request typing.
-- `EIPs/EIPS/eip-7251.md`
-  - Consolidation requests (EIP-7685 request type `0x02`).
+Key requirements from these files:
+- Dedicated authenticated Engine endpoint (default port `8551`, separate from public JSON-RPC).
+- JWT auth (`HS256`), reject `alg=none`, include `iat` handling guidance.
+- Ordered handling of `engine_forkchoiceUpdated*`.
+- Engine-specific error codes `-38001..-38005`.
+- `engine_exchangeCapabilities` support on EL side.
 
-### execution-specs files to anchor validation/state-transition behavior
+### Fork-scoped Engine specs
+- `execution-apis/src/engine/paris.md` (`newPayloadV1`, `forkchoiceUpdatedV1`, `getPayloadV1`, transition config)
+- `execution-apis/src/engine/shanghai.md` (`newPayloadV2`, `forkchoiceUpdatedV2`, `getPayloadV2`, payload bodies APIs)
+- `execution-apis/src/engine/cancun.md` (`newPayloadV3`, `forkchoiceUpdatedV3`, `getPayloadV3`, `getBlobsV1`)
+- `execution-apis/src/engine/prague.md` (`newPayloadV4`, `getPayloadV4`, `executionRequests`)
+- `execution-apis/src/engine/osaka.md` (`getPayloadV5`, blob proof model updates, `getBlobsV2`/`getBlobsV3`)
+- `execution-apis/src/engine/amsterdam.md` (`newPayloadV5`, `getPayloadV6`, `forkchoiceUpdatedV4`, payload bodies v2)
+
+OpenRPC contracts:
+- `execution-apis/src/engine/openrpc/methods/payload.yaml`
+- `execution-apis/src/engine/openrpc/methods/forkchoice.yaml`
+- `execution-apis/src/engine/openrpc/methods/blob.yaml`
+- `execution-apis/src/engine/openrpc/methods/capabilities.yaml`
+- `execution-apis/src/engine/openrpc/methods/transition_configuration.yaml`
+
+### EIPs directly tied to phase-7 behavior
+- `EIPs/EIPS/eip-3675.md` (The Merge, terminal PoW/PoS transition assumptions)
+- `EIPs/EIPS/eip-4399.md` (`PREVRANDAO`)
+- `EIPs/EIPS/eip-4895.md` (withdrawals in payload/header)
+- `EIPs/EIPS/eip-4844.md` (blob tx and blob gas fields)
+- `EIPs/EIPS/eip-4788.md` (`parentBeaconBlockRoot`)
+- `EIPs/EIPS/eip-7685.md` (EL-triggered request commitment model)
+- `EIPs/EIPS/eip-6110.md` (deposit requests)
+- `EIPs/EIPS/eip-7002.md` (withdrawal requests)
+- `EIPs/EIPS/eip-7251.md` (consolidation requests)
+
+### execution-specs fork files for validation behavior
 - `execution-specs/src/ethereum/forks/paris/fork.py`
 - `execution-specs/src/ethereum/forks/paris/blocks.py`
 - `execution-specs/src/ethereum/forks/shanghai/fork.py`
@@ -67,98 +71,74 @@
 ## Nethermind reference inventory
 
 ### Required listing: `nethermind/src/Nethermind/Nethermind.Db/`
-Key files noted:
-- Interfaces/providers:
-  - `IDb.cs`, `IReadOnlyDb.cs`, `IDbProvider.cs`, `IReadOnlyDbProvider.cs`, `IDbFactory.cs`, `DbProvider.cs`, `ReadOnlyDbProvider.cs`
-- Implementations:
-  - `MemDb.cs`, `MemColumnsDb.cs`, `ReadOnlyDb.cs`, `ReadOnlyColumnsDb.cs`, `CompressingDb.cs`
-- Write batching/columns:
-  - `IColumnsDb.cs`, `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
-- Configuration/pruning:
-  - `IPruningConfig.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruning/*`
-- Metadata/ops:
-  - `DbNames.cs`, `MetadataDbKeys.cs`, `DbExtensions.cs`, `Metrics.cs`
+Key files:
+- `IDb.cs`, `IReadOnlyDb.cs`, `IDbProvider.cs`, `IReadOnlyDbProvider.cs`, `IDbFactory.cs`
+- `DbProvider.cs`, `DbProviderExtensions.cs`, `ReadOnlyDbProvider.cs`
+- `IColumnsDb.cs`, `InMemoryWriteBatch.cs`, `InMemoryColumnBatch.cs`
+- `MemDb.cs`, `MemColumnsDb.cs`, `ReadOnlyDb.cs`, `ReadOnlyColumnsDb.cs`, `CompressingDb.cs`
+- `DbNames.cs`, `MetadataDbKeys.cs`, `DbExtensions.cs`, `Metrics.cs`
+- `IPruningConfig.cs`, `PruningConfig.cs`, `PruningMode.cs`, `FullPruning/`
 
-### Phase-7 architecture reference: `nethermind/src/Nethermind/Nethermind.Merge.Plugin/`
-Key files noted:
-- Module surfaces:
-  - `EngineRpcModule.cs`
-  - `EngineRpcModule.Paris.cs`, `EngineRpcModule.Shanghai.cs`, `EngineRpcModule.Cancun.cs`, `EngineRpcModule.Prague.cs`, `EngineRpcModule.Osaka.cs`
-- Handlers:
-  - `Handlers/NewPayloadHandler.cs`
-  - `Handlers/ForkchoiceUpdatedHandler.cs`
-  - `Handlers/GetPayloadV1Handler.cs` ... `Handlers/GetPayloadV5Handler.cs`
-  - `Handlers/GetPayloadBodiesByHashV1Handler.cs`
-  - `Handlers/GetPayloadBodiesByRangeV1Handler.cs`
-  - `Handlers/GetBlobsHandler.cs`, `Handlers/GetBlobsHandlerV2.cs`
-  - `Handlers/ExchangeCapabilitiesHandler.cs`
-  - `Handlers/ExchangeTransitionConfigurationV1Handler.cs`
-- Data contracts:
-  - `Data/ExecutionPayload.cs`, `Data/ExecutionPayloadV3.cs`
-  - `Data/ForkchoiceStateV1.cs`, `Data/PayloadStatusV1.cs`
-  - `Data/TransitionConfigurationV1.cs`
-  - `Data/GetPayloadV2Result.cs` ... `Data/GetPayloadV5Result.cs`
+### Engine architecture reference: `nethermind/src/Nethermind/Nethermind.Merge.Plugin/`
+Key files:
+- `EngineRpcModule.cs`, `EngineRpcModule.Paris.cs`, `EngineRpcModule.Shanghai.cs`, `EngineRpcModule.Cancun.cs`, `EngineRpcModule.Prague.cs`, `EngineRpcModule.Osaka.cs`
+- `IEngineRpcModule.cs` and fork-specific interface files
+- `Handlers/` (method-specific handler split for payload/forkchoice/blobs/capabilities/transition config)
+- `Data/` (typed payload/forkchoice/result DTOs)
+- `MergeErrorCodes.cs`, `MergeErrorMessages.cs`
 
 ## Voltaire APIs to use (no custom duplicate types)
 Base path: `/Users/williamcory/voltaire/packages/voltaire-zig/src/`
 
-### Core module roots
-- `root.zig`
+Core exports:
+- `root.zig` (`Primitives`, `Crypto`)
 - `primitives/root.zig`
 - `jsonrpc/root.zig`
 - `jsonrpc/JsonRpc.zig`
 - `jsonrpc/types.zig`
 
-### Engine JSON-RPC method surfaces
-- `jsonrpc/engine/methods.zig`
-- Versioned method modules:
-  - `jsonrpc/engine/exchangeCapabilities/engine_exchangeCapabilities.zig`
-  - `jsonrpc/engine/exchangeTransitionConfigurationV1/engine_exchangeTransitionConfigurationV1.zig`
-  - `jsonrpc/engine/forkchoiceUpdatedV1/engine_forkchoiceUpdatedV1.zig`
-  - `jsonrpc/engine/forkchoiceUpdatedV2/engine_forkchoiceUpdatedV2.zig`
-  - `jsonrpc/engine/forkchoiceUpdatedV3/engine_forkchoiceUpdatedV3.zig`
-  - `jsonrpc/engine/newPayloadV1/engine_newPayloadV1.zig`
-  - `jsonrpc/engine/newPayloadV2/engine_newPayloadV2.zig`
-  - `jsonrpc/engine/newPayloadV3/engine_newPayloadV3.zig`
-  - `jsonrpc/engine/newPayloadV4/engine_newPayloadV4.zig`
-  - `jsonrpc/engine/newPayloadV5/engine_newPayloadV5.zig`
-  - `jsonrpc/engine/getPayloadV1/engine_getPayloadV1.zig`
-  - `jsonrpc/engine/getPayloadV2/engine_getPayloadV2.zig`
-  - `jsonrpc/engine/getPayloadV3/engine_getPayloadV3.zig`
-  - `jsonrpc/engine/getPayloadV4/engine_getPayloadV4.zig`
-  - `jsonrpc/engine/getPayloadV5/engine_getPayloadV5.zig`
-  - `jsonrpc/engine/getPayloadV6/engine_getPayloadV6.zig`
-  - `jsonrpc/engine/getPayloadBodiesByHashV1/engine_getPayloadBodiesByHashV1.zig`
-  - `jsonrpc/engine/getPayloadBodiesByRangeV1/engine_getPayloadBodiesByRangeV1.zig`
-  - `jsonrpc/engine/getBlobsV1/engine_getBlobsV1.zig`
-  - `jsonrpc/engine/getBlobsV2/engine_getBlobsV2.zig`
+Engine namespace types/methods:
+- `jsonrpc/engine/methods.zig` (`EngineMethod` tagged union, method-name mapping)
+- `jsonrpc/engine/newPayloadV1/engine_newPayloadV1.zig`
+- `jsonrpc/engine/newPayloadV2/engine_newPayloadV2.zig`
+- `jsonrpc/engine/newPayloadV3/engine_newPayloadV3.zig`
+- `jsonrpc/engine/newPayloadV4/engine_newPayloadV4.zig`
+- `jsonrpc/engine/newPayloadV5/engine_newPayloadV5.zig`
+- `jsonrpc/engine/forkchoiceUpdatedV1/engine_forkchoiceUpdatedV1.zig`
+- `jsonrpc/engine/forkchoiceUpdatedV2/engine_forkchoiceUpdatedV2.zig`
+- `jsonrpc/engine/forkchoiceUpdatedV3/engine_forkchoiceUpdatedV3.zig`
+- `jsonrpc/engine/getPayloadV1/engine_getPayloadV1.zig`
+- `jsonrpc/engine/getPayloadV2/engine_getPayloadV2.zig`
+- `jsonrpc/engine/getPayloadV3/engine_getPayloadV3.zig`
+- `jsonrpc/engine/getPayloadV4/engine_getPayloadV4.zig`
+- `jsonrpc/engine/getPayloadV5/engine_getPayloadV5.zig`
+- `jsonrpc/engine/getPayloadV6/engine_getPayloadV6.zig`
+- `jsonrpc/engine/getPayloadBodiesByHashV1/engine_getPayloadBodiesByHashV1.zig`
+- `jsonrpc/engine/getPayloadBodiesByRangeV1/engine_getPayloadBodiesByRangeV1.zig`
+- `jsonrpc/engine/getBlobsV1/engine_getBlobsV1.zig`
+- `jsonrpc/engine/getBlobsV2/engine_getBlobsV2.zig`
+- `jsonrpc/engine/exchangeCapabilities/engine_exchangeCapabilities.zig`
+- `jsonrpc/engine/exchangeTransitionConfigurationV1/engine_exchangeTransitionConfigurationV1.zig`
 
-### Primitive types likely needed by Engine API orchestration
-- `primitives.Block`
-- `primitives.BlockHeader`
-- `primitives.BlockHash`
-- `primitives.Hash`
-- `primitives.Withdrawal`
-- `primitives.Address`
-- `primitives.Uint`
-- `primitives.Bytes32`
-- `primitives.BloomFilter`
-- `primitives.Rlp`
+Relevant primitive exports (use these, do not duplicate):
+- `primitives.Block`, `primitives.BlockHeader`, `primitives.BlockHash`
+- `primitives.BeaconBlockRoot`, `primitives.Withdrawal`
+- `primitives.Address`, `primitives.Hash`, `primitives.Bytes32`
+- `primitives.Uint`, `primitives.Rlp`
 
 ## Existing Zig host boundary
-- Requested path `src/host.zig` does not exist at repository root.
-- Resolved host interface path: `guillotine-mini/src/host.zig`.
-- `HostInterface` is a vtable DI boundary (`ptr` + `VTable`) with methods:
-  - `getBalance`/`setBalance`
-  - `getCode`/`setCode`
-  - `getStorage`/`setStorage`
-  - `getNonce`/`setNonce`
-- File-level note states nested EVM calls are handled internally by guillotine-mini and not routed through this host interface.
+- Requested path `src/host.zig` is not present at repository root.
+- Resolved file: `guillotine-mini/src/host.zig`.
+- `HostInterface` is a vtable DI surface (`ptr` + `VTable`) with:
+- `getBalance`, `setBalance`
+- `getCode`, `setCode`
+- `getStorage`, `setStorage`
+- `getNonce`, `setNonce`
+- File note: nested EVM calls are handled in EVM internals, not via this host abstraction.
 
-## Test fixtures and harness paths
+## Test fixture paths
 
-### Required listing: `ethereum-tests/` directories
-Key fixture roots:
+### Required listing from `ethereum-tests/`
 - `ethereum-tests/BlockchainTests/ValidBlocks/`
 - `ethereum-tests/BlockchainTests/InvalidBlocks/`
 - `ethereum-tests/TransactionTests/`
@@ -170,19 +150,19 @@ Key fixture roots:
 - `ethereum-tests/ABITests/`
 - `ethereum-tests/PoWTests/`
 
-### Engine-relevant external harness paths
+### Engine-related harness/fixtures
 - `hive/simulators/eth2/engine/`
 - `hive/simulators/ethereum/engine/`
 - `execution-spec-tests/src/pytest_plugins/consume/hive_engine_test/`
-- `execution-spec-tests/src/ethereum_test_fixtures/tests/`
+- `execution-spec-tests/src/pytest_plugins/consume/simulators/engine/`
+- `execution-spec-tests/fixtures/`
 
-### Spec-reference path check
-- `prd/ETHEREUM_SPECS_REFERENCE.md` mentions `execution-spec-tests/fixtures/blockchain_tests_engine/`.
-- In this workspace, `execution-spec-tests/fixtures/` exists but currently has no populated subdirectories.
+Path note:
+- `prd/ETHEREUM_SPECS_REFERENCE.md` points to `execution-spec-tests/fixtures/blockchain_tests_engine/`.
+- In this workspace, `execution-spec-tests/fixtures/` exists, but `blockchain_tests_engine/` is not currently present.
 
-## Implementation constraints derived from context
-- Use Voltaire JSON-RPC/primitive types as canonical request/response/data carriers; avoid duplicate custom DTOs.
-- Implement versioned Engine methods with comptime dispatch/DI patterns similar to existing guillotine-mini style.
-- Keep strict spec behavior per fork/version (`Unsupported fork`, payload structure gating, and error-code semantics).
-- Use Nethermind handler/module split only as architecture reference; implement idiomatically in Zig.
-- Preserve EVM boundary: orchestrate through existing guillotine-mini execution path, do not reimplement EVM internals.
+## Phase-7 implementation guardrails
+- Use Voltaire JSON-RPC and primitives types as canonical request/response carriers.
+- Reuse existing `guillotine-mini` EVM integration points; do not reimplement execution logic.
+- Mirror Nethermind's module split conceptually, but use Zig idioms and comptime DI.
+- Enforce Engine API fork/version rules exactly (params, response shape, and error codes).
