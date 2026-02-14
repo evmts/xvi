@@ -36,6 +36,8 @@ pub const is_canonical = chain.is_canonical;
 pub const is_canonical_or_fetch = chain.is_canonical_or_fetch;
 /// Existence check (local or fork-cache).
 pub const has_block = chain.has_block;
+/// Fork-boundary check (`true` when number is at/under configured fork block).
+pub const is_fork_block = chain.is_fork_block;
 /// Local write-path block insertion helper.
 pub const put_block = chain.put_block;
 /// Local-only block lookup (no fork-cache fetch/allocations).
@@ -135,6 +137,13 @@ test "root exports - typed ancestry error is preserved" {
     defer chain_state.deinit();
 
     try std.testing.expectError(error.MissingBlockA, common_ancestor_hash_local(&chain_state, Hash.ZERO, Hash.ZERO));
+}
+
+test "root exports - is_fork_block forwards fork boundary semantics" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expect(!is_fork_block(&chain_state, 0));
 }
 
 test "root exports - divergence and reorg helpers preserve typed missing-head errors" {

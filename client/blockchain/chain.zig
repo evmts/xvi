@@ -106,6 +106,17 @@ pub fn has_block(chain: *Chain, hash: Hash.Hash) bool {
     return chain.hasBlock(hash);
 }
 
+/// Returns true when `number` is within the configured fork-cache boundary.
+///
+/// Semantics:
+/// - With no fork cache configured, always returns `false`.
+/// - With a fork cache configured, returns `true` for numbers `<= fork block`.
+/// - Thin wrapper over Voltaire `Blockchain.isForkBlock` to keep client code
+///   decoupled from the underlying orchestrator.
+pub fn is_fork_block(chain: *Chain, number: u64) bool {
+    return chain.isForkBlock(number);
+}
+
 /// Returns the canonical hash for a given block number (local-only).
 ///
 /// Thin wrapper over Voltaire `Blockchain.getCanonicalHash` to keep client
@@ -1905,6 +1916,32 @@ test "Chain - has_block reflects local and fork-cache presence" {
         try chain.setCanonicalHead(fetched.hash);
         const ok_fetch = try is_canonical_or_fetch(&chain, fetched.hash);
         try std.testing.expect(ok_fetch);
+    }
+}
+
+test "Chain - is_fork_block reflects configured fork-cache boundary" {
+    const allocator = std.testing.allocator;
+
+    // No fork cache configured -> no fork boundary at this layer.
+    {
+        var chain = try Chain.init(allocator, null);
+        defer chain.deinit();
+
+        try std.testing.expect(!is_fork_block(&chain, 0));
+        try std.testing.expect(!is_fork_block(&chain, 1_000_000));
+    }
+
+    // Fork cache configured with boundary #128.
+    {
+        var fork_cache = try ForkBlockCache.init(allocator, 128);
+        defer fork_cache.deinit();
+
+        var chain = try Chain.init(allocator, &fork_cache);
+        defer chain.deinit();
+
+        try std.testing.expect(is_fork_block(&chain, 0));
+        try std.testing.expect(is_fork_block(&chain, 128));
+        try std.testing.expect(!is_fork_block(&chain, 129));
     }
 }
 
