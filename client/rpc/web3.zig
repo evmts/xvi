@@ -217,7 +217,7 @@ pub fn Web3Api(comptime Provider: type) type {
 
         fn extract_sha3_param_data(request: []const u8) ExtractSha3ParamResult {
             const key = "\"params\"";
-            const key_idx = find_last_top_level_key(request, key) orelse return .{ .err = errors.code.invalid_params };
+            const key_idx = scan.find_last_top_level_key(request, key) orelse return .{ .err = errors.code.invalid_params };
 
             var i = key_idx + key.len;
             skip_whitespace(request, &i);
@@ -288,63 +288,6 @@ pub fn Web3Api(comptime Provider: type) type {
             }
 
             return .{ .err = errors.code.parse_error };
-        }
-
-        fn find_last_top_level_key(input: []const u8, key: []const u8) ?usize {
-            var depth: u32 = 0;
-            var in_string = false;
-            var escaped = false;
-            var expecting_key = false;
-            var found: ?usize = null;
-            var i: usize = 0;
-            while (i < input.len) : (i += 1) {
-                const c = input[i];
-                if (in_string) {
-                    if (escaped) {
-                        escaped = false;
-                        continue;
-                    }
-                    if (c == '\\') {
-                        escaped = true;
-                        continue;
-                    }
-                    if (c == '"') in_string = false;
-                    continue;
-                }
-                switch (c) {
-                    '"' => {
-                        if (depth == 1 and expecting_key) {
-                            const rem = input[i..];
-                            if (rem.len >= key.len and std.mem.eql(u8, rem[0..key.len], key)) {
-                                found = i;
-                            }
-                        }
-                        in_string = true;
-                    },
-                    '{' => {
-                        depth += 1;
-                        if (depth == 1) expecting_key = true;
-                    },
-                    '}' => {
-                        if (depth == 0) return found;
-                        depth -= 1;
-                        if (depth == 1) expecting_key = false;
-                    },
-                    '[' => depth += 1,
-                    ']' => {
-                        if (depth == 0) return found;
-                        depth -= 1;
-                    },
-                    ':' => {
-                        if (depth == 1) expecting_key = false;
-                    },
-                    ',' => {
-                        if (depth == 1) expecting_key = true;
-                    },
-                    else => {},
-                }
-            }
-            return found;
         }
 
         fn skip_whitespace(input: []const u8, index: *usize) void {

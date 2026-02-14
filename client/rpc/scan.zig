@@ -127,6 +127,67 @@ pub inline fn find_top_level_key(input: []const u8, key: []const u8) ?usize {
     return null;
 }
 
+/// Return the index of the last occurrence of a top-level object key.
+///
+/// This follows JSON-RPC duplicate-key "last wins" semantics used by request
+/// field extraction. The `key` must include quotes (e.g. `"\"params\""`).
+pub inline fn find_last_top_level_key(input: []const u8, key: []const u8) ?usize {
+    var depth: u32 = 0;
+    var in_string = false;
+    var escaped = false;
+    var expecting_key = false;
+    var found: ?usize = null;
+    var i: usize = 0;
+    while (i < input.len) : (i += 1) {
+        const c = input[i];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') in_string = false;
+            continue;
+        }
+        switch (c) {
+            '"' => {
+                if (depth == 1 and expecting_key) {
+                    const rem = input[i..];
+                    if (rem.len >= key.len and std.mem.eql(u8, rem[0..key.len], key)) {
+                        found = i;
+                    }
+                }
+                in_string = true;
+            },
+            '{' => {
+                depth += 1;
+                if (depth == 1) expecting_key = true;
+            },
+            '}' => {
+                if (depth == 0) return found;
+                depth -= 1;
+                if (depth == 1) expecting_key = false;
+            },
+            '[' => depth += 1,
+            ']' => {
+                if (depth == 0) return found;
+                depth -= 1;
+            },
+            ':' => {
+                if (depth == 1) expecting_key = false;
+            },
+            ',' => {
+                if (depth == 1) expecting_key = true;
+            },
+            else => {},
+        }
+    }
+    return found;
+}
+
 fn skip_whitespace(input: []const u8, index: *usize) void {
     while (index.* < input.len and std.ascii.isWhitespace(input[index.*])) : (index.* += 1) {}
 }
@@ -420,6 +481,26 @@ test "find_top_level_key ignores nested keys" {
         "  \"obj\": { \"id\": 1 }\n" ++
         "}";
     try std.testing.expect(find_top_level_key(json, "\"id\"") == null);
+}
+
+test "find_last_top_level_key returns last top-level match" {
+    const json =
+        "{\n" ++
+        "  \"params\": [\"0x0\"],\n" ++
+        "  \"params\": [\"0x1\"],\n" ++
+        "  \"obj\": { \"params\": [\"nested\"] }\n" ++
+        "}";
+    const first = find_top_level_key(json, "\"params\"").?;
+    const last = find_last_top_level_key(json, "\"params\"").?;
+    try std.testing.expect(last > first);
+}
+
+test "find_last_top_level_key ignores nested keys when no top-level key exists" {
+    const json =
+        "{\n" ++
+        "  \"obj\": { \"params\": [\"nested\"] }\n" ++
+        "}";
+    try std.testing.expect(find_last_top_level_key(json, "\"params\"") == null);
 }
 
 test "scanRequestFields captures jsonrpc and method spans" {
