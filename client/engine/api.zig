@@ -3258,6 +3258,115 @@ test "engine api generic dispatcher routes newPayloadV2" {
     try std.testing.expect(dummy.new_payload_v2_called);
 }
 
+test "engine api dispatches newPayloadV3" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var expected_hashes = std.json.Array.init(alloc);
+    defer expected_hashes.deinit();
+    try expected_hashes.append(.{ .string = zero_hash32_hex });
+
+    const params = NewPayloadV3Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+        .expected_blob_versioned_hashes = Quantity{ .value = .{ .array = expected_hashes } },
+        .root_of_the_parent_beacon_block = std.mem.zeroes(@FieldType(NewPayloadV3Params, "root_of_the_parent_beacon_block")),
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = zero_hash32_hex });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV3Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_v3_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.new_payload_v3(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_v3_called);
+}
+
+test "engine api dispatches newPayloadV4" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var expected_hashes = std.json.Array.init(alloc);
+    defer expected_hashes.deinit();
+    try expected_hashes.append(.{ .string = zero_hash32_hex });
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0101" });
+
+    const params = NewPayloadV4Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+        .expected_blob_versioned_hashes = Quantity{ .value = .{ .array = expected_hashes } },
+        .root_of_the_parent_beacon_block = std.mem.zeroes(@FieldType(NewPayloadV4Params, "root_of_the_parent_beacon_block")),
+        .execution_requests = Quantity{ .value = .{ .array = execution_requests } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = zero_hash32_hex });
+    try status_obj.put("validationError", .{ .null = {} });
+    const result_value = NewPayloadV4Result{
+        .value = Quantity{ .value = .{ .object = status_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .new_payload_v4_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.new_payload_v4(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.new_payload_v4_called);
+}
+
+test "engine api rejects newPayloadV5 params that fail v4 payload validation" {
+    const alloc = std.testing.allocator;
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var expected_hashes = std.json.Array.init(alloc);
+    defer expected_hashes.deinit();
+    try expected_hashes.append(.{ .string = zero_hash32_hex });
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0101" });
+    try execution_requests.append(.{ .string = "0x0201" });
+
+    const params = NewPayloadV5Params{
+        .execution_payload = Quantity{ .value = .{ .object = payload.object } },
+        .expected_blob_versioned_hashes = Quantity{ .value = .{ .array = expected_hashes } },
+        .parent_beacon_block_root = std.mem.zeroes(@FieldType(NewPayloadV5Params, "parent_beacon_block_root")),
+        .execution_requests = Quantity{ .value = .{ .array = execution_requests } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InvalidParams, api.new_payload_v5(params));
+    try std.testing.expect(!dummy.new_payload_v5_called);
+}
+
 test "engine api execution requests validator allows empty list" {
     const alloc = std.testing.allocator;
     var requests = std.json.Array.init(alloc);
@@ -3526,6 +3635,173 @@ test "engine api generic dispatcher routes getPayloadV2" {
     try std.testing.expect(dummy.get_payload_v2_called);
 }
 
+test "engine api dispatches getPayloadV3" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV3Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000007" } },
+    };
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var blobs_bundle = try make_blobs_bundle_object(alloc, 1, 1);
+    defer blobs_bundle.commitments.deinit();
+    defer blobs_bundle.blobs.deinit();
+    defer blobs_bundle.proofs.deinit();
+    defer blobs_bundle.object.deinit();
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x12" });
+    try response_obj.put("blobsBundle", .{ .object = blobs_bundle.object });
+    try response_obj.put("shouldOverrideBuilder", .{ .bool = false });
+
+    const result_value = GetPayloadV3Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v3_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_v3(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_v3_called);
+}
+
+test "engine api dispatches getPayloadV4" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV4Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000008" } },
+    };
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var blobs_bundle = try make_blobs_bundle_object(alloc, 1, 1);
+    defer blobs_bundle.commitments.deinit();
+    defer blobs_bundle.blobs.deinit();
+    defer blobs_bundle.proofs.deinit();
+    defer blobs_bundle.object.deinit();
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0101" });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x13" });
+    try response_obj.put("blobsBundle", .{ .object = blobs_bundle.object });
+    try response_obj.put("shouldOverrideBuilder", .{ .bool = true });
+    try response_obj.put("executionRequests", .{ .array = execution_requests });
+
+    const result_value = GetPayloadV4Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v4_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_v4(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_v4_called);
+}
+
+test "engine api dispatches getPayloadV5" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV5Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x0000000000000009" } },
+    };
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var blobs_bundle = try make_blobs_bundle_object(alloc, 1, 128);
+    defer blobs_bundle.commitments.deinit();
+    defer blobs_bundle.blobs.deinit();
+    defer blobs_bundle.proofs.deinit();
+    defer blobs_bundle.object.deinit();
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0101" });
+    try execution_requests.append(.{ .string = "0x0201" });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x14" });
+    try response_obj.put("blobsBundle", .{ .object = blobs_bundle.object });
+    try response_obj.put("shouldOverrideBuilder", .{ .bool = false });
+    try response_obj.put("executionRequests", .{ .array = execution_requests });
+
+    const result_value = GetPayloadV5Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v5_result = result_value };
+    const api = make_api(&dummy);
+
+    const out = try api.get_payload_v5(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.get_payload_v5_called);
+}
+
+test "engine api maps invalid getPayloadV6 result to internal error" {
+    const alloc = std.testing.allocator;
+
+    const params = GetPayloadV6Params{
+        .payload_id = Quantity{ .value = .{ .string = "0x000000000000000a" } },
+    };
+
+    var payload = try make_execution_payload_v3_object(alloc);
+    defer payload.withdrawals.deinit();
+    defer payload.transactions.deinit();
+    defer payload.object.deinit();
+
+    var blobs_bundle = try make_blobs_bundle_object(alloc, 1, 128);
+    defer blobs_bundle.commitments.deinit();
+    defer blobs_bundle.blobs.deinit();
+    defer blobs_bundle.proofs.deinit();
+    defer blobs_bundle.object.deinit();
+
+    var execution_requests = std.json.Array.init(alloc);
+    defer execution_requests.deinit();
+    try execution_requests.append(.{ .string = "0x0101" });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("executionPayload", .{ .object = payload.object });
+    try response_obj.put("blockValue", .{ .string = "0x15" });
+    try response_obj.put("blobsBundle", .{ .object = blobs_bundle.object });
+    try response_obj.put("shouldOverrideBuilder", .{ .bool = false });
+    try response_obj.put("executionRequests", .{ .array = execution_requests });
+
+    const result_value = GetPayloadV6Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{ .value = Quantity{ .value = .{ .null = {} } } };
+    var dummy = DummyEngine{ .result = exchange_result, .get_payload_v6_result = result_value };
+    const api = make_api(&dummy);
+
+    try std.testing.expectError(EngineApi.Error.InternalError, api.get_payload_v6(params));
+    try std.testing.expect(dummy.get_payload_v6_called);
+}
+
 test "engine api accepts null placeholders in getPayloadBodiesByHashV1 result" {
     const alloc = std.testing.allocator;
 
@@ -3762,6 +4038,113 @@ test "engine api dispatches forkchoiceUpdatedV1" {
     const out = try api.forkchoice_updated_v1(params);
     try std.testing.expectEqualDeep(result_value, out);
     try std.testing.expect(dummy.forkchoice_updated_called);
+}
+
+test "engine api dispatches forkchoiceUpdatedV2" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = zero_hash32_hex });
+    try state_obj.put("safeBlockHash", .{ .string = zero_hash32_hex });
+    try state_obj.put("finalizedBlockHash", .{ .string = zero_hash32_hex });
+
+    var withdrawals = std.json.Array.init(alloc);
+    defer withdrawals.deinit();
+
+    var attrs_obj = std.json.ObjectMap.init(alloc);
+    defer attrs_obj.deinit();
+    try attrs_obj.put("timestamp", .{ .string = "0x2" });
+    try attrs_obj.put("prevRandao", .{ .string = zero_hash32_hex });
+    try attrs_obj.put("suggestedFeeRecipient", .{ .string = zero_address20_hex });
+    try attrs_obj.put("withdrawals", .{ .array = withdrawals });
+
+    const params = ForkchoiceUpdatedV2Params{
+        .forkchoice_state = Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = Quantity{ .value = .{ .object = attrs_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = zero_hash32_hex });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+    try response_obj.put("payloadId", .{ .string = "0x0000000000000000" });
+
+    const result_value = ForkchoiceUpdatedV2Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{
+        .value = Quantity{ .value = .{ .null = {} } },
+    };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .forkchoice_updated_v2_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.forkchoice_updated_v2(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.forkchoice_updated_v2_called);
+}
+
+test "engine api dispatches forkchoiceUpdatedV3" {
+    const alloc = std.testing.allocator;
+
+    var state_obj = std.json.ObjectMap.init(alloc);
+    defer state_obj.deinit();
+    try state_obj.put("headBlockHash", .{ .string = zero_hash32_hex });
+    try state_obj.put("safeBlockHash", .{ .string = zero_hash32_hex });
+    try state_obj.put("finalizedBlockHash", .{ .string = zero_hash32_hex });
+
+    var withdrawals = std.json.Array.init(alloc);
+    defer withdrawals.deinit();
+
+    var attrs_obj = std.json.ObjectMap.init(alloc);
+    defer attrs_obj.deinit();
+    try attrs_obj.put("timestamp", .{ .string = "0x3" });
+    try attrs_obj.put("prevRandao", .{ .string = zero_hash32_hex });
+    try attrs_obj.put("suggestedFeeRecipient", .{ .string = zero_address20_hex });
+    try attrs_obj.put("withdrawals", .{ .array = withdrawals });
+    try attrs_obj.put("parentBeaconBlockRoot", .{ .string = zero_hash32_hex });
+
+    const params = ForkchoiceUpdatedV3Params{
+        .forkchoice_state = Quantity{ .value = .{ .object = state_obj } },
+        .payload_attributes = Quantity{ .value = .{ .object = attrs_obj } },
+    };
+
+    var status_obj = std.json.ObjectMap.init(alloc);
+    defer status_obj.deinit();
+    try status_obj.put("status", .{ .string = "VALID" });
+    try status_obj.put("latestValidHash", .{ .string = zero_hash32_hex });
+    try status_obj.put("validationError", .{ .null = {} });
+
+    var response_obj = std.json.ObjectMap.init(alloc);
+    defer response_obj.deinit();
+    try response_obj.put("payloadStatus", .{ .object = status_obj });
+    try response_obj.put("payloadId", .{ .string = "0x0000000000000001" });
+
+    const result_value = ForkchoiceUpdatedV3Result{
+        .value = Quantity{ .value = .{ .object = response_obj } },
+    };
+
+    const exchange_result = ExchangeCapabilitiesResult{
+        .value = Quantity{ .value = .{ .null = {} } },
+    };
+    var dummy = DummyEngine{
+        .result = exchange_result,
+        .forkchoice_updated_v3_result = result_value,
+    };
+    const api = make_api(&dummy);
+
+    const out = try api.forkchoice_updated_v3(params);
+    try std.testing.expectEqualDeep(result_value, out);
+    try std.testing.expect(dummy.forkchoice_updated_v3_called);
 }
 
 test "engine api rejects invalid forkchoiceUpdatedV1 params" {
