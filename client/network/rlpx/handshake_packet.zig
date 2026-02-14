@@ -41,6 +41,15 @@ pub const Eip8AckBody = struct {
     recipient_nonce: Bytes32,
 };
 
+const DecodedHandshakeList = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []const Rlp.Data,
+
+    fn deinit(self: *DecodedHandshakeList) void {
+        self.arena.deinit();
+    }
+};
+
 /// Validates and decodes an EIP-8 handshake packet payload.
 ///
 /// Packet format (both auth and ack):
@@ -65,19 +74,14 @@ pub fn decode_eip8_size_prefixed_body(packet: []const u8) HandshakePacketError![
 /// - extra list elements are ignored
 /// - trailing bytes after the top-level list are ignored
 pub fn decode_eip8_auth_body(body: []const u8) HandshakeBodyDecodeError!Eip8AuthBody {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const decoded = try decode_eip8_handshake_body(arena.allocator(), body);
+    var decoded = try decode_handshake_list(body);
+    defer decoded.deinit();
 
-    const items = switch (decoded.data) {
-        .List => |list| list,
-        else => return error.InvalidRlpBody,
-    };
-    if (items.len < 3) return error.MissingRequiredField;
+    if (decoded.items.len < 3) return error.MissingRequiredField;
 
-    const signature_bytes = try read_rlp_bytes_exact(items[0], SignatureSize, error.InvalidSignatureLength);
-    const initiator_public_key_bytes = try read_rlp_bytes_exact(items[1], PublicKeySize, error.InvalidPublicKeyLength);
-    const initiator_nonce_bytes = try read_rlp_bytes_exact(items[2], NonceSize, error.InvalidNonceLength);
+    const signature_bytes = try read_rlp_bytes_exact(decoded.items[0], SignatureSize, error.InvalidSignatureLength);
+    const initiator_public_key_bytes = try read_rlp_bytes_exact(decoded.items[1], PublicKeySize, error.InvalidPublicKeyLength);
+    const initiator_nonce_bytes = try read_rlp_bytes_exact(decoded.items[2], NonceSize, error.InvalidNonceLength);
 
     var signature_r: [32]u8 = undefined;
     var signature_s: [32]u8 = undefined;
@@ -102,18 +106,13 @@ pub fn decode_eip8_auth_body(body: []const u8) HandshakeBodyDecodeError!Eip8Auth
 /// - extra list elements are ignored
 /// - trailing bytes after the top-level list are ignored
 pub fn decode_eip8_ack_body(body: []const u8) HandshakeBodyDecodeError!Eip8AckBody {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const decoded = try decode_eip8_handshake_body(arena.allocator(), body);
+    var decoded = try decode_handshake_list(body);
+    defer decoded.deinit();
 
-    const items = switch (decoded.data) {
-        .List => |list| list,
-        else => return error.InvalidRlpBody,
-    };
-    if (items.len < 2) return error.MissingRequiredField;
+    if (decoded.items.len < 2) return error.MissingRequiredField;
 
-    const recipient_ephemeral_public_key_bytes = try read_rlp_bytes_exact(items[0], PublicKeySize, error.InvalidPublicKeyLength);
-    const recipient_nonce_bytes = try read_rlp_bytes_exact(items[1], NonceSize, error.InvalidNonceLength);
+    const recipient_ephemeral_public_key_bytes = try read_rlp_bytes_exact(decoded.items[0], PublicKeySize, error.InvalidPublicKeyLength);
+    const recipient_nonce_bytes = try read_rlp_bytes_exact(decoded.items[1], NonceSize, error.InvalidNonceLength);
 
     var recipient_ephemeral_public_key = PublicKey{ .bytes = undefined };
     @memcpy(&recipient_ephemeral_public_key.bytes, recipient_ephemeral_public_key_bytes);
@@ -131,6 +130,22 @@ fn decode_eip8_handshake_body(
     // EIP-8 packets are size-prefixed with a 16-bit encrypted-body length.
     if (body.len > MaxEip8DecodedBodySize) return error.InvalidRlpBody;
     return Rlp.decode(allocator, body, true) catch return error.InvalidRlpBody;
+}
+
+fn decode_handshake_list(body: []const u8) HandshakeBodyDecodeError!DecodedHandshakeList {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    errdefer arena.deinit();
+
+    const decoded = try decode_eip8_handshake_body(arena.allocator(), body);
+    const items = switch (decoded.data) {
+        .List => |list| list,
+        else => return error.InvalidRlpBody,
+    };
+
+    return .{
+        .arena = arena,
+        .items = items,
+    };
 }
 
 fn read_rlp_bytes_exact(
