@@ -156,6 +156,19 @@ pub fn SyncManager(comptime Feeds: type) type {
 
     return struct {
         const Self = @This();
+        const StartupStep = struct {
+            flag: u32,
+            field_name: []const u8,
+        };
+        const startup_steps = [_]StartupStep{
+            .{ .flag = SyncStartupFeed.full, .field_name = "full" },
+            .{ .flag = SyncStartupFeed.fast_headers, .field_name = "fast_headers" },
+            .{ .flag = SyncStartupFeed.fast_bodies, .field_name = "fast_bodies" },
+            .{ .flag = SyncStartupFeed.fast_receipts, .field_name = "fast_receipts" },
+            .{ .flag = SyncStartupFeed.fast_blocks, .field_name = "fast_blocks" },
+            .{ .flag = SyncStartupFeed.snap, .field_name = "snap" },
+            .{ .flag = SyncStartupFeed.fast_state, .field_name = "fast_state" },
+        };
         const StartError = feed_start_error_set(@FieldType(Feeds, "full")) ||
             feed_start_error_set(@FieldType(Feeds, "fast_blocks")) ||
             feed_start_error_set(@FieldType(Feeds, "fast_state")) ||
@@ -176,16 +189,16 @@ pub fn SyncManager(comptime Feeds: type) type {
         pub fn start(self: *Self) StartError!u32 {
             const mask = startup_feed_mask(self.config);
 
-            try start_feed_if_enabled(mask, SyncStartupFeed.full, &self.feeds.full);
-            try start_feed_if_enabled(mask, SyncStartupFeed.fast_headers, &self.feeds.fast_headers);
-            try start_feed_if_enabled(mask, SyncStartupFeed.fast_bodies, &self.feeds.fast_bodies);
-            try start_feed_if_enabled(mask, SyncStartupFeed.fast_receipts, &self.feeds.fast_receipts);
-            try start_feed_if_enabled(mask, SyncStartupFeed.fast_blocks, &self.feeds.fast_blocks);
-            try start_feed_if_enabled(mask, SyncStartupFeed.snap, &self.feeds.snap);
-            try start_feed_if_enabled(mask, SyncStartupFeed.fast_state, &self.feeds.fast_state);
+            try self.start_feeds(mask);
 
             try self.start_lifecycle_hooks();
             return mask;
+        }
+
+        fn start_feeds(self: *Self, mask: u32) StartError!void {
+            inline for (startup_steps) |step| {
+                try start_feed_if_enabled(mask, step.flag, &@field(self.feeds.*, step.field_name));
+            }
         }
 
         fn start_lifecycle_hooks(self: *Self) SyncManagerLifecycle.Error!void {
