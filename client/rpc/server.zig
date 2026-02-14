@@ -221,6 +221,8 @@ pub fn BatchRequestExecutor(comptime EthProvider: type, comptime NetProvider: ty
             };
             index += 1; // past '['
 
+            const max_batch_response_body_size = if (is_authenticated) null else self.config.max_batch_response_body_size;
+            var response_size: usize = 0;
             var emitted: usize = 0;
             while (true) {
                 skip_ascii_whitespace(request, &index);
@@ -243,11 +245,21 @@ pub fn BatchRequestExecutor(comptime EthProvider: type, comptime NetProvider: ty
                 if (entry_buf.items.len != 0) {
                     if (emitted == 0) {
                         try writer.writeByte('[');
+                        response_size += 1;
                     } else {
                         try writer.writeByte(',');
+                        response_size += 1;
                     }
                     try writer.writeAll(entry_buf.items);
+                    response_size += entry_buf.items.len;
                     emitted += 1;
+
+                    if (max_batch_response_body_size) |limit| {
+                        // Match Nethermind batch serialization behavior:
+                        // once current response size exceeds the configured cap,
+                        // stop producing further batch entries.
+                        if (response_size > limit) break;
+                    }
                 }
 
                 index = entry_end;
@@ -1049,6 +1061,90 @@ test "BatchRequestExecutor.handle includes per-entry invalid_request errors" {
     try executor.handle(buf.writer(), req, false);
     try std.testing.expectEqualStrings(
         "[{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"Invalid request\"}},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x1\"}]",
+        buf.items,
+    );
+}
+
+test "BatchRequestExecutor.handle enforces max batch response body size for unauthenticated requests" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const cfg = RpcServerConfig{
+        .max_batch_size = 8,
+        .max_batch_response_body_size = 1,
+    };
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, cfg, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, false);
+    try std.testing.expectEqualStrings(
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"}]",
+        buf.items,
+    );
+}
+
+test "BatchRequestExecutor.handle ignores max batch response body size for authenticated requests" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Executor = BatchRequestExecutor(ProviderEth, ProviderNet, ProviderWeb3);
+    const cfg = RpcServerConfig{
+        .max_batch_size = 8,
+        .max_batch_response_body_size = 1,
+    };
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const executor = Executor.init(std.testing.allocator, cfg, &eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "[\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]},\n" ++
+        "  {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_chainId\",\"params\":[]}\n" ++
+        "]";
+
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try executor.handle(buf.writer(), req, true);
+    try std.testing.expectEqualStrings(
+        "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x1\"}]",
         buf.items,
     );
 }
