@@ -29,14 +29,14 @@ The human role is purely architectural: defining what modules to build, what spe
 
 - **~19k lines** of Effect-TS source across 87 modules (blockchain, state, trie, EVM host, RPC, sync, txpool, engine, db, networking)
 - **~14k lines** of tests (528 tests, 507 passing)
-- **EVM engine** provided by [xvi-evm](https://github.com/evmts/xvi) (Zig, also vibecoded) — full hardfork support Frontier → Prague, 20+ EIPs, 100% ethereum/tests passing
+- **EVM engine** provided by Guillotine (Zig, also vibecoded) — full hardfork support Frontier → Prague, 20+ EIPs, 100% ethereum/tests passing
 - **Primitives** provided by [Voltaire](https://github.com/evmts/voltaire) — Address, Block, Transaction, RLP, Crypto, Precompiles
 
 ## Architecture
 
 | Component | Language | Description |
 |-----------|----------|-------------|
-| [xvi-evm](./xvi-evm) | Zig | EVM execution engine (submodule) |
+| Guillotine (`src/`) | Zig | EVM execution engine |
 | [client-ts](./client-ts) | Effect-TS | Execution client modules |
 | [smithers](./smithers) | TSX/React | AI workflow orchestrator that generates the code |
 | [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (fetched from npm/GitHub releases) |
@@ -147,7 +147,7 @@ npx vitest run      # Run all tests
 
 ## Related
 
-- [XVI](https://github.com/evmts/xvi) — EVM engine
+- [Guillotine](https://github.com/evmts/guillotine) — EVM engine
 - [Voltaire](https://github.com/evmts/voltaire) — Ethereum primitives
 - [Smithers](https://github.com/evmts/smithers) — AI workflow orchestrator
 
