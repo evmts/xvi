@@ -72,13 +72,29 @@ const GetBlobsV2VoltaireParams = @FieldType(GetBlobsV2Method, "params");
 const GetBlobsV2VoltaireResult = @FieldType(GetBlobsV2Method, "result");
 
 fn runtime_voltaire_type(comptime T: type) type {
-    if (comptime @hasDecl(T, "Quantity")) {
-        return T.Quantity;
+    const info = @typeInfo(T);
+    if (comptime (info == .@"struct" or info == .@"union" or info == .@"enum" or info == .@"opaque")) {
+        if (comptime @hasDecl(T, "Quantity")) {
+            return T.Quantity;
+        }
     }
 
-    const info = @typeInfo(T);
     if (info == .@"struct") {
         const s = info.@"struct";
+
+        // Resolve module-style type re-exports (e.g. jsonrpc.types.Hash) to the
+        // concrete JSON type declaration that provides jsonParseFromValue.
+        if (s.fields.len == 0) {
+            inline for (s.decls) |decl| {
+                const candidate = @field(T, decl.name);
+                if (@typeInfo(@TypeOf(candidate)) != .type) continue;
+                const CandidateType = candidate;
+                if (@hasDecl(CandidateType, "jsonParseFromValue")) {
+                    return runtime_voltaire_type(CandidateType);
+                }
+            }
+        }
+
         var fields: [s.fields.len]std.builtin.Type.StructField = undefined;
         inline for (s.fields, 0..) |field, i| {
             fields[i] = .{
@@ -1011,7 +1027,7 @@ fn validate_new_payload_v3_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    try validate_hash32_value_json(params.root_of_the_parent_beacon_block.value, invalid_err);
+    try validate_hash32_param(params.root_of_the_parent_beacon_block, invalid_err);
 }
 
 fn validate_new_payload_v3_result(
@@ -1027,7 +1043,7 @@ fn validate_new_payload_v4_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v3_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    try validate_hash32_value_json(params.root_of_the_parent_beacon_block.value, invalid_err);
+    try validate_hash32_param(params.root_of_the_parent_beacon_block, invalid_err);
     try validate_execution_requests_json(params.execution_requests.value, invalid_err);
 }
 
@@ -1044,7 +1060,7 @@ fn validate_new_payload_v5_params(
 ) EngineApi.Error!void {
     try validate_execution_payload_v4_json(params.execution_payload.value, invalid_err);
     try validate_hash32_array_json(params.expected_blob_versioned_hashes.value, invalid_err);
-    try validate_hash32_value_json(params.parent_beacon_block_root.value, invalid_err);
+    try validate_hash32_param(params.parent_beacon_block_root, invalid_err);
     try validate_execution_requests_json(params.execution_requests.value, invalid_err);
 }
 
@@ -1765,6 +1781,19 @@ fn validate_hash32_value_json(value: std.json.Value, comptime invalid_err: Engin
         .string => |s| try validate_data_hex_exact_size(s, 32, invalid_err),
         else => return invalid_err,
     }
+}
+
+fn validate_hash32_param(value: anytype, comptime invalid_err: EngineApi.Error) EngineApi.Error!void {
+    const ValueType = @TypeOf(value);
+
+    if (comptime @hasField(ValueType, "value")) {
+        return validate_hash32_value_json(value.value, invalid_err);
+    }
+    if (comptime @hasField(ValueType, "bytes")) {
+        // The fixed-size bytes type already enforces 32-byte width.
+        return;
+    }
+    return invalid_err;
 }
 
 fn validate_payload_status_without_invalid_block_hash(
