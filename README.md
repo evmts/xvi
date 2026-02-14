@@ -36,7 +36,7 @@ The human role is purely architectural: defining what modules to build, what spe
 
 | Component | Language | Description |
 |-----------|----------|-------------|
-| Guillotine (`src/`) | Zig | EVM execution engine |
+| [Guillotine](https://github.com/evmts/guillotine) | Zig | EVM execution engine |
 | [client-ts](./client-ts) | Effect-TS | Execution client modules |
 | [smithers](./smithers) | TSX/React | AI workflow orchestrator that generates the code |
 | [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (fetched from npm/GitHub releases) |
