@@ -152,9 +152,17 @@ fn bench_admission(n_per_type: usize) !bench.BenchResult {
         ops += n_per_type;
     }
 
-    // EIP-7702 (authorization list; empty here)
+    // EIP-7702 (SetCode tx; authorization list must be non-empty per spec)
     {
         const Authorization = primitives.Authorization.Authorization;
+        const auths = [_]Authorization{.{
+            .chain_id = 1,
+            .address = mk_addr(0x45),
+            .nonce = 0,
+            .v = 0,
+            .r = [_]u8{5} ** 32,
+            .s = [_]u8{6} ** 32,
+        }};
         const tx = Tx.Eip7702Transaction{
             .chain_id = 1,
             .nonce = 0,
@@ -165,7 +173,7 @@ fn bench_admission(n_per_type: usize) !bench.BenchResult {
             .value = 0,
             .data = &[_]u8{},
             .access_list = &[_]Tx.AccessListItem{},
-            .authorization_list = &[_]Authorization{},
+            .authorization_list = &auths,
             .y_parity = 0,
             .r = [_]u8{0} ** 32,
             .s = [_]u8{0} ** 32,
