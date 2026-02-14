@@ -31,7 +31,7 @@ const WriteFlags = adapter.WriteFlags;
 /// ## Usage
 ///
 /// ```zig
-/// var ndb = NullDb{};
+/// var ndb = NullDb.init(.state);
 /// const iface = ndb.database();
 /// const result = try iface.get("any_key"); // always null
 /// ```
@@ -155,10 +155,14 @@ pub const NullDb = struct {
     fn gather_metric_impl(_: *anyopaque) Error!DbMetric {
         return .{};
     }
-};
 
-var empty_iterator = NullDb.EmptyIterator{};
-var null_snapshot = NullDb.NullSnapshot{};
+    // Declared `var` because `DbIterator.init` and `DbSnapshot.init` require
+    // `*T` (mutable pointer). Both types are zero-sized with no mutable fields,
+    // so no data race is possible despite module-level `var` scope. A future
+    // refactor of the adapter to accept `*const T` would allow `const` here.
+    var empty_iterator = EmptyIterator{};
+    var null_snapshot = NullSnapshot{};
+};
 
 // ---------------------------------------------------------------------------
 // Tests
