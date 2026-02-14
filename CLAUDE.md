@@ -681,7 +681,7 @@ Must match exactly between Python and Zig.
 - Forgetting to charge gas before operations (Python charges first)
 - Modifying test files (only change `src/` implementations)
 - Silently ignoring errors with `catch {}` (forbidden; handle or `try`)
-- Creating `.backup`/`.bak`/`.old` files (use git instead)
+- **NEVER** create `.backup`/`.bak`/`.old` files — use `jj` or `git` for version control instead
 
 ## Resources
 
