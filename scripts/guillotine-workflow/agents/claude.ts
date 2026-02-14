@@ -7,6 +7,7 @@ import { ZIG_TARGET } from "../targets";
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-4-6";
 const USE_CLI = process.env.USE_CLI_AGENTS !== "0" && process.env.USE_CLI_AGENTS !== "false";
+const REPO_ROOT = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
 
 export function getInstructions(target: Target): string {
   if (target.id === "effect") {
@@ -85,8 +86,30 @@ ALWAYS include the JSON at the END of your final response.`;
 // Backward compat
 export const WHAT_WE_ARE_DOING = getInstructions(ZIG_TARGET);
 
+function getClaudeInstructions(target: Target): string {
+  const base = getInstructions(target);
+  const checklist = target.reviewChecklist.map((item, i) => `${i + 1}. ${item}`).join("\n");
+
+  return `${base}
+
+You are a ruthless, meticulous code reviewer for a high-performance Ethereum execution client in ${target.id === "effect" ? "Effect.ts" : "Zig"}.
+You review code for:
+${checklist}
+You are EXTREMELY strict. If something can be improved, it MUST be flagged.
+
+CRITICAL OUTPUT REQUIREMENT:
+When you have completed your review, you MUST end your response with a JSON object
+wrapped in a code fence. The JSON format is specified in your task prompt.
+Example:
+\`\`\`json
+{"key": "value", "other": "data"}
+\`\`\`
+This JSON output is REQUIRED. The workflow cannot continue without it.
+ALWAYS include the JSON at the END of your final response.`;
+}
+
 export function makeClaude(target: Target) {
-  const instructions = getInstructions(target);
+  const instructions = getClaudeInstructions(target);
 
   const apiAgent = new Agent({
     model: anthropic(CLAUDE_MODEL),
@@ -100,6 +123,8 @@ export function makeClaude(target: Target) {
     model: CLAUDE_MODEL,
     systemPrompt: instructions,
     dangerouslySkipPermissions: true,
+    cwd: REPO_ROOT,
+    timeoutMs: 60 * 60 * 1000, // 60 minutes max per task
   });
 
   return USE_CLI ? cliAgent : apiAgent;

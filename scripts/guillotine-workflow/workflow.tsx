@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Workflow, Task, smithers, tables } from "./smithers";
-import { makeCodex } from "./agents/codex";
+import { makeClaude } from "./agents/claude";
 import { phases } from "./phases";
 import { getTarget } from "./targets";
 import ContextPrompt from "./steps/0_context.mdx";
@@ -135,7 +135,7 @@ function renderRefactorPrompt(targetId: string, props: { phase: string }) {
 export default smithers((ctx) => {
   const targetId = (ctx as any).input?.target ?? process.env.WORKFLOW_TARGET ?? "zig";
   const target = getTarget(targetId);
-  const codex = makeCodex(target);
+  const codex = makeClaude(target);
 
   const passTracker = ctx.latest(tables.output, "pass-tracker") as OutputRow | undefined;
   const currentPass = passTracker?.totalIterations ?? 0;

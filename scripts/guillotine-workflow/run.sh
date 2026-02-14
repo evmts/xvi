@@ -13,12 +13,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$SCRIPT_DIR"
 
-# Force Codex CLI agent for all workflow tasks
+# Force CLI agent for all workflow tasks
 export USE_CLI_AGENTS=1
 
-# Remove API-key fallback paths so this run cannot select non-Codex API agents
-unset ANTHROPIC_API_KEY
-unset OPENAI_API_KEY
+# ANTHROPIC_API_KEY must be set in the environment for Claude CLI to work
 
 # Show engine errors instead of swallowing them
 export SMITHERS_DEBUG=1
