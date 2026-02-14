@@ -276,8 +276,8 @@ fn bench_fee_sort(n: usize) !bench.BenchResult {
                 base,
                 true,
             );
-            // We want descending priority, so lessThan is inverted
-            return r == 1; // a has lower priority than b → a < b
+            // We want descending priority, so "a < b" means "a should come first".
+            return r == -1; // a has higher priority than b
         }
     }.lessThan);
     const elapsed = timer.read();
