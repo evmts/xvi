@@ -351,21 +351,46 @@ fn ancestor_hash_local(
 /// - Only the previous 256 blocks are addressable.
 /// - `tip_hash` must correspond to block `execution_block_number - 1`.
 /// - Uses local storage only; never fetches from fork cache and never allocates.
-/// - Returns `null` when bounds fail, tip context is inconsistent, or ancestry
-///   is incomplete/malformed in local storage.
-pub const BlockHashByNumberError = error{
+/// - Total/spec-facing behavior: returns `null` whenever the hash cannot be
+///   resolved in-range (including missing/inconsistent local ancestry), which
+///   corresponds to the EVM `BLOCKHASH` zero default.
+pub fn block_hash_by_number_local(
+    chain: *Chain,
+    tip_hash: Hash.Hash,
+    execution_block_number: u64,
+    number: u64,
+) ?Hash.Hash {
+    return block_hash_by_number_local_strict(
+        chain,
+        tip_hash,
+        execution_block_number,
+        number,
+    ) catch |err| switch (err) {
+        error.MissingTipBlock => null,
+        error.InconsistentTipContext => null,
+        error.MissingAncestorBlock => null,
+        error.MalformedAncestorBlock => null,
+    };
+}
+
+/// Strict local `BLOCKHASH` helper for fail-closed internal call sites.
+///
+/// Semantics:
+/// - Same bounds and context rules as `block_hash_by_number_local`.
+/// - Returns typed errors for missing/inconsistent/malformed local ancestry.
+pub const BlockHashByNumberStrictError = error{
     MissingTipBlock,
     InconsistentTipContext,
     MissingAncestorBlock,
     MalformedAncestorBlock,
 };
 
-pub fn block_hash_by_number_local(
+pub fn block_hash_by_number_local_strict(
     chain: *Chain,
     tip_hash: Hash.Hash,
     execution_block_number: u64,
     number: u64,
-) BlockHashByNumberError!?Hash.Hash {
+) BlockHashByNumberStrictError!?Hash.Hash {
     // EVM BLOCKHASH does not include current or future blocks.
     if (number >= execution_block_number) return null;
 
@@ -2498,12 +2523,20 @@ test "Chain - ancestor_hash_local returns typed error when orphan parent missing
     try std.testing.expectError(error.MissingAncestorBlock, ancestor_hash_local(&chain, orphan.hash, 1));
 }
 
-test "Chain - block_hash_by_number_local returns typed error when tip missing" {
+test "Chain - block_hash_by_number_local returns null when tip missing" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
 
-    try std.testing.expectError(error.MissingTipBlock, block_hash_by_number_local(&chain, Hash.ZERO, 1, 0));
+    try std.testing.expect(block_hash_by_number_local(&chain, Hash.ZERO, 1, 0) == null);
+}
+
+test "Chain - block_hash_by_number_local_strict returns typed error when tip missing" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    try std.testing.expectError(error.MissingTipBlock, block_hash_by_number_local_strict(&chain, Hash.ZERO, 1, 0));
 }
 
 test "Chain - block_hash_by_number_local enforces current/future bounds" {
@@ -2521,9 +2554,9 @@ test "Chain - block_hash_by_number_local enforces current/future bounds" {
     try chain.putBlock(b1);
 
     // Equal to current height: out of bounds.
-    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 2)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
     // Future height: out of bounds.
-    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 3)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 3) == null);
 }
 
 test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
@@ -2554,24 +2587,24 @@ test "Chain - block_hash_by_number_local returns in-range ancestor hash" {
     const execution_number: u64 = 258;
 
     // Depth 256 (max allowed) should still resolve.
-    const oldest = (try block_hash_by_number_local(&chain, tip, execution_number, 2)) orelse return error.Unreachable;
+    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
 
     // Parent block is always addressable at depth 1.
-    const parent = (try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 1)) orelse
+    const parent = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 1) orelse
         return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &tip, &parent);
 
     // Depth 256 (oldest in range) should still resolve.
-    const oldest_in_range = (try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 256)) orelse
+    const oldest_in_range = block_hash_by_number_local(&chain, tip, execution_number, execution_number - 256) orelse
         return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest_in_range);
 
     // Depth 257 is out of bounds.
-    try std.testing.expect((try block_hash_by_number_local(&chain, tip, execution_number, execution_number - 257)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, execution_number - 257) == null);
 }
 
-test "Chain - block_hash_by_number_local returns typed error for inconsistent tip context" {
+test "Chain - block_hash_by_number_local returns null for inconsistent tip context" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2580,7 +2613,18 @@ test "Chain - block_hash_by_number_local returns typed error for inconsistent ti
     try chain.putBlock(genesis);
 
     // tip hash is genesis (#0), but execution number claims #2.
-    try std.testing.expectError(error.InconsistentTipContext, block_hash_by_number_local(&chain, genesis.hash, 2, 1));
+    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 2, 1) == null);
+}
+
+test "Chain - block_hash_by_number_local_strict returns typed error for inconsistent tip context" {
+    const allocator = std.testing.allocator;
+    var chain = try Chain.init(allocator, null);
+    defer chain.deinit();
+
+    const genesis = try Block.genesis(1, allocator);
+    try chain.putBlock(genesis);
+
+    try std.testing.expectError(error.InconsistentTipContext, block_hash_by_number_local_strict(&chain, genesis.hash, 2, 1));
 }
 
 test "Chain - block_hash_by_number_local supports pending context parent lookup" {
@@ -2599,14 +2643,14 @@ test "Chain - block_hash_by_number_local supports pending context parent lookup"
     try chain.putBlock(b1);
 
     // Executing block #2 with parent hash #1.
-    const parent_hash = (try block_hash_by_number_local(&chain, b1.hash, 2, 1)) orelse return error.Unreachable;
+    const parent_hash = block_hash_by_number_local(&chain, b1.hash, 2, 1) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &b1.hash, &parent_hash);
 
     // Current block number itself remains out of bounds.
-    try std.testing.expect((try block_hash_by_number_local(&chain, b1.hash, 2, 2)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 2, 2) == null);
 }
 
-test "Chain - block_hash_by_number_local rejects execution number derived from tip hash" {
+test "Chain - block_hash_by_number_local returns null when execution number is not tip+1" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2622,10 +2666,7 @@ test "Chain - block_hash_by_number_local rejects execution number derived from t
     try chain.putBlock(b1);
 
     // Executing block number must be tip.number + 1 (2), not tip.number (1).
-    try std.testing.expectError(
-        error.InconsistentTipContext,
-        block_hash_by_number_local(&chain, b1.hash, 1, 0),
-    );
+    try std.testing.expect(block_hash_by_number_local(&chain, b1.hash, 1, 0) == null);
 }
 
 test "Chain - block_hash_by_number_local returns null when execution context is genesis" {
@@ -2636,10 +2677,10 @@ test "Chain - block_hash_by_number_local returns null when execution context is 
     const genesis = try Block.genesis(1, allocator);
     try chain.putBlock(genesis);
 
-    try std.testing.expect((try block_hash_by_number_local(&chain, genesis.hash, 0, 0)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, genesis.hash, 0, 0) == null);
 }
 
-test "Chain - block_hash_by_number_local returns typed error when ancestry missing locally" {
+test "Chain - block_hash_by_number_local returns null when ancestry missing locally" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2651,11 +2692,10 @@ test "Chain - block_hash_by_number_local returns typed error when ancestry missi
     const orphan = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(orphan);
 
-    // Query parent of orphan parent (#299) which is missing locally.
-    try std.testing.expectError(error.MissingAncestorBlock, block_hash_by_number_local(&chain, orphan.hash, 301, 299));
+    try std.testing.expect(block_hash_by_number_local(&chain, orphan.hash, 301, 299) == null);
 }
 
-test "Chain - block_hash_by_number_local returns typed error for malformed parent-number continuity" {
+test "Chain - block_hash_by_number_local returns null for malformed parent-number continuity" {
     const allocator = std.testing.allocator;
     var chain = try Chain.init(allocator, null);
     defer chain.deinit();
@@ -2671,7 +2711,49 @@ test "Chain - block_hash_by_number_local returns typed error for malformed paren
     const malformed = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
     try chain.putBlock(malformed);
 
-    try std.testing.expectError(error.MalformedAncestorBlock, block_hash_by_number_local(&chain, malformed.hash, 3, 1));
+    try std.testing.expect(block_hash_by_number_local(&chain, malformed.hash, 3, 1) == null);
+}
+
+test "Chain - block_hash_by_number_local_strict returns typed errors for ancestry failures" {
+    const allocator = std.testing.allocator;
+
+    // Missing ancestor in local store.
+    {
+        var chain = try Chain.init(allocator, null);
+        defer chain.deinit();
+
+        var hdr = primitives.BlockHeader.init();
+        hdr.number = 300;
+        hdr.parent_hash = try Hash.fromHex("0x" ++ ("cc" ** 32));
+        const orphan = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+        try chain.putBlock(orphan);
+
+        try std.testing.expectError(
+            error.MissingAncestorBlock,
+            block_hash_by_number_local_strict(&chain, orphan.hash, 301, 299),
+        );
+    }
+
+    // Malformed parent-number continuity.
+    {
+        var chain = try Chain.init(allocator, null);
+        defer chain.deinit();
+
+        const genesis = try Block.genesis(1, allocator);
+        try chain.putBlock(genesis);
+
+        var hdr = primitives.BlockHeader.init();
+        hdr.number = 2;
+        hdr.parent_hash = genesis.hash;
+        hdr.timestamp = 2;
+        const malformed = try Block.from(&hdr, &primitives.BlockBody.init(), allocator);
+        try chain.putBlock(malformed);
+
+        try std.testing.expectError(
+            error.MalformedAncestorBlock,
+            block_hash_by_number_local_strict(&chain, malformed.hash, 3, 1),
+        );
+    }
 }
 
 test "Chain - block_hash_by_number_local enforces 256-window from execution context" {
@@ -2701,11 +2783,11 @@ test "Chain - block_hash_by_number_local enforces 256-window from execution cont
     const execution_number: u64 = 258;
 
     // Oldest in-range block for execution #258 is #2.
-    const oldest = (try block_hash_by_number_local(&chain, tip, execution_number, 2)) orelse return error.Unreachable;
+    const oldest = block_hash_by_number_local(&chain, tip, execution_number, 2) orelse return error.Unreachable;
     try std.testing.expectEqualSlices(u8, &hashes[2], &oldest);
 
     // #1 is 257 blocks back from execution context, out of range.
-    try std.testing.expect((try block_hash_by_number_local(&chain, tip, execution_number, 1)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain, tip, execution_number, 1) == null);
 }
 
 test "Chain - last_256_block_hashes_local returns MissingTipBlock when tip missing" {

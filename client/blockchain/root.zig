@@ -56,6 +56,8 @@ pub const canonical_hash = chain.canonical_hash;
 pub const set_canonical_head = chain.set_canonical_head;
 /// Local-only BLOCKHASH-style lookup by block number.
 pub const block_hash_by_number_local = chain.block_hash_by_number_local;
+/// Strict local-only BLOCKHASH helper returning typed ancestry/context errors.
+pub const block_hash_by_number_local_strict = chain.block_hash_by_number_local_strict;
 /// Local-only collection of up-to-256 recent block hashes (spec order).
 pub const last_256_block_hashes_local = chain.last_256_block_hashes_local;
 /// Local-only lowest common ancestor hash lookup between two blocks.
@@ -129,9 +131,16 @@ test "root exports - block_hash_by_number_local uses execution context" {
     const b1 = try Block.from(&h1, &BlockBody.init(), std.testing.allocator);
     try put_block(&chain_state, b1);
 
-    const parent = (try block_hash_by_number_local(&chain_state, b1.hash, 2, 1)) orelse return error.UnexpectedNull;
+    const parent = block_hash_by_number_local(&chain_state, b1.hash, 2, 1) orelse return error.UnexpectedNull;
     try std.testing.expectEqualSlices(u8, &b1.hash, &parent);
-    try std.testing.expect((try block_hash_by_number_local(&chain_state, b1.hash, 2, 2)) == null);
+    try std.testing.expect(block_hash_by_number_local(&chain_state, b1.hash, 2, 2) == null);
+}
+
+test "root exports - block_hash_by_number_local_strict preserves typed errors" {
+    var chain_state = try Chain.init(std.testing.allocator, null);
+    defer chain_state.deinit();
+
+    try std.testing.expectError(error.MissingTipBlock, block_hash_by_number_local_strict(&chain_state, Hash.ZERO, 1, 0));
 }
 
 test "root exports - typed ancestry error is preserved" {
