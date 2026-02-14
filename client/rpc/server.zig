@@ -6,7 +6,6 @@ const std = @import("std");
 const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
 const envelope = @import("envelope.zig");
-const dispatch = @import("dispatch.zig");
 const EthApi = @import("eth.zig").EthApi;
 const NetApi = @import("net.zig").NetApi;
 const Response = @import("response.zig").Response;
@@ -97,71 +96,27 @@ pub fn SingleRequestProcessor(comptime EthProvider: type, comptime NetProvider: 
 
         /// Execute one JSON-RPC request object and write the response, if any.
         pub fn handle(self: *const Self, writer: anytype, request: []const u8) !void {
-            const fields = switch (scan.scan_and_validate_request_fields(request)) {
-                .fields => |value| value,
+            const parsed = switch (parse_single_request_for_dispatch(request)) {
+                .request => |value| value,
                 .err => |code| {
                     try Response.write_error(writer, .null, code, errors.default_message(code), null);
                     return;
                 },
             };
 
-            const request_id = switch (envelope.extract_request_id_from_fields(request, fields)) {
-                .id => |rid| rid,
-                .err => |code| {
-                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
-                    return;
-                },
-            };
-
-            const method_name = switch (extract_method_name(request, fields)) {
-                .name => |value| value,
-                .err => |code| {
-                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
-                    return;
-                },
-            };
-
-            if (std.mem.eql(u8, method_name, "eth_chainId")) {
-                try self.eth_api.handle_chain_id(writer, request_id);
-                return;
-            }
-
-            if (std.mem.eql(u8, method_name, "net_version")) {
-                try self.net_api.handle_version(writer, request_id);
-                return;
-            }
-
-            if (std.mem.eql(u8, method_name, "web3_clientVersion")) {
-                try self.web3_api.handle_client_version(writer, request_id);
-                return;
-            }
-
-            if (std.mem.eql(u8, method_name, "web3_sha3")) {
-                try self.web3_api.handle_sha3_from_request(writer, request);
-                return;
-            }
-
-            switch (request_id) {
-                .missing => return,
-                .present => |id| {
-                    const code = errors.code.method_not_found;
-                    try Response.write_error(writer, id, code, errors.default_message(code), null);
+            switch (parsed.method) {
+                .eth_chainId => try self.eth_api.handle_chain_id(writer, parsed.id),
+                .net_version => try self.net_api.handle_version(writer, parsed.id),
+                .web3_clientVersion => try self.web3_api.handle_client_version(writer, parsed.id),
+                .web3_sha3 => try self.web3_api.handle_sha3_from_request(writer, request),
+                .unknown => switch (parsed.id) {
+                    .missing => return,
+                    .present => |id| {
+                        const code = errors.code.method_not_found;
+                        try Response.write_error(writer, id, code, errors.default_message(code), null);
+                    },
                 },
             }
-        }
-
-        const ExtractMethodNameResult = union(enum) {
-            name: []const u8,
-            err: errors.JsonRpcErrorCode,
-        };
-
-        fn extract_method_name(request: []const u8, fields: scan.RequestFieldSpans) ExtractMethodNameResult {
-            const method_span = fields.method orelse return .{ .err = errors.code.invalid_request };
-            const method_token = request[method_span.start..method_span.end];
-            if (method_token.len < 2 or method_token[0] != '"' or method_token[method_token.len - 1] != '"') {
-                return .{ .err = errors.code.invalid_request };
-            }
-            return .{ .name = method_token[1 .. method_token.len - 1] };
         }
     };
 }
@@ -397,8 +352,46 @@ const ParseRequestKindResult = union(enum) {
 };
 
 /// Parsed single-request dispatch metadata produced from one scan pass.
+const DispatchMethod = enum {
+    eth_chainId,
+    net_version,
+    web3_clientVersion,
+    web3_sha3,
+    unknown,
+};
+
+const ExtractMethodNameResult = union(enum) {
+    name: []const u8,
+    err: errors.JsonRpcErrorCode,
+};
+
+fn extract_method_name(request: []const u8, fields: scan.RequestFieldSpans) ExtractMethodNameResult {
+    const method_span = fields.method orelse return .{ .err = errors.code.invalid_request };
+    const method_token = request[method_span.start..method_span.end];
+    if (method_token.len < 2 or method_token[0] != '"' or method_token[method_token.len - 1] != '"') {
+        return .{ .err = errors.code.invalid_request };
+    }
+    return .{ .name = method_token[1 .. method_token.len - 1] };
+}
+
+fn resolve_dispatch_method(method_name: []const u8) DispatchMethod {
+    if (jsonrpc.eth.EthMethod.fromMethodName(method_name)) |tag| {
+        return switch (tag) {
+            .eth_chainId => .eth_chainId,
+            else => .unknown,
+        };
+    } else |_| {}
+
+    const non_voltaire_method_registry = std.StaticStringMap(DispatchMethod).initComptime(.{
+        .{ "net_version", .net_version },
+        .{ "web3_clientVersion", .web3_clientVersion },
+        .{ "web3_sha3", .web3_sha3 },
+    });
+    return non_voltaire_method_registry.get(method_name) orelse .unknown;
+}
+
 const ParsedSingleRequest = struct {
-    namespace: std.meta.Tag(jsonrpc.JsonRpcMethod),
+    method: DispatchMethod,
     id: envelope.RequestId,
 };
 
@@ -456,8 +449,8 @@ fn parse_single_request_for_dispatch(request: []const u8) ParseSingleRequestResu
         .err => |code| return .{ .err = code },
     };
 
-    const ns = switch (dispatch.parse_request_namespace_from_fields(request, fields)) {
-        .namespace => |tag| tag,
+    const method_name = switch (extract_method_name(request, fields)) {
+        .name => |value| value,
         .err => |code| return .{ .err = code },
     };
 
@@ -466,7 +459,7 @@ fn parse_single_request_for_dispatch(request: []const u8) ParseSingleRequestResu
         .err => |code| return .{ .err = code },
     };
 
-    return .{ .request = .{ .namespace = ns, .id = request_id } };
+    return .{ .request = .{ .method = resolve_dispatch_method(method_name), .id = request_id } };
 }
 
 // ============================================================================
@@ -702,12 +695,12 @@ test "parse_request_kind_for_dispatch rejects empty batches as invalid_request" 
     }
 }
 
-test "parse_single_request_for_dispatch returns namespace and numeric id in one pass" {
+test "parse_single_request_for_dispatch returns dispatch method and numeric id in one pass" {
     const req = "{ \"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"eth_chainId\", \"params\": [] }";
     const out = parse_single_request_for_dispatch(req);
     switch (out) {
         .request => |parsed| {
-            try std.testing.expectEqual(std.meta.Tag(jsonrpc.JsonRpcMethod).eth, parsed.namespace);
+            try std.testing.expectEqual(DispatchMethod.eth_chainId, parsed.method);
             switch (parsed.id) {
                 .present => |id| switch (id) {
                     .number => |tok| try std.testing.expectEqualStrings("7", tok),
@@ -729,12 +722,12 @@ test "parse_single_request_for_dispatch marks notifications when id is missing" 
     }
 }
 
-test "parse_single_request_for_dispatch rejects unknown method" {
+test "parse_single_request_for_dispatch marks unknown methods for response-stage handling" {
     const req = "{ \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"foo_bar\", \"params\": [] }";
     const out = parse_single_request_for_dispatch(req);
     switch (out) {
-        .request => |_| return error.UnexpectedSuccess,
-        .err => |code| try std.testing.expectEqual(errors.code.method_not_found, code),
+        .request => |parsed| try std.testing.expectEqual(DispatchMethod.unknown, parsed.method),
+        .err => |_| return error.UnexpectedError,
     }
 }
 
