@@ -95,6 +95,15 @@ pub fn is_canonical(chain: *Chain, hash: Hash.Hash) bool {
 /// - Never consults the fork cache and performs no allocations.
 pub const IsCanonicalStrictError = error{MissingBlock};
 
+/// Strict local canonicality check with optional missing-hash error.
+///
+/// Mirrors Nethermind `IsMainChain(hash, throwOnMissingHash)` semantics:
+/// - If `hash` is unknown locally and `throw_on_missing_hash` is `true`,
+///   returns `error.MissingBlock`.
+/// - If `hash` is unknown locally and `throw_on_missing_hash` is `false`,
+///   returns `false`.
+/// - Otherwise returns whether `hash` is canonical at its recorded block number.
+/// - Never consults the fork cache and performs no allocations.
 pub fn is_canonical_strict(
     chain: *Chain,
     hash: Hash.Hash,
@@ -386,6 +395,11 @@ pub const BlockHashByNumberStrictError = error{
     MalformedAncestorBlock,
 };
 
+/// Strict local `BLOCKHASH` helper for fail-closed internal call sites.
+///
+/// Semantics:
+/// - Same bounds and context rules as `block_hash_by_number_local`.
+/// - Returns typed errors for missing/inconsistent/malformed local ancestry.
 pub fn block_hash_by_number_local_strict(
     chain: *Chain,
     tip_hash: Hash.Hash,
@@ -478,6 +492,16 @@ pub const CommonAncestorError = error{
     MalformedAncestorBlock,
 };
 
+/// Finds the lowest common ancestor hash of two blocks using local store only.
+///
+/// Semantics:
+/// - Returns `null` if either `a` or `b` is missing locally.
+/// - Walks strictly via parent links in the local store; never consults the
+///   fork cache and performs no allocations.
+/// - If `a == b` and exists locally, returns `a`.
+/// - If the chains converge, returns the first matching hash when walking
+///   upward; otherwise returns `null` (e.g., when an ancestor is missing
+///   locally).
 pub fn common_ancestor_hash_local(
     chain: *Chain,
     a: Hash.Hash,
@@ -592,33 +616,22 @@ fn head_hash_snapshot_local(chain: *Chain) ?Hash.Hash {
     return head_hash_snapshot_local_with_policy(chain, 2);
 }
 
-fn head_block_snapshot_local_with_policy(chain: *Chain, max_attempts: usize) ?Block.Block {
-    const attempts = @max(max_attempts, 1);
-    var attempt: usize = 0;
-    while (attempt < attempts) : (attempt += 1) {
-        const before = head_number(chain) orelse return null;
-        const maybe_block = get_block_by_number_local(chain, before);
-        const block = maybe_block orelse {
-            if (attempt + 1 == attempts) return null;
-            continue;
-        };
-        const after = head_number(chain) orelse return null;
-        if (after == before) return block;
-        if (attempt + 1 == attempts) return block; // return the "before" snapshot
-    }
-    return null; // defensive
-}
-
-fn head_block_snapshot_local(chain: *Chain) ?Block.Block {
-    return head_block_snapshot_local_with_policy(chain, 2);
-}
-
 /// Returns whether `candidate_head` diverges from the current canonical head.
 pub const CanonicalDivergenceError = CanonicalHeadSnapshotError || CommonAncestorError || error{
     MissingCanonicalHead,
     MissingCommonAncestor,
 };
 
+/// Returns whether `candidate_head` diverges from the current canonical head.
+///
+/// Semantics:
+/// - Uses local store only and never fetches from fork cache.
+/// - Returns typed errors when canonical head snapshot is unavailable or no
+///   local common ancestor can be established.
+/// - Returns `false` when candidate is equal to canonical head, extends it, or
+///   is its ancestor.
+/// - Returns `true` only when both heads have a common ancestor that is neither
+///   head (i.e., actual fork divergence that implies reorg when adopted).
 pub fn has_canonical_divergence_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
@@ -685,6 +698,18 @@ fn reorg_depth_from_ancestor(descendant_number: u64, ancestor_number: u64) Reorg
     return descendant_number - ancestor_number;
 }
 
+/// Returns local-only reorg depth from canonical head to common ancestor.
+///
+/// Semantics:
+/// - Uses local store only and never fetches from fork cache.
+/// - Returns typed errors when canonical head snapshot is unavailable,
+///   candidate is missing locally, or no local common ancestor can be
+///   established.
+/// - Returns `0` when candidate equals canonical head or extends canonical
+///   head (ancestor is canonical head).
+/// - Otherwise returns `canonical_head.number - ancestor.number`, i.e. the
+///   number of canonical blocks that would be rolled back if candidate became
+///   canonical.
 pub fn canonical_reorg_depth_local(
     chain: *Chain,
     candidate_head: Hash.Hash,
