@@ -2345,6 +2345,105 @@ test "Chain - head snapshot helpers tolerate concurrent head movement" {
     }
 }
 
+test "Chain - head_hash_of_with_policy clamps zero attempts to one" {
+    const allocator = std.testing.allocator;
+    const genesis = try Block.genesis(1, allocator);
+
+    const MockHashOnlyChain = struct {
+        head_number: ?u64 = 0,
+        canonical_hash: Hash.Hash,
+
+        pub fn getHeadBlockNumber(self: *@This()) ?u64 {
+            return self.head_number;
+        }
+
+        pub fn getCanonicalHash(self: *@This(), number: u64) ?Hash.Hash {
+            if (number != 0) return null;
+            return self.canonical_hash;
+        }
+    };
+
+    var mock = MockHashOnlyChain{ .canonical_hash = genesis.hash };
+    const hh = try head_hash_of_with_policy(&mock, 0);
+    try std.testing.expect(hh != null);
+    try std.testing.expectEqualSlices(u8, &genesis.hash, &hh.?);
+}
+
+test "Chain - head_hash_of_with_policy applies retry semantics under head movement" {
+    const allocator = std.testing.allocator;
+    const genesis = try Block.genesis(1, allocator);
+
+    var h1 = primitives.BlockHeader.init();
+    h1.number = 1;
+    h1.parent_hash = genesis.hash;
+    h1.timestamp = 1;
+    const b1 = try Block.from(&h1, &primitives.BlockBody.init(), allocator);
+
+    const RacingHashChain = struct {
+        head_number: std.atomic.Value(u64) = std.atomic.Value(u64).init(1),
+        slow_first_lookup: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+        first_hash: Hash.Hash,
+        second_hash: Hash.Hash,
+
+        pub fn getHeadBlockNumber(self: *@This()) ?u64 {
+            return self.head_number.load(.acquire);
+        }
+
+        pub fn getCanonicalHash(self: *@This(), number: u64) ?Hash.Hash {
+            if (number == 1 and self.slow_first_lookup.swap(false, .acq_rel)) {
+                // Let the mover advance head between before/after reads.
+                std.Thread.sleep(2 * std.time.ns_per_ms);
+            }
+            return switch (number) {
+                1 => self.first_hash,
+                2 => self.second_hash,
+                else => null,
+            };
+        }
+
+        pub fn moveHeadAfterDelay(self: *@This(), next_head: u64, delay_ns: u64) void {
+            std.Thread.sleep(delay_ns);
+            self.head_number.store(next_head, .release);
+        }
+    };
+
+    // Single attempt returns the initial snapshot hash.
+    {
+        var mock_one = RacingHashChain{
+            .first_hash = genesis.hash,
+            .second_hash = b1.hash,
+        };
+        const mover = try std.Thread.spawn(.{}, RacingHashChain.moveHeadAfterDelay, .{
+            &mock_one,
+            @as(u64, 2),
+            1 * std.time.ns_per_ms,
+        });
+        defer mover.join();
+
+        const one = try head_hash_of_with_policy(&mock_one, 1);
+        try std.testing.expect(one != null);
+        try std.testing.expectEqualSlices(u8, &genesis.hash, &one.?);
+    }
+
+    // Two attempts should converge to the moved head hash.
+    {
+        var mock_two = RacingHashChain{
+            .first_hash = genesis.hash,
+            .second_hash = b1.hash,
+        };
+        const mover = try std.Thread.spawn(.{}, RacingHashChain.moveHeadAfterDelay, .{
+            &mock_two,
+            @as(u64, 2),
+            1 * std.time.ns_per_ms,
+        });
+        defer mover.join();
+
+        const two = try head_hash_of_with_policy(&mock_two, 2);
+        try std.testing.expect(two != null);
+        try std.testing.expectEqualSlices(u8, &b1.hash, &two.?);
+    }
+}
+
 test "Chain - head_hash_of uses canonical hash path when available" {
     const allocator = std.testing.allocator;
     const genesis = try Block.genesis(1, allocator);
