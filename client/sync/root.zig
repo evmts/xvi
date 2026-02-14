@@ -34,6 +34,8 @@ pub const HeadersRequest = headers.HeadersRequest;
 pub const HeadersOrigin = headers.HeadersOrigin;
 /// GetAccountRange request helper.
 pub const AccountRangeRequest = snap.AccountRangeRequest;
+/// GetStorageRanges request helper.
+pub const StorageRangeRequest = snap.StorageRangeRequest;
 
 /// Sync status helpers (Nethermind-aligned semantics -> Voltaire SyncStatus).
 pub const is_synced_by_distance = status.is_synced_by_distance;
