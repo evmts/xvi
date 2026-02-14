@@ -7,7 +7,11 @@ const jsonrpc = @import("jsonrpc");
 const errors = @import("error.zig");
 const envelope = @import("envelope.zig");
 const dispatch = @import("dispatch.zig");
+const EthApi = @import("eth.zig").EthApi;
+const NetApi = @import("net.zig").NetApi;
+const Response = @import("response.zig").Response;
 const scan = @import("scan.zig");
+const Web3Api = @import("web3.zig").Web3Api;
 
 const default_enabled = false;
 const default_host: []const u8 = "127.0.0.1";
@@ -60,6 +64,105 @@ pub fn validate_request_jsonrpc_version(request: []const u8) ?errors.JsonRpcErro
     return switch (scan.scan_and_validate_request_fields(request)) {
         .fields => null,
         .err => |code| code,
+    };
+}
+
+/// Single-request JSON-RPC executor using comptime-injected namespace backends.
+///
+/// Supports the current atomic method set:
+/// - `eth_chainId`
+/// - `net_version`
+/// - `web3_clientVersion`
+/// - `web3_sha3`
+pub fn SingleRequestProcessor(comptime EthProvider: type, comptime NetProvider: type, comptime Web3Provider: type) type {
+    return struct {
+        const Self = @This();
+
+        eth_api: EthApi(EthProvider),
+        net_api: NetApi(NetProvider),
+        web3_api: Web3Api(Web3Provider),
+
+        /// Construct a processor from concrete namespace providers.
+        pub fn init(
+            eth_provider: *const EthProvider,
+            net_provider: *const NetProvider,
+            web3_provider: *const Web3Provider,
+        ) Self {
+            return .{
+                .eth_api = .{ .provider = eth_provider },
+                .net_api = .{ .provider = net_provider },
+                .web3_api = .{ .provider = web3_provider },
+            };
+        }
+
+        /// Execute one JSON-RPC request object and write the response, if any.
+        pub fn handle(self: *const Self, writer: anytype, request: []const u8) !void {
+            const fields = switch (scan.scan_and_validate_request_fields(request)) {
+                .fields => |value| value,
+                .err => |code| {
+                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
+                    return;
+                },
+            };
+
+            const request_id = switch (envelope.extract_request_id_from_fields(request, fields)) {
+                .id => |rid| rid,
+                .err => |code| {
+                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
+                    return;
+                },
+            };
+
+            const method_name = switch (extract_method_name(request, fields)) {
+                .name => |value| value,
+                .err => |code| {
+                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
+                    return;
+                },
+            };
+
+            if (std.mem.eql(u8, method_name, "eth_chainId")) {
+                try self.eth_api.handle_chain_id(writer, request_id);
+                return;
+            }
+
+            if (std.mem.eql(u8, method_name, "net_version")) {
+                try self.net_api.handle_version(writer, request_id);
+                return;
+            }
+
+            if (std.mem.eql(u8, method_name, "web3_clientVersion")) {
+                try self.web3_api.handle_client_version(writer, request_id);
+                return;
+            }
+
+            if (std.mem.eql(u8, method_name, "web3_sha3")) {
+                try self.web3_api.handle_sha3_from_request(writer, request);
+                return;
+            }
+
+            switch (request_id) {
+                .missing => return,
+                .present => |id| {
+                    const code = errors.code.method_not_found;
+                    try Response.write_error(writer, id, code, errors.default_message(code), null);
+                },
+            }
+        }
+
+        const ExtractMethodNameResult = union(enum) {
+            name: []const u8,
+            err: errors.JsonRpcErrorCode,
+        };
+
+        fn extract_method_name(request: []const u8, fields: scan.RequestFieldSpans) ExtractMethodNameResult {
+            const method_span = fields.method orelse return .{ .err = errors.code.invalid_request };
+            const method_token = request[method_span.start..method_span.end];
+            if (method_token.len < 2 or method_token[0] != '"' or method_token[method_token.len - 1] != '"') {
+                return .{ .err = errors.code.invalid_request };
+            }
+            return .{ .name = method_token[1 .. method_token.len - 1] };
+        }
     };
 }
 
@@ -413,4 +516,139 @@ test "parse_single_request_for_dispatch rejects unknown method" {
         .request => |_| return error.UnexpectedSuccess,
         .err => |code| try std.testing.expectEqual(errors.code.method_not_found, code),
     }
+}
+
+test "SingleRequestProcessor.init + handle routes eth_chainId" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Processor = SingleRequestProcessor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const processor = Processor.init(&eth_provider, &net_provider, &web3_provider);
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"eth_chainId\", \"params\": [] }";
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try processor.handle(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1\"}",
+        buf.items,
+    );
+}
+
+test "SingleRequestProcessor.handle routes web3_sha3" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Processor = SingleRequestProcessor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const processor = Processor.init(&eth_provider, &net_provider, &web3_provider);
+
+    const req =
+        "{\n" ++
+        "  \"jsonrpc\": \"2.0\",\n" ++
+        "  \"id\": 11,\n" ++
+        "  \"method\": \"web3_sha3\",\n" ++
+        "  \"params\": [\"0x68656c6c6f20776f726c64\"]\n" ++
+        "}";
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try processor.handle(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":11,\"result\":\"0x47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad\"}",
+        buf.items,
+    );
+}
+
+test "SingleRequestProcessor.handle returns method_not_found for unknown method with id" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Processor = SingleRequestProcessor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const processor = Processor.init(&eth_provider, &net_provider, &web3_provider);
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"id\": \"abc\", \"method\": \"foo_bar\", \"params\": [] }";
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try processor.handle(buf.writer(), req);
+    try std.testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"abc\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}",
+        buf.items,
+    );
+}
+
+test "SingleRequestProcessor.handle emits no response for unknown notification" {
+    const ProviderEth = struct {
+        pub fn getChainId(_: *const @This()) u64 {
+            return 1;
+        }
+    };
+    const ProviderNet = struct {
+        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
+            return @import("primitives").NetworkId.MAINNET;
+        }
+    };
+    const ProviderWeb3 = struct {
+        pub fn getClientVersion(_: *const @This()) []const u8 {
+            return "xvi/v0.1.0/test";
+        }
+    };
+
+    const Processor = SingleRequestProcessor(ProviderEth, ProviderNet, ProviderWeb3);
+    const eth_provider = ProviderEth{};
+    const net_provider = ProviderNet{};
+    const web3_provider = ProviderWeb3{};
+    const processor = Processor.init(&eth_provider, &net_provider, &web3_provider);
+
+    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"foo_bar\", \"params\": [] }";
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    try processor.handle(buf.writer(), req);
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }

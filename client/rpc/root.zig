@@ -12,6 +12,8 @@ const web3 = @import("web3.zig");
 pub const RpcServerConfig = server.RpcServerConfig;
 /// Top-level JSON-RPC version validator.
 pub const validate_request_jsonrpc_version = server.validate_request_jsonrpc_version;
+/// Single-request JSON-RPC executor (comptime DI).
+pub const SingleRequestProcessor = server.SingleRequestProcessor;
 /// JSON-RPC error codes per EIP-1474 and Nethermind extensions.
 pub const JsonRpcErrorCode = errors.JsonRpcErrorCode;
 /// JSON-RPC response serializers
