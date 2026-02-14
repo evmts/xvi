@@ -242,6 +242,7 @@ const supported_capability_method_names_static = [_][]const u8{
     "engine_getPayloadBodiesByRangeV1",
     "engine_getBlobsV1",
     "engine_getBlobsV2",
+    "engine_getBlobsV3",
 };
 
 /// Returns the Engine API method names this EL surface currently supports.
@@ -339,7 +340,8 @@ pub const EngineCapabilitiesProvider = struct {
         }
 
         if (std.mem.eql(u8, method, "engine_getPayloadV5") or
-            std.mem.eql(u8, method, "engine_getBlobsV2"))
+            std.mem.eql(u8, method, "engine_getBlobsV2") or
+            std.mem.eql(u8, method, "engine_getBlobsV3"))
         {
             return self.spec_state.eip7594_enabled;
         }
@@ -1996,6 +1998,7 @@ test "engine capabilities provider filters methods by fork/spec features" {
     const amsterdam_methods = try amsterdam_provider.enabled_capability_method_names(out[0..]);
     try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV5"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_getBlobsV2"));
+    try std.testing.expect(has_method(amsterdam_methods, "engine_getBlobsV3"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_newPayloadV5"));
     try std.testing.expect(has_method(amsterdam_methods, "engine_getPayloadV6"));
 }
