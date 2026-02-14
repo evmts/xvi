@@ -25,19 +25,26 @@ XVI is an experiment to see how far you can get **vibecoding an entire Ethereum 
 
 The human role is purely architectural: defining what modules to build, what specs to follow, and what tests to pass. The AI does all the implementation. Even this README was vibecoded.
 
-### Current status
+### Current status ([full progress report](./PROGRESS.md))
 
-- **~19k lines** of Effect-TS source across 87 modules (blockchain, state, trie, EVM host, RPC, sync, txpool, engine, db, networking)
-- **~14k lines** of tests (528 tests, 507 passing)
-- **EVM engine** provided by Guillotine (Zig, also vibecoded) — full hardfork support Frontier → Prague, 20+ EIPs, 100% ethereum/tests passing
-- **Primitives** provided by [Voltaire](https://github.com/evmts/voltaire) — Address, Block, Transaction, RLP, Crypto, Precompiles
+Two parallel client implementations, both mirroring [Nethermind](https://github.com/NethermindEth/nethermind)'s architecture across 11 subsystems. Testing and polish phases have not started for either client.
+
+| Client | Source | Status | Strongest Areas |
+|--------|--------|--------|-----------------|
+| **Zig** (`client/`) | ~27k lines, 76 files | ~70% feature-complete | CLI, DB, state, blockchain |
+| **Effect-TS** (`client-ts/`) | ~16k lines, 74 modules + 14k lines tests | ~65% feature-complete | Trie, state, blockchain, txpool |
+
+- **EVM engine** — [Guillotine](https://github.com/evmts/guillotine) (Zig, also vibecoded) — 100% ethereum/tests passing, Frontier → Prague
+- **Primitives** — [Voltaire](https://github.com/evmts/voltaire) — Address, Block, Transaction, RLP, Crypto, Precompiles
+- **Key gaps** — Consensus engine, persistent storage (RocksDB), full networking, Engine API
 
 ## Architecture
 
 | Component | Language | Description |
 |-----------|----------|-------------|
 | [Guillotine](https://github.com/evmts/guillotine) | Zig | EVM execution engine |
-| [client-ts](./client-ts) | Effect-TS | Execution client modules |
+| [client](./client) | Zig | Execution client (Zig implementation) |
+| [client-ts](./client-ts) | Effect-TS | Execution client (TypeScript implementation) |
 | [smithers](./smithers) | TSX/React | AI workflow orchestrator that generates the code |
 | [Voltaire](https://github.com/evmts/voltaire) | Zig + TS | Ethereum primitives (fetched from npm/GitHub releases) |
 
