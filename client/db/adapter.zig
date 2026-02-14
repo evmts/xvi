@@ -487,6 +487,129 @@ pub const Database = struct {
     pub fn start_write_batch(self: Database, allocator: std.mem.Allocator) WriteBatch {
         return WriteBatch.init(allocator, self);
     }
+
+    /// Construct a `Database` from a concrete backend pointer and typed function pointers.
+    ///
+    /// Generates type-safe vtable wrapper functions at comptime, eliminating
+    /// the need for manual `@ptrCast`/`@alignCast` boilerplate in every backend.
+    /// Follows the same pattern as `DbIterator.init` and `DbSnapshot.init`.
+    ///
+    /// ## Usage
+    ///
+    /// ```zig
+    /// pub fn database(self: *MyBackend) Database {
+    ///     return Database.init(MyBackend, self, .{
+    ///         .name = name_impl,
+    ///         .get = get_impl,
+    ///         .put = put_impl,
+    ///         .delete = delete_impl,
+    ///         .contains = contains_impl,
+    ///         .iterator = iterator_impl,
+    ///         .snapshot = snapshot_impl,
+    ///         .flush = flush_impl,
+    ///         .clear = clear_impl,
+    ///         .compact = compact_impl,
+    ///         .gather_metric = gather_metric_impl,
+    ///     });
+    /// }
+    /// ```
+    pub fn init(comptime T: type, ptr: *T, comptime fns: struct {
+        name: *const fn (self: *T) DbName,
+        get: *const fn (self: *T, key: []const u8, flags: ReadFlags) Error!?DbValue,
+        put: *const fn (self: *T, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void,
+        delete: *const fn (self: *T, key: []const u8, flags: WriteFlags) Error!void,
+        contains: *const fn (self: *T, key: []const u8) Error!bool,
+        iterator: *const fn (self: *T, ordered: bool) Error!DbIterator,
+        snapshot: *const fn (self: *T) Error!DbSnapshot,
+        flush: *const fn (self: *T, only_wal: bool) Error!void,
+        clear: *const fn (self: *T) Error!void,
+        compact: *const fn (self: *T) Error!void,
+        gather_metric: *const fn (self: *T) Error!DbMetric,
+        write_batch: ?*const fn (self: *T, ops: []const WriteBatchOp) Error!void = null,
+    }) Database {
+        const Wrapper = struct {
+            fn name_impl(raw: *anyopaque) DbName {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.name(typed);
+            }
+
+            fn get_impl(raw: *anyopaque, key: []const u8, flags: ReadFlags) Error!?DbValue {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.get(typed, key, flags);
+            }
+
+            fn put_impl(raw: *anyopaque, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.put(typed, key, value, flags);
+            }
+
+            fn delete_impl(raw: *anyopaque, key: []const u8, flags: WriteFlags) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.delete(typed, key, flags);
+            }
+
+            fn contains_impl(raw: *anyopaque, key: []const u8) Error!bool {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.contains(typed, key);
+            }
+
+            fn iterator_impl(raw: *anyopaque, ordered: bool) Error!DbIterator {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.iterator(typed, ordered);
+            }
+
+            fn snapshot_impl(raw: *anyopaque) Error!DbSnapshot {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.snapshot(typed);
+            }
+
+            fn flush_impl(raw: *anyopaque, only_wal: bool) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.flush(typed, only_wal);
+            }
+
+            fn clear_impl(raw: *anyopaque) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.clear(typed);
+            }
+
+            fn compact_impl(raw: *anyopaque) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.compact(typed);
+            }
+
+            fn gather_metric_impl(raw: *anyopaque) Error!DbMetric {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return fns.gather_metric(typed);
+            }
+
+            fn write_batch_impl(raw: *anyopaque, ops: []const WriteBatchOp) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const wb_fn = fns.write_batch orelse unreachable;
+                return wb_fn(typed, ops);
+            }
+
+            const vtable = VTable{
+                .name = name_impl,
+                .get = get_impl,
+                .put = put_impl,
+                .delete = delete_impl,
+                .contains = contains_impl,
+                .iterator = iterator_impl,
+                .snapshot = snapshot_impl,
+                .flush = flush_impl,
+                .clear = clear_impl,
+                .compact = compact_impl,
+                .gather_metric = gather_metric_impl,
+                .write_batch = if (fns.write_batch == null) null else write_batch_impl,
+            };
+        };
+
+        return .{
+            .ptr = @ptrCast(ptr),
+            .vtable = &Wrapper.vtable,
+        };
+    }
 };
 
 /// A single write operation for use with `Database.VTable.write_batch`.
