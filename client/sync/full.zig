@@ -158,6 +158,12 @@ pub const BlocksRequest = struct {
         return headers_to_hashes(self.body_headers, allocator);
     }
 
+    /// Compute block hashes for the receipt request headers.
+    /// Caller owns the returned slice.
+    pub fn receipt_hashes(self: *const BlocksRequest, allocator: std.mem.Allocator) ![]const Hash.Hash {
+        return headers_to_hashes(self.receipt_headers, allocator);
+    }
+
     /// Return the allocator backing the owned response arena, if present.
     pub fn response_allocator(self: *BlocksRequest) ?std.mem.Allocator {
         if (self.response_arena) |arena| {
@@ -273,6 +279,46 @@ test "BlocksRequest.body_hashes returns owned empty slice" {
     const req = BlocksRequest.empty();
     const allocator = std.testing.allocator;
     const hashes = try req.body_hashes(allocator);
+    try std.testing.expectEqual(@as(usize, 0), hashes.len);
+    allocator.free(hashes);
+}
+
+test "BlocksRequest.receipt_hashes returns ordered hashes" {
+    var header1 = BlockHeader.init();
+    header1.number = 31;
+    var header2 = BlockHeader.init();
+    header2.number = 32;
+    const receipt_headers = &[_]BlockHeader.BlockHeader{ header1, header2 };
+    const body_headers = &[_]BlockHeader.BlockHeader{BlockHeader.init()};
+
+    const req = BlocksRequest{
+        .body_headers = body_headers,
+        .receipt_headers = receipt_headers,
+        .bodies = null,
+        .receipts = null,
+    };
+
+    const allocator = std.testing.allocator;
+    const hashes = try req.receipt_hashes(allocator);
+    defer allocator.free(hashes);
+
+    const expected1 = try BlockHeader.hash(&receipt_headers[0], allocator);
+    const expected2 = try BlockHeader.hash(&receipt_headers[1], allocator);
+
+    try std.testing.expectEqual(@as(usize, receipt_headers.len), hashes.len);
+    try std.testing.expect(Hash.equals(&hashes[0], &expected1));
+    try std.testing.expect(Hash.equals(&hashes[1], &expected2));
+}
+
+test "BlocksRequest.receipt_hashes returns owned empty slice" {
+    const req = BlocksRequest{
+        .body_headers = &[_]BlockHeader.BlockHeader{BlockHeader.init()},
+        .receipt_headers = &[_]BlockHeader.BlockHeader{},
+        .bodies = null,
+        .receipts = null,
+    };
+    const allocator = std.testing.allocator;
+    const hashes = try req.receipt_hashes(allocator);
     try std.testing.expectEqual(@as(usize, 0), hashes.len);
     allocator.free(hashes);
 }
