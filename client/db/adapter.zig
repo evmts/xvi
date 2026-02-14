@@ -1341,3 +1341,180 @@ test "WriteBatch: delete propagates OutOfMemory not StorageError" {
 
     try std.testing.expectError(error.OutOfMemory, batch.delete("key"));
 }
+
+// -- Database.init comptime helper tests ------------------------------------
+
+test "Database.init generates correct vtable dispatch" {
+    // Verify that Database.init correctly recovers the typed pointer and
+    // dispatches through the comptime-generated wrapper functions.
+    const TestBackend = struct {
+        value: u64 = 0,
+
+        fn name_impl(_: *@This()) DbName {
+            return .state;
+        }
+        fn get_impl(self: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            self.value += 1;
+            return null;
+        }
+        fn put_impl(self: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
+            self.value += 10;
+        }
+        fn delete_impl(self: *@This(), _: []const u8, _: WriteFlags) Error!void {
+            self.value += 100;
+        }
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+    };
+
+    var backend = TestBackend{};
+    const db = Database.init(TestBackend, &backend, .{
+        .name = TestBackend.name_impl,
+        .get = TestBackend.get_impl,
+        .put = TestBackend.put_impl,
+        .delete = TestBackend.delete_impl,
+        .contains = TestBackend.contains_impl,
+        .iterator = TestBackend.iterator_impl,
+        .snapshot = TestBackend.snapshot_impl,
+        .flush = TestBackend.flush_impl,
+        .clear = TestBackend.clear_impl,
+        .compact = TestBackend.compact_impl,
+        .gather_metric = TestBackend.gather_metric_impl,
+    });
+
+    // Dispatch through vtable and verify typed self is recovered
+    try std.testing.expectEqual(DbName.state, db.name());
+
+    _ = try db.get("key");
+    try std.testing.expectEqual(@as(u64, 1), backend.value);
+
+    try db.put("key", "val");
+    try std.testing.expectEqual(@as(u64, 11), backend.value);
+
+    try db.delete("key");
+    try std.testing.expectEqual(@as(u64, 111), backend.value);
+
+    try std.testing.expectEqual(false, try db.contains("key"));
+    try std.testing.expect(!db.supports_write_batch());
+}
+
+test "Database.init with write_batch" {
+    const TestBatchBackend = struct {
+        batch_count: usize = 0,
+
+        fn name_impl(_: *@This()) DbName {
+            return .code;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+        fn write_batch_impl(self: *@This(), ops: []const WriteBatchOp) Error!void {
+            self.batch_count += ops.len;
+        }
+    };
+
+    var backend = TestBatchBackend{};
+    const db = Database.init(TestBatchBackend, &backend, .{
+        .name = TestBatchBackend.name_impl,
+        .get = TestBatchBackend.get_impl,
+        .put = TestBatchBackend.put_impl,
+        .delete = TestBatchBackend.delete_impl,
+        .contains = TestBatchBackend.contains_impl,
+        .iterator = TestBatchBackend.iterator_impl,
+        .snapshot = TestBatchBackend.snapshot_impl,
+        .flush = TestBatchBackend.flush_impl,
+        .clear = TestBatchBackend.clear_impl,
+        .compact = TestBatchBackend.compact_impl,
+        .gather_metric = TestBatchBackend.gather_metric_impl,
+        .write_batch = TestBatchBackend.write_batch_impl,
+    });
+
+    try std.testing.expect(db.supports_write_batch());
+
+    // Dispatch through vtable
+    var batch = db.start_write_batch(std.testing.allocator);
+    defer batch.deinit();
+
+    try batch.put("k1", "v1");
+    try batch.put("k2", "v2");
+    try batch.commit();
+
+    try std.testing.expectEqual(@as(usize, 2), backend.batch_count);
+}
+
+test "Database.init without write_batch defaults to null" {
+    const MinimalBackend = struct {
+        fn name_impl(_: *@This()) DbName {
+            return .metadata;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+    };
+
+    var backend = MinimalBackend{};
+    const db = Database.init(MinimalBackend, &backend, .{
+        .name = MinimalBackend.name_impl,
+        .get = MinimalBackend.get_impl,
+        .put = MinimalBackend.put_impl,
+        .delete = MinimalBackend.delete_impl,
+        .contains = MinimalBackend.contains_impl,
+        .iterator = MinimalBackend.iterator_impl,
+        .snapshot = MinimalBackend.snapshot_impl,
+        .flush = MinimalBackend.flush_impl,
+        .clear = MinimalBackend.clear_impl,
+        .compact = MinimalBackend.compact_impl,
+        .gather_metric = MinimalBackend.gather_metric_impl,
+        // write_batch deliberately omitted — should default to null
+    });
+
+    try std.testing.expect(!db.supports_write_batch());
+    try std.testing.expectEqual(DbName.metadata, db.name());
+}
