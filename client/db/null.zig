@@ -108,7 +108,7 @@ pub const NullDb = struct {
     fn iterator_impl(_: *anyopaque, _: bool) Error!adapter.DbIterator {
         return adapter.DbIterator.init(
             EmptyIterator,
-            @constCast(&empty_iterator),
+            &empty_iterator,
             EmptyIterator.next,
             EmptyIterator.deinit,
         );
@@ -126,7 +126,7 @@ pub const NullDb = struct {
         fn snapshot_iterator(_: *NullSnapshot, _: bool) Error!adapter.DbIterator {
             return adapter.DbIterator.init(
                 EmptyIterator,
-                @constCast(&empty_iterator),
+                &empty_iterator,
                 EmptyIterator.next,
                 EmptyIterator.deinit,
             );
@@ -138,7 +138,7 @@ pub const NullDb = struct {
     fn snapshot_impl(_: *anyopaque) Error!DbSnapshot {
         return DbSnapshot.init(
             NullSnapshot,
-            @constCast(&null_snapshot),
+            &null_snapshot,
             NullSnapshot.snapshot_get,
             NullSnapshot.snapshot_contains,
             NullSnapshot.snapshot_iterator,
@@ -157,8 +157,8 @@ pub const NullDb = struct {
     }
 };
 
-const empty_iterator = NullDb.EmptyIterator{};
-const null_snapshot = NullDb.NullSnapshot{};
+var empty_iterator = NullDb.EmptyIterator{};
+var null_snapshot = NullDb.NullSnapshot{};
 
 // ---------------------------------------------------------------------------
 // Tests
