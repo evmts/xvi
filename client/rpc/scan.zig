@@ -326,6 +326,23 @@ pub fn parse_top_level_request_kind(input: []const u8) ScanRequestError!TopLevel
     return kind;
 }
 
+/// Validate that input is exactly one well-formed top-level JSON value.
+///
+/// This is used by dispatch to distinguish:
+/// - malformed primitive roots -> `parse_error`
+/// - well-formed primitive roots (string/number/bool/null) -> `invalid_request`
+pub fn validate_top_level_json_value(input: []const u8) ScanRequestError!void {
+    var i: usize = 0;
+    if (input.len >= 3 and input[0] == 0xEF and input[1] == 0xBB and input[2] == 0xBF) i = 3;
+    skip_whitespace(input, &i);
+    if (i >= input.len) return error.ParseError;
+
+    try parse_json_value(input, &i, 1);
+
+    skip_whitespace(input, &i);
+    if (i != input.len) return error.ParseError;
+}
+
 /// Parse a request object once and capture top-level `jsonrpc` and `method`
 /// value spans while validating full JSON structure.
 pub fn scan_request_fields(input: []const u8) ScanRequestError!RequestFieldSpans {
@@ -541,4 +558,16 @@ test "parse_top_level_request_kind enforces nesting depth limit" {
     input[depth] = '0';
     for (0..depth) |idx| input[depth + 1 + idx] = ']';
     try std.testing.expectError(error.ParseError, parse_top_level_request_kind(input[0 .. (2 * depth) + 1]));
+}
+
+test "validate_top_level_json_value accepts primitive roots" {
+    try validate_top_level_json_value("\"hello\"");
+    try validate_top_level_json_value("123");
+    try validate_top_level_json_value("true");
+    try validate_top_level_json_value("null");
+}
+
+test "validate_top_level_json_value rejects malformed primitives" {
+    try std.testing.expectError(error.ParseError, validate_top_level_json_value("\"hello"));
+    try std.testing.expectError(error.ParseError, validate_top_level_json_value("tru"));
 }

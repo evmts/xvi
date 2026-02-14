@@ -421,7 +421,12 @@ fn parse_request_kind_for_dispatch(config: RpcServerConfig, request: []const u8,
                 },
             }
         },
-        else => .{ .err = errors.code.invalid_request },
+        else => blk: {
+            scan.validate_top_level_json_value(request) catch |err| {
+                break :blk .{ .err = scan.scan_error_to_jsonrpc_error(err) };
+            };
+            break :blk .{ .err = errors.code.invalid_request };
+        },
     };
 }
 
@@ -655,6 +660,15 @@ test "parse_request_kind_for_dispatch rejects non-object non-array request roots
     switch (res) {
         .request => |_| return error.UnexpectedSuccess,
         .err => |code| try std.testing.expectEqual(errors.code.invalid_request, code),
+    }
+}
+
+test "parse_request_kind_for_dispatch returns parse_error for malformed primitive roots" {
+    const cfg = RpcServerConfig{};
+    const res = parse_request_kind_for_dispatch(cfg, "\"hello", false);
+    switch (res) {
+        .request => |_| return error.UnexpectedSuccess,
+        .err => |code| try std.testing.expectEqual(errors.code.parse_error, code),
     }
 }
 
