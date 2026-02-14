@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-14
-**Timestamp:** 23:45 UTC
+**Timestamp:** 19:34 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,7 +9,7 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-The most recent development cycle focused on hardening Phases 4-9 of the Zig client with bug fixes, spec compliance improvements, and new features:
+The most recent development cycle focused on hardening Phases 4-9 of the Zig client and overhauling the CI/CD workflow:
 
 - **Phase 4 — Blockchain:** Gas limit delta bounds fixed to exclusive per spec; strict canonicality helper; fork boundary detection; common ancestor split into nullable/strict APIs; BLOCKHASH spec-total helper; dead code removed; 117+ tests
 - **Phase 5 — TxPool:** Blob-specific pending lookup API; hash-cache duplicate filter; EIP-7702 benchmark fixes; fee sort comparator fix; vtable test deduplication; effective fee market helper
@@ -17,7 +17,7 @@ The most recent development cycle focused on hardening Phases 4-9 of the Zig cli
 - **Phase 7 — Engine API:** Fork-aware capabilities provider (Paris through Osaka); newPayload hash param validation; BlobsBundle cardinality constraints; Prague executionRequests ordering; getPayloadBodies null placeholder support; v3+ method test coverage (4,482 LOC in api.zig)
 - **Phase 8 — Networking:** EIP-8 auth/ack RLP body decoders; handshake size-prefix decoder; fixed handshake buffer; negative error path tests; benchmark extraction; test naming normalization (1,399 LOC across 8 files)
 - **Phase 9 — Sync:** Snap StorageRangeRequest container; BlocksRequest receipt_hashes helper; storage range validation (empty list, zero limit); u64 response_bytes; startup feed sequence helper (1,814 LOC across 7 files)
-- **Workflow:** Switched from Codex CLI to Claude CLI agents
+- **Workflow:** Switched from Codex CLI to Claude CLI agents; rewrote pipeline as component-based ticket system with Smithers orchestrator (CodebaseReview, Discover, TicketPipeline, UpdateProgress components)
 
 ---
 
@@ -33,17 +33,17 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
-| 0 | DB Abstraction | 90% | Vtable interface, in-memory backend (788 LOC), null backend, read-only overlay, column families, provider registry, adapter layer (11 files) | RocksDB FFI (stubbed at 324 LOC) |
-| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks (6 files) | High-level trie helpers partial |
-| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops (7 files) | Integration with full execution loop |
-| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 40+ tests (5 files) | Full state execution wiring, balance/nonce checks, receipt generation |
-| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), 117+ tests (5 files, 4,355 LOC total) | Block insertion/reorg logic, state root computation |
+| 0 | DB Abstraction | 90% | Vtable interface, in-memory backend (788 LOC), null backend, read-only overlay, column families, provider registry, adapter layer (11 files, 4,696 LOC) | RocksDB FFI (stubbed at 324 LOC) |
+| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks (6 files, 1,618 LOC) | High-level trie helpers partial |
+| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops (7 files, 2,217 LOC) | Integration with full execution loop |
+| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 40+ tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
+| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), 117+ tests (5 files, 4,357 LOC) | Block insertion/reorg logic, state root computation |
 | 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
 | 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 100+ tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
-| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 77 tests (3 files, 4,482 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
+| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 77 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
 | 8 | Networking | 55% | RLPx frame encode/decode, EIP-8 auth/ack handshake decoders, size-prefix decoder, secret derivation (ECDH+KDF), MAC state init, Snappy guards, benchmarks, 18+ tests (8 files, 1,399 LOC) | Handshake state machine execution, peer discovery (discv4/v5), eth/68 protocol, peer management, network I/O |
 | 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
-| 10 | Runner/CLI | 90% | CLI argument parsing (chain-id, network-id, hardfork, trace), genesis JSON loading (mainnet/sepolia/zhejiang), config defaults (2 files) | Main block processing loop, service wiring |
+| 10 | Runner/CLI | 90% | CLI argument parsing (chain-id, network-id, hardfork, trace), genesis JSON loading (mainnet/sepolia/zhejiang), config defaults (4 files, 651 LOC) | Main block processing loop, service wiring |
 
 **Shared EVM engine:** [Guillotine](https://github.com/evmts/guillotine) — full hardfork support Frontier through Prague, 20+ EIPs, 100% ethereum/tests passing.
 
@@ -53,21 +53,21 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ## Effect-TS Client (`client-ts/`)
 
-**Stats:** ~16.5k lines of source across 76 modules, ~14.4k lines of tests (65 test files), 11 benchmarks
+**Stats:** ~32,900 lines of source across 152 files (11 subsystems), 11 benchmarks
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
-| 0 | DB Abstraction | 85% | Full Effect.js service (get/put/delete/batch/iterator/snapshot), factory pattern, column families, null/read-only variants, 15+ test files | RocksDB backend (stubbed) |
-| 1 | Merkle Patricia Trie | 95% | Secured/unsecured variants, nibble expansion, node compression, RLP codec, `patricialize()`, NodeLoader, NodeStorage, extensive tests + benchmarks | — |
-| 2 | World State | 90% | Journaling with snapshot/restore, account model, transaction boundary (rollback/commit), transient storage (EIP-1153), WorldStateReader | — |
-| 3 | EVM Integration | 70% | TransactionProcessor (pre/post execution), host adapter, intrinsic gas calculator, access list builder, refund calculator, release spec tracking, TransactionEnvironmentBuilder | EvmExecutor is placeholder (bridges to Zig EVM, not wired) |
-| 4 | Blockchain | 90% | Block tree (canonical + orphans), fork-choice state machine, genesis validation, header validation, BLOCKHASH cache/store, gas accounting, read-only overlay, 7 test files | — |
-| 5 | TxPool | 85% | Mempool service (add/remove/get/iterate), admission validator (gas/balance/nonce/blob), fee-based sorting (EIP-1559 + blob pricing), 3 test files | Persistence integration, eviction policies |
-| 6 | JSON-RPC | 75% | Method dispatcher, request/response parsing, batch support, EIP-1474 + Nethermind error codes, server config, 5 test files | Actual eth_*/engine_* method handlers, HTTP server |
-| 7 | Engine API | 30% | Capability exchange (`engine_exchangeCapabilities`), client version, Paris method constants | Payload handling, fork-choice updates |
-| 8 | Networking | 20% | RLPx capability negotiation, Snappy compression validation | Full p2p peer management, discovery, eth protocol |
-| 9 | Sync | 50% | Full sync request planner (batch splitting for headers/bodies/receipts), per-peer rate limiting | P2P message transport, actual sync execution |
-| 10 | Runner/CLI | 20% | Basic CLI argument parsing (--help, --version, start), RunnerMain/RunnerConfig | Full config system, process lifecycle, service wiring |
+| 0 | DB Abstraction | 85% | Full Effect.js service (get/put/delete/batch/iterator/snapshot), factory pattern, column families, null/read-only variants (26 files, 4,646 LOC) | RocksDB backend (stubbed) |
+| 1 | Merkle Patricia Trie | 95% | Secured/unsecured variants, nibble expansion, node compression, RLP codec, `patricialize()`, NodeLoader, NodeStorage, extensive tests + benchmarks (28 files, 5,350 LOC) | — |
+| 2 | World State | 90% | Journaling with snapshot/restore, account model, transaction boundary (rollback/commit), transient storage (EIP-1153), WorldStateReader (19 files, 4,002 LOC) | — |
+| 3 | EVM Integration | 70% | TransactionProcessor (pre/post execution), host adapter, intrinsic gas calculator, access list builder, refund calculator, release spec tracking, TransactionEnvironmentBuilder (19 files, 5,324 LOC) | EvmExecutor is placeholder (bridges to Zig EVM, not wired) |
+| 4 | Blockchain | 90% | Block tree (canonical + orphans), fork-choice state machine, genesis validation, header validation, BLOCKHASH cache/store, gas accounting, read-only overlay (23 files, 5,275 LOC) | — |
+| 5 | TxPool | 85% | Mempool service (add/remove/get/iterate), admission validator (gas/balance/nonce/blob), fee-based sorting (EIP-1559 + blob pricing) (6 files, 2,907 LOC) | Persistence integration, eviction policies |
+| 6 | JSON-RPC | 75% | Method dispatcher, request/response parsing, batch support, EIP-1474 + Nethermind error codes, server config (12 files, 1,933 LOC) | Actual eth_*/engine_* method handlers, HTTP server |
+| 7 | Engine API | 30% | Capability exchange (`engine_exchangeCapabilities`), client version, Paris method constants (4 files, 721 LOC) | Payload handling, fork-choice updates |
+| 8 | Networking | 20% | RLPx capability negotiation, Snappy compression validation (4 files, 992 LOC) | Full p2p peer management, discovery, eth protocol |
+| 9 | Sync | 50% | Full sync request planner (batch splitting for headers/bodies/receipts), per-peer rate limiting (4 files, 1,134 LOC) | P2P message transport, actual sync execution |
+| 10 | Runner/CLI | 20% | Basic CLI argument parsing (--help, --version, start), RunnerMain/RunnerConfig (4 files, 570 LOC) | Full config system, process lifecycle, service wiring |
 
 **Framework:** Pure Effect.js with dependency injection via `Context.Tag` + `Layer` composition. Every module is a typed service with structured error handling.
 
@@ -111,6 +111,7 @@ Both clients are missing:
 - **Architecture** — Both clients mirror Nethermind's module boundaries, making the remaining work well-scoped
 - **Primitives** — Voltaire provides production-quality types (Address, Block, Transaction, RLP, Crypto, Precompiles) shared across both clients
 - **Type coverage** — Engine API types are complete through V6 (Osaka) with fork-aware capability negotiation
+- **Workflow automation** — Component-based ticket pipeline (Smithers) automates codebase review, ticket generation, implementation, and testing
 
 ### Current Priorities
 
