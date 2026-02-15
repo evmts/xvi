@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-15
-**Timestamp:** 23:45 UTC
+**Timestamp:** 23:16 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,12 +9,21 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-No new subsystem code changes since the previous report (2026-02-15 22:30 UTC). The most recent commits focused on Smithers pipeline optimization:
+No new subsystem code changes since the previous report (2026-02-15 21:28 UTC). Recent commits have been limited to:
 
 - **Smithers pipeline:** Optimized pipeline to avoid expensive build/test operations during non-implementation steps; fixed undefined `acceptanceCriteria` in slop-factory script; config cleanup
 - **Prior cycle (still most recent code work):** Phase 0 DB Abstraction hardening — `Database.init` comptime helper, MemoryDatabase/NullDb cleanup, dead code removal, `constCast` elimination
 
 No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output.
+
+### Research Context Available
+
+Research context files exist for multiple subsystems (`docs/context/`):
+- Phase 0 (DB), Phase 1 (Trie), Phase 2 (World State), Phase 3 (EVM Integration), Phase 4 (Blockchain)
+- Targeted research for specific tickets: `add-database-comptime-init`, `fix-null-db-constcast`, `remove-dead-types-zig`
+
+Implementation plans exist for completed tickets (`docs/plans/`):
+- `add-database-comptime-init.md`, `fix-null-db-constcast.md`, `remove-dead-types-zig.md`
 
 ---
 
@@ -34,7 +43,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 | 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks, 31 tests (6 files, 1,618 LOC) | High-level trie helpers partial |
 | 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 61 tests (7 files, 2,217 LOC) | Integration with full execution loop |
 | 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 54 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
-| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 154 tests (6 files, 4,357 LOC) | Block insertion/reorg logic, state root computation |
+| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 154 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
 | 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits, 41 tests (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
 | 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 126 tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
 | 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 82 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
