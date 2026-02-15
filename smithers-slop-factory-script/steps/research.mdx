@@ -1,0 +1,37 @@
+RESEARCH PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Description: {props.ticketDescription}
+Category: {props.ticketCategory}
+
+Your job is to gather all reference materials needed to implement this ticket.
+
+{props.submodulePaths && props.submodulePaths.length > 0 ? `## Submodule References for this Category
+
+Read these submodule paths — they contain the authoritative specs, reference implementations, and test fixtures for this ticket's category:
+${props.submodulePaths.map(p => `- ${p}`).join('\n')}
+` : ''}
+
+## Steps
+
+1. **Read the PRD** — prd/GUILLOTINE_CLIENT_PLAN.md — find the section relevant to this ticket's category
+2. **Read the Ethereum specs** — prd/ETHEREUM_SPECS_REFERENCE.md — find relevant specs
+3. **Read integration test findings** — Read docs/test-suite-findings.md if it exists — this contains the status of external test suites, what's blocking them, and suggested tickets. Use this to understand what testing infrastructure exists and what's needed.
+4. **Read category-specific submodules** — Read the submodule paths listed above for authoritative specs, reference code, and test fixtures
+5. **Find Voltaire APIs** — Browse /Users/williamcory/voltaire/packages/voltaire-zig/src/ for relevant primitives
+6. **Read existing implementation** — Read any files listed in the ticket's relevantFiles
+7. **Write context file** — Write docs/context/{props.ticketId}.md with all paths and summaries
+
+{props.referenceFiles && props.referenceFiles.length > 0 ? `\nHinted reference files:\n${props.referenceFiles.map(f => `- ${f}`).join('\n')}` : ''}
+
+{props.relevantFiles && props.relevantFiles.length > 0 ? `\nRelevant codebase files:\n${props.relevantFiles.map(f => `- ${f}`).join('\n')}` : ''}
+
+## Commit
+
+After writing the context file:
+```
+git add docs/context/{props.ticketId}.md
+git commit -m "♻️ refactor({props.ticketCategory}): gather research for {props.ticketId}"
+git pull --rebase origin main && git push
+```
+

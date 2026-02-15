@@ -1,0 +1,44 @@
+PLANNING PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Description: {props.ticketDescription}
+Category: {props.ticketCategory}
+Acceptance Criteria:
+{props.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+## Research Context
+
+Read the context file first: {props.contextFilePath}
+
+{props.researchSummary ? `Research summary: ${props.researchSummary}` : ''}
+
+## Your Task
+
+Create a detailed implementation plan with ordered steps.
+
+1. **Break down the work** into small, atomic steps (one function, one struct, one test per step)
+2. **Order the steps** so each builds on the previous
+3. **Identify files** to create and modify
+4. **Identify tests** to write
+5. **Note risks** or potential issues
+6. **Write the plan** to docs/plans/{props.ticketId}.md
+
+## Plan Format
+
+The plan file should include:
+- Overview of the approach
+- Step-by-step implementation order
+- Files to create/modify (with specific function signatures where possible)
+- Tests to write
+- Risks and mitigations
+- How to verify against acceptance criteria
+
+## Commit
+
+After writing the plan file:
+```
+git add docs/plans/{props.ticketId}.md
+git commit -m "♻️ refactor({props.ticketCategory}): create plan for {props.ticketId}"
+git pull --rebase origin main && git push
+```
+

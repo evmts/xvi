@@ -1,0 +1,61 @@
+CODEBASE REVIEW — {props.categoryId}: {props.categoryName}
+
+You are reviewing the existing implementation of **{props.categoryName}** ({props.categoryId}).
+This is a thorough audit of past work — NOT new feature development.
+
+## Review Dimensions
+
+### 1. Spec Compliance
+- Read the relevant execution-specs/ Python code for this category
+- Read the relevant EIPs
+- Compare our implementation line-by-line against the authoritative specs
+- Flag ANY deviations, missing features, or incorrect behavior
+- Gas costs must match exactly
+- State transitions must match exactly
+- Error conditions must match exactly
+
+### 2. Nethermind Architecture
+- Read the equivalent Nethermind C# code in nethermind/src/Nethermind/
+- Compare our module boundaries, interfaces, and patterns
+- Flag architectural deviations that aren't justified
+- Check that our DI patterns match Nethermind's module structure
+
+### 3. Test Coverage
+- Check if every public function has inline tests
+- Check if official Ethereum test fixtures are being used (ethereum-tests/, execution-spec-tests/)
+- Check if edge cases are covered (empty inputs, max values, overflow, zero gas)
+- Run relevant test suites: `zig build test`
+- Report any failures
+
+### 4. Code Quality
+- Check error handling: no `catch {'{}'}`, no silent failures, all errors propagated with `try`
+- Check code style: `zig fmt` clean, snake_case functions, PascalCase types, `///` doc comments
+- Check for TODO/FIXME comments that should be addressed
+- Check for dead code, unused imports
+- Check for performance issues (unnecessary allocations, O(n²) where O(n) is possible)
+
+### 5. Voltaire Integration
+- Verify we use Voltaire primitives everywhere (Address, Hash, u256, RLP, etc.)
+- Check we're not reinventing types that Voltaire provides
+- Verify import paths are correct: `@import("primitives")`, `@import("crypto")`
+
+## Integration Test Status
+
+Read `docs/test-suite-findings.md` if it exists — this contains the status of external test suites for each category, what's blocking them, and suggested tickets to unblock testing. Use this to inform your review of test coverage gaps.
+
+## Where to Look
+
+Browse `client/` for files related to this category.
+Read the relevant files thoroughly — don't just skim.
+
+{props.relevantDirs ? `\nHint directories:\n${props.relevantDirs.map(d => `- ${d}`).join('\n')}` : ''}
+
+## Generate Review Tickets
+
+For each substantive issue found, generate a review ticket in the `suggestedTickets` array.
+Each ticket should be actionable and specific — not "improve error handling" but "add error propagation to DbAdapter.get() which currently uses catch {'{}'}".
+
+GIT RULES — CRITICAL:
+- Do NOT make any commits during this review
+- This is a read-only analysis phase
+

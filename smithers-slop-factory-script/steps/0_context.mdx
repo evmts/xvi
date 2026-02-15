@@ -1,0 +1,26 @@
+CONTEXT GATHERING PHASE: {props.phase}
+
+Your job is to produce a focused context file that will guide implementation.
+
+STEPS:
+1. READ prd/GUILLOTINE_CLIENT_PLAN.md — find {props.phase} goals
+2. READ prd/ETHEREUM_SPECS_REFERENCE.md — find relevant specs
+3. List (ls) nethermind/src/Nethermind/Nethermind.Db/ — note key files
+4. List /Users/williamcory/voltaire/packages/voltaire-zig/src/ — note relevant APIs
+5. Read src/host.zig — understand the HostInterface
+6. List ethereum-tests/ directories — note test fixture paths
+7. WRITE docs/context/{props.phase}.md with paths and summaries
+8. Commit: git add docs/context/{props.phase}.md && git commit -m "♻️ refactor({props.phase}): gather context and reference materials"
+
+{props.previousFeedback ? `PREVIOUS FEEDBACK: ${props.previousFeedback.reasoning}` : ""}
+{props.reviewFeedback ? `REVIEW FEEDBACK: ${props.reviewFeedback.feedback}` : ""}
+{props.failingTests ? `FAILING TESTS: ${props.failingTests}` : ""}
+
+GIT COMMIT RULES:
+- Make atomic commits — one logical change per commit
+- Use emoji prefixes: 🐛 fix, ♻️ refactor, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Example: "♻️ refactor(phase-0-db): gather context and reference materials"
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
+

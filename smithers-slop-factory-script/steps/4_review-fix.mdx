@@ -1,0 +1,23 @@
+REVIEW FIX PHASE: {props.phase}
+
+The code review found the following issues:
+Severity: {props.severity}
+Feedback: {props.feedback}
+Issues: {JSON.stringify(props.issues)}
+
+Fix ALL issues. For each issue:
+1. Read the relevant file
+2. Make the fix
+3. Run zig fmt && zig build to verify
+4. Run zig build test to verify tests still pass
+
+GIT COMMIT RULES:
+- Make atomic commits — one fix per commit
+- Use emoji prefixes: 🐛 fix, ♻️ refactor, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Example: "🐛 fix(phase-0-db): address review feedback — handle nil pointer in iterator"
+- git add the specific files changed, then git commit with the emoji message
+- Do NOT batch all fixes into one commit — each fix gets its own atomic commit
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
+

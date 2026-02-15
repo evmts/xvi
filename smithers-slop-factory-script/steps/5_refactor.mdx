@@ -1,0 +1,28 @@
+REFACTORING PHASE: {props.phase}
+
+Review all code written in this phase for:
+1. Code duplication — extract shared logic
+2. Naming consistency — match Zig conventions (snake_case functions, PascalCase types)
+3. Public API surface — minimize what's public, keep internals private
+4. Documentation — add /// doc comments to all public APIs
+5. Import organization — clean up unused imports
+6. Dead code — remove any unused functions or types
+7. Consistent error handling patterns
+
+Make improvements. Run zig fmt && zig build && zig build test after each change.
+
+GIT COMMIT RULES:
+- Make atomic commits — one refactor per commit
+- Use emoji prefixes: ♻️ refactor, 🐛 fix, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Examples:
+  - "♻️ refactor(phase-0-db): extract shared iterator logic into helper"
+  - "🐛 fix(phase-0-db): correct error propagation in iterator"
+  - "🧪 test(phase-0-db): add coverage for iterator edge cases"
+- git add the specific files changed, then git commit with the emoji message
+- Each meaningful refactor gets its own atomic commit
+- After committing, run: git pull --rebase origin main && git push
+- Always rebase before pushing to avoid merge commits
+
+If nothing needs refactoring, say so and move on.
+

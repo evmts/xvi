@@ -1,0 +1,48 @@
+import { ToolLoopAgent as Agent, stepCountIs } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { CodexAgent } from "smithers-orchestrator";
+import { read, grep, bash } from "smithers-orchestrator/tools";
+import { getInstructions } from "./claude";
+import type { Target } from "../targets";
+import { ZIG_TARGET } from "../targets";
+
+const CODEX_MODEL = process.env.CODEX_MODEL ?? "gpt-5.3-codex";
+const USE_CLI = process.env.USE_CLI_AGENTS !== "0" && process.env.USE_CLI_AGENTS !== "false";
+const REPO_ROOT = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
+
+function getCodexInstructions(target: Target): string {
+  const base = getInstructions(target);
+  const checklist = target.reviewChecklist.map((item, i) => `${i + 1}. ${item}`).join("\n");
+
+  return `${base}
+
+You are a ruthless, meticulous code reviewer for a high-performance Ethereum execution client in ${target.id === "effect" ? "Effect.ts" : "Zig"}.
+You review code for:
+${checklist}
+You are EXTREMELY strict. If something can be improved, it MUST be flagged.`;
+}
+
+export function makeCodex(target: Target) {
+  const instructions = getCodexInstructions(target);
+
+  const apiAgent = new Agent({
+    model: openai(CODEX_MODEL),
+    tools: { read, grep, bash },
+    instructions,
+    stopWhen: stepCountIs(100),
+    maxOutputTokens: 8192,
+  });
+
+  const cliAgent = new CodexAgent({
+    model: CODEX_MODEL,
+    systemPrompt: instructions,
+    yolo: true,
+    cwd: REPO_ROOT,
+    config: { model_reasoning_effort: "high" },
+    timeoutMs: 60 * 60 * 1000, // 60 minutes max per task
+  });
+
+  return USE_CLI ? cliAgent : apiAgent;
+}
+
+export const codex = makeCodex(ZIG_TARGET);

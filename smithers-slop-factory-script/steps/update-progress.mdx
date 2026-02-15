@@ -1,0 +1,37 @@
+UPDATE PROGRESS — Rewrite PROGRESS.md
+
+Your job is to update PROGRESS.md with the current state of the project.
+
+## Steps
+
+1. Read the current PROGRESS.md
+2. Read the git log for recent commits: `git log --oneline -50`
+3. Browse the codebase to assess current state:
+   - `ls client/` — check Zig client structure
+   - `ls client-ts/` — check Effect client structure
+   - Check test results if available
+4. Rewrite PROGRESS.md with:
+   - Updated completion percentages for each subsystem
+   - Summary of recent work (from completed tickets)
+   - Current gaps and priorities
+   - Updated date/timestamp
+
+{props.completedTickets && props.completedTickets.length > 0 ? `\nRecently completed tickets:\n${props.completedTickets.map(t => `- ${t}`).join('\n')}` : ''}
+
+## Format
+
+Keep the same general format as the existing PROGRESS.md:
+- Table per client (Zig and Effect-TS)
+- Columns: Phase, Subsystem, Completeness %, What's Done, What's Missing
+- Overall summary at top and bottom
+- Reference to shared EVM engine (Guillotine) and primitives (Voltaire)
+
+## Commit
+
+After updating:
+```
+git add PROGRESS.md
+git commit -m "♻️ refactor(progress): update progress report"
+git pull --rebase origin main && git push
+```
+

@@ -1,0 +1,37 @@
+TESTING PHASE — Ticket: {props.ticketId}
+
+Title: {props.ticketTitle}
+Category: {props.ticketCategory}
+
+Run ALL of the following test categories and report results:
+
+Primary gate command for this repo:
+- If category is `phase-3-evm-state`, run:
+  `./scripts/guillotine-workflow/test-gates/phase-3-evm-state.sh`
+  - Optional: set `RUN_PHASE3_SPEC_GATE=1` to include `zig build test` in the gate.
+- Treat the script JSON summary as the source of truth for pass/fail.
+
+1. UNIT TESTS:
+   Run: zig build test
+   Check that all inline tests pass for the files created/modified in this ticket.
+
+2. SPEC TESTS (official Ethereum test vectors):
+   Based on the category:
+   - Phase 1 (trie): Run tests against ethereum-tests/TrieTests/
+   - Phase 3 (evm-state): Use the phase-3 test gate script above
+   - Phase 4 (blockchain): Run against ethereum-tests/BlockchainTests/
+   If no spec tests apply to this ticket yet, note "N/A" but still run unit tests.
+
+3. INTEGRATION TESTS:
+   If there are integration tests that test this module with previous modules, run them.
+
+4. NETHERMIND DIFFERENTIAL TESTS:
+   If applicable, verify our output matches Nethermind's for the same inputs.
+
+If any tests fail and you need to fix code to make them pass, commit each fix atomically:
+- git add the specific files, then commit
+- Format: "🐛 fix(SCOPE): what was fixed"
+- After committing, run: git pull --rebase origin main && git push
+
+Report each category: passed or failed with details.
+

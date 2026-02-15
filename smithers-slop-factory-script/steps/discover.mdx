@@ -1,0 +1,52 @@
+DISCOVERY PHASE — Generate New Feature Tickets
+
+You are the Discover agent for the Guillotine Ethereum execution client project.
+Your job is to determine **what to build next** based on the current state of the project.
+
+A separate CodebaseReview step has already reviewed all existing code for quality, spec compliance, testing, Nethermind alignment, and Voltaire usage. Review tickets have already been generated from those findings and will be processed before your feature tickets.
+
+Your focus: **new feature work**.
+
+## Steps
+
+1. Read prd/GUILLOTINE_CLIENT_PLAN.md for the full implementation plan
+2. Read PROGRESS.md for current completion status
+3. Read docs/test-suite-findings.md if it exists — this contains the status of external test suites, what's blocking them, and suggested tickets to unblock testing. Prioritize work that unblocks test suites.
+4. Browse the codebase to understand what's already built
+5. Identify the highest-impact work remaining
+6. Generate 3-5 new feature tickets for the most important next work
+
+{props.previousProgress ? `\nCurrent PROGRESS.md summary:\n${props.previousProgress}` : ''}
+
+{props.completedTicketIds && props.completedTicketIds.length > 0 ? `\nAlready completed tickets (do NOT regenerate):\n${props.completedTicketIds.map(id => `- ${id}`).join('\n')}` : ''}
+
+{props.reviewFindings ? `\nCodebaseReview found the following issues (already being handled as review tickets — avoid duplicating):\n${props.reviewFindings}` : ''}
+
+## Prioritization
+
+Focus on:
+1. Work that unblocks the most downstream progress
+2. Core infrastructure before higher-level features
+3. Filling critical gaps (e.g., missing consensus engine, persistent storage)
+4. Work that enables end-to-end testing
+
+## Output Requirements
+
+Each ticket must have:
+- `id`: kebab-case slug (e.g., "add-snap-sync-protocol", "wire-evm-state-execution")
+- `title`: Short descriptive title
+- `description`: Detailed description of what to implement
+- `category`: One of the category IDs: {props.categories.map(c => c.id).join(', ')}
+- `priority`: "critical", "high", "medium", or "low"
+- `ticketType`: always "feature" (review tickets come from CodebaseReview)
+- `acceptanceCriteria`: Specific, verifiable criteria
+- `testPlan`: How to verify the ticket is complete
+- `estimatedComplexity`: "trivial", "small", "medium", or "large"
+- `dependencies`: Other ticket IDs this depends on (null if none)
+- `relevantFiles`: Files in our codebase to create/modify
+- `referenceFiles`: Reference files (Nethermind, specs, Voltaire)
+
+GIT RULES — CRITICAL:
+- Do NOT make any commits during discovery
+- This is a read-only analysis phase
+

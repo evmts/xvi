@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "smithers-orchestrator",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["bun-types", "@types/mdx", "@types/react"],
+    "paths": {
+      "smithers-orchestrator": ["/Users/williamcory/smithers/src/index.ts"],
+      "smithers-orchestrator/*": ["/Users/williamcory/smithers/src/*"]
+    }
+  }
+}
