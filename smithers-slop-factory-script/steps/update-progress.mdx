@@ -2,17 +2,26 @@ UPDATE PROGRESS — Rewrite PROGRESS.md
 
 Your job is to update PROGRESS.md with the current state of the project.
 
+## CRITICAL: This is a READ-ONLY assessment step
+
+Do NOT run any build commands, test commands, or compilation. No `zig build`, `zig build test`, `zig build specs`, `bun test`, or similar. Those are expensive and handled by dedicated test/spec steps in the pipeline. You only read code, git history, and existing output files.
+
 ## Steps
 
 1. Read the current PROGRESS.md
 2. Read the git log for recent commits: `git log --oneline -50`
-3. Browse the codebase to assess current state:
+3. Read existing output from other pipeline steps:
+   - `docs/test-suite-findings.md` — integration test status per category (written by the IntegrationTest step)
+   - `docs/context/*.md` — research context files (written by Research steps)
+   - `docs/plans/*.md` — implementation plans (written by Plan steps)
+4. Browse the codebase to assess current state:
    - `ls client/` — check Zig client structure
    - `ls client-ts/` — check Effect client structure
-   - Check test results if available
-4. Rewrite PROGRESS.md with:
+   - Read source files to gauge completeness (do NOT compile or run tests)
+5. Rewrite PROGRESS.md with:
    - Updated completion percentages for each subsystem
-   - Summary of recent work (from completed tickets)
+   - Summary of recent work (from completed tickets and git log)
+   - Test status (from docs/test-suite-findings.md, NOT from running tests)
    - Current gaps and priorities
    - Updated date/timestamp
 

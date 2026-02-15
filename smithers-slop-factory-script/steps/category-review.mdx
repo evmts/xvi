@@ -21,11 +21,11 @@ This is a thorough audit of past work — NOT new feature development.
 - Check that our DI patterns match Nethermind's module structure
 
 ### 3. Test Coverage
-- Check if every public function has inline tests
+- Check if every public function has inline tests by reading the source code
 - Check if official Ethereum test fixtures are being used (ethereum-tests/, execution-spec-tests/)
 - Check if edge cases are covered (empty inputs, max values, overflow, zero gas)
-- Run relevant test suites: `zig build test`
-- Report any failures
+- Read `docs/test-suite-findings.md` for existing test results (do NOT run `zig build test` or `zig build specs` — that is handled by dedicated test steps)
+- Flag any missing test coverage
 
 ### 4. Code Quality
 - Check error handling: no `catch {'{}'}`, no silent failures, all errors propagated with `try`
