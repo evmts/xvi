@@ -8,7 +8,7 @@ set -euo pipefail
 TARGET="${1:-zig}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$SCRIPT_DIR"
 

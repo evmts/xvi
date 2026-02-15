@@ -7,7 +7,7 @@ import { ZIG_TARGET } from "../targets";
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-4-6";
 const USE_CLI = process.env.USE_CLI_AGENTS !== "0" && process.env.USE_CLI_AGENTS !== "false";
-const REPO_ROOT = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
+const REPO_ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 
 export function getInstructions(target: Target): string {
   if (target.id === "effect") {

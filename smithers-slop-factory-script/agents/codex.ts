@@ -8,7 +8,7 @@ import { ZIG_TARGET } from "../targets";
 
 const CODEX_MODEL = process.env.CODEX_MODEL ?? "gpt-5.3-codex";
 const USE_CLI = process.env.USE_CLI_AGENTS !== "0" && process.env.USE_CLI_AGENTS !== "false";
-const REPO_ROOT = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
+const REPO_ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 
 function getCodexInstructions(target: Target): string {
   const base = getInstructions(target);

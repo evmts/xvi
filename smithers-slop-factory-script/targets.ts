@@ -25,14 +25,16 @@ export const ZIG_TARGET: Target = {
   fmtCmd: "zig fmt client/",
   voltairePath: "/Users/williamcory/voltaire/packages/voltaire-zig/",
   importStyle: '@import("primitives"), @import("crypto")',
-  diPattern: "comptime vtable dependency injection (like src/host.zig HostInterface pattern)",
+  diPattern:
+    "comptime vtable dependency injection (like src/host.zig HostInterface pattern)",
   errorPattern: "explicit error unions, propagate with try, NEVER use catch {}",
   testPattern: 'inline test "..." blocks inside each source file',
-  codeStyle: "snake_case functions/variables, PascalCase types, /// doc comments",
+  codeStyle:
+    "snake_case functions/variables, PascalCase types, /// doc comments",
   reviewChecklist: [
     "Correctness against Ethereum specs (execution-specs/, EIPs/)",
     "Architecture consistency with Nethermind (nethermind/)",
-    "Proper use of Voltaire primitives — flag any custom type that duplicates what Voltaire provides",
+    "Proper use of Voltaire primitives — flag any custom type that duplicates what Voltaire provides. Pretty much any concept in ethereum or data type exists in voltaire and if it doesn't that is a bug we should open an issue in voltaire repo to add it.",
     "Proper use of comptime dependency injection",
     "Error handling — NEVER allow catch {} or silent error suppression",
     "Performance — this must be faster than Nethermind (C#), every allocation matters",
@@ -46,6 +48,7 @@ export const ZIG_TARGET: Target = {
     "Documentation — add /// doc comments to all public APIs",
     "Import organization — clean up unused imports",
     "Dead code — remove any unused functions or types",
+    "Good lifetime management. Use arenas for data that has same lifetime. Clear ownership. Easy to understand and verify as correct memory management",
     "Consistent error handling patterns",
   ],
   referenceRepos: [],
@@ -59,11 +62,16 @@ export const EFFECT_TARGET: Target = {
   testCmd: "cd client-ts && bun test",
   fmtCmd: "cd client-ts && bunx prettier --write .",
   voltairePath: "/Users/williamcory/voltaire/voltaire-effect/",
-  importStyle: 'import { Address, Hash, Hex, ... } from "voltaire-effect/primitives"',
-  diPattern: "Effect Context.Tag + Layer dependency injection (Context.Tag for service interfaces, Layer.effect/Layer.succeed for implementations)",
-  errorPattern: "Data.TaggedError for domain errors, typed error channels (never use Effect<A, never, R> when errors are possible), Effect.gen for composition",
-  testPattern: "@effect/vitest it.effect() for Effect-returning tests, describe/it structure",
-  codeStyle: "PascalCase for types/services/tags, camelCase for functions/variables, JSDoc comments",
+  importStyle:
+    'import { Address, Hash, Hex, ... } from "voltaire-effect/primitives"',
+  diPattern:
+    "Effect Context.Tag + Layer dependency injection (Context.Tag for service interfaces, Layer.effect/Layer.succeed for implementations)",
+  errorPattern:
+    "Data.TaggedError for domain errors, typed error channels (never use Effect<A, never, R> when errors are possible), Effect.gen for composition",
+  testPattern:
+    "@effect/vitest it.effect() for Effect-returning tests, describe/it structure",
+  codeStyle:
+    "PascalCase for types/services/tags, camelCase for functions/variables, JSDoc comments",
   reviewChecklist: [
     "Correctness against Ethereum specs (execution-specs/, EIPs/)",
     "Architecture consistency with Nethermind (nethermind/) — mirror module boundaries",
