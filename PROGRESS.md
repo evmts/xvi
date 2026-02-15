@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-15
-**Timestamp:** 18:40 UTC
+**Timestamp:** 19:07 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -24,7 +24,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ## Zig Client (`client/`)
 
-**Stats:** ~30,450 lines of source across 75 files (11 subsystems, 14 directories), 745 tests
+**Stats:** ~30,450 lines of source across 75 files (11 subsystems, 14 directories), 760 tests
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
@@ -98,7 +98,7 @@ Both clients are missing:
 - **Engine API handlers** — Type system is complete in Zig but all payload/forkchoice handlers are stubbed
 - **End-to-end wiring** — No subsystem can execute a full block or sync from the network yet
 - **Monitoring** — No metrics, health checks, or structured logging
-- **Testing and polish** — Neither client has started integration testing against ethereum-tests, execution-spec-tests, or hive. Unit test coverage: 745 tests in Zig, 65 test files in Effect-TS
+- **Testing and polish** — Neither client has started integration testing against ethereum-tests, execution-spec-tests, or hive. Unit test coverage: 760 tests in Zig, 65 test files in Effect-TS
 
 ### Where XVI Leads
 
