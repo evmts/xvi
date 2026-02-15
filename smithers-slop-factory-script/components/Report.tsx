@@ -37,7 +37,7 @@ export function Report({
         ticketId={ticket.id}
         ticketTitle={ticket.title}
         ticketCategory={ticket.category}
-        acceptanceCriteria={ticket.acceptanceCriteria}
+        acceptanceCriteria={ticket.acceptanceCriteria ?? []}
         specSeverity={specSeverity}
         codeSeverity={codeSeverity}
         allIssuesResolved={allIssuesResolved}

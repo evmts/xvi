@@ -21,7 +21,7 @@ export function Plan({ target, ticket, contextFilePath, researchSummary }: PlanP
         ticketTitle={ticket.title}
         ticketDescription={ticket.description}
         ticketCategory={ticket.category}
-        acceptanceCriteria={ticket.acceptanceCriteria}
+        acceptanceCriteria={ticket.acceptanceCriteria ?? []}
         contextFilePath={contextFilePath}
         researchSummary={researchSummary}
       />
