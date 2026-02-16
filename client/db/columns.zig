@@ -253,6 +253,64 @@ pub fn ColumnDbSnapshot(comptime T: type) type {
     };
 }
 
+/// In-memory column family database.
+///
+/// Mirrors Nethermind's `MemColumnsDb<TKey>`. Each column is backed by a
+/// separate `MemoryDatabase`. Owns all underlying databases and releases
+/// them on `deinit()`.
+///
+/// Provides `columnsDb()` to get the non-owning `ColumnsDb(T)` interface
+/// (valid only while the `MemColumnsDb` is alive).
+pub fn MemColumnsDb(comptime T: type) type {
+    comptime {
+        if (@typeInfo(T) != .@"enum") {
+            @compileError("MemColumnsDb requires an enum type, got " ++ @typeName(T));
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        /// Owned `MemoryDatabase` instances, one per column.
+        databases: std.EnumArray(T, MemoryDatabase),
+        /// Allocator used for construction (retained for future use).
+        allocator: std.mem.Allocator,
+
+        /// Create a new `MemColumnsDb` with one `MemoryDatabase` per column.
+        ///
+        /// Uses `.receipts` as the `DbName` for all columns. The `DbName`
+        /// identifies the logical database group; individual columns are
+        /// distinguished by the enum key, not by `DbName`.
+        pub fn init(allocator: std.mem.Allocator) Self {
+            var databases: std.EnumArray(T, MemoryDatabase) = undefined;
+            for (std.meta.tags(T)) |tag| {
+                databases.set(tag, MemoryDatabase.init(allocator, .receipts));
+            }
+            return .{ .databases = databases, .allocator = allocator };
+        }
+
+        /// Release all memory owned by all column databases.
+        pub fn deinit(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.databases.getPtr(tag).deinit();
+            }
+        }
+
+        /// Return the non-owning `ColumnsDb(T)` interface.
+        ///
+        /// The returned `ColumnsDb` contains `Database` vtable handles
+        /// pointing into this `MemColumnsDb`. The caller must not use
+        /// the returned value after `deinit()` is called.
+        pub fn columnsDb(self: *Self) ColumnsDb(T) {
+            var db_array: std.EnumArray(T, Database) = undefined;
+            for (std.meta.tags(T)) |tag| {
+                db_array.set(tag, self.databases.getPtr(tag).database());
+            }
+            return .{ .columns = db_array };
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -583,4 +641,137 @@ test "ColumnsDb startWriteBatch then createSnapshot end-to-end" {
     const val = try snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
     try std.testing.expect(val != null);
     try std.testing.expectEqualStrings("batch_val", val.?.bytes);
+}
+
+// -- MemColumnsDb tests ------------------------------------------------------
+
+test "MemColumnsDb init creates N databases" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    // Each column should have an empty MemoryDatabase.
+    for (std.meta.tags(ReceiptsColumns)) |tag| {
+        try std.testing.expect(mcdb.databases.getPtr(tag).get("nonexistent") == null);
+    }
+}
+
+test "MemColumnsDb deinit frees all memory (leak check)" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+
+    // Write data to each column to ensure there's memory to free.
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("k", "v");
+    try cdb.getColumnDb(.transactions).put("k", "v");
+    try cdb.getColumnDb(.blocks).put("k", "v");
+
+    // If deinit doesn't free properly, testing allocator will report a leak.
+    mcdb.deinit();
+}
+
+test "MemColumnsDb columnsDb returns working interface" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    // Write via the ColumnsDb interface.
+    try cdb.getColumnDb(.default).put("key", "default_value");
+    try cdb.getColumnDb(.transactions).put("key", "txs_value");
+
+    // Read back.
+    const val0 = try cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(val0 != null);
+    try std.testing.expectEqualStrings("default_value", val0.?.bytes);
+
+    const val1 = try cdb.getColumnDb(.transactions).get("key");
+    try std.testing.expect(val1 != null);
+    try std.testing.expectEqualStrings("txs_value", val1.?.bytes);
+}
+
+test "MemColumnsDb column isolation" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    // Write to column A.
+    try cdb.getColumnDb(.default).put("key", "value_a");
+
+    // Column B should NOT see it.
+    const val_b = try cdb.getColumnDb(.transactions).get("key");
+    try std.testing.expect(val_b == null);
+
+    // Column C should NOT see it.
+    const val_c = try cdb.getColumnDb(.blocks).get("key");
+    try std.testing.expect(val_c == null);
+}
+
+test "MemColumnsDb full round-trip put/get per column" {
+    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    try cdb.getColumnDb(.full_blob_txs).put("blob1", "full_data");
+    try cdb.getColumnDb(.light_blob_txs).put("blob1", "light_data");
+    try cdb.getColumnDb(.processed_txs).put("blob1", "processed_data");
+
+    const v0 = try cdb.getColumnDb(.full_blob_txs).get("blob1");
+    try std.testing.expect(v0 != null);
+    try std.testing.expectEqualStrings("full_data", v0.?.bytes);
+
+    const v1 = try cdb.getColumnDb(.light_blob_txs).get("blob1");
+    try std.testing.expect(v1 != null);
+    try std.testing.expectEqualStrings("light_data", v1.?.bytes);
+
+    const v2 = try cdb.getColumnDb(.processed_txs).get("blob1");
+    try std.testing.expect(v2 != null);
+    try std.testing.expectEqualStrings("processed_data", v2.?.bytes);
+}
+
+test "MemColumnsDb write batch round-trip" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    var batch = cdb.startWriteBatch(std.testing.allocator);
+    defer batch.deinit();
+
+    try batch.getColumnBatch(.default).put("batch_key", "batch_val");
+    try batch.getColumnBatch(.transactions).put("batch_key2", "batch_val2");
+    try batch.commit();
+
+    const v0 = try cdb.getColumnDb(.default).get("batch_key");
+    try std.testing.expect(v0 != null);
+    try std.testing.expectEqualStrings("batch_val", v0.?.bytes);
+
+    const v1 = try cdb.getColumnDb(.transactions).get("batch_key2");
+    try std.testing.expect(v1 != null);
+    try std.testing.expectEqualStrings("batch_val2", v1.?.bytes);
+}
+
+test "MemColumnsDb snapshot isolation" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    try cdb.getColumnDb(.default).put("key", "before_snapshot");
+
+    var snap = try cdb.createSnapshot();
+    defer snap.deinit();
+
+    // Write after snapshot.
+    try cdb.getColumnDb(.default).put("key", "after_snapshot");
+
+    // Snapshot sees old value.
+    const val = try snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("before_snapshot", val.?.bytes);
+
+    // Live DB sees new value.
+    const live_val = try cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(live_val != null);
+    try std.testing.expectEqualStrings("after_snapshot", live_val.?.bytes);
 }
