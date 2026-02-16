@@ -422,7 +422,7 @@ fn bench_block_processing(n: usize) !u64 {
 fn bench_columns_init_accessor(n: usize) !u64 {
     var timer = try std.time.Timer.start();
     for (0..n) |_| {
-        var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+        var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
         _ = mcdb.columnsDb();
         mcdb.deinit();
     }
@@ -432,7 +432,7 @@ fn bench_columns_init_accessor(n: usize) !u64 {
 /// Benchmark 12: Column-isolated put/get (write to 3 columns, read back)
 /// Simulates receipt indexing: write to default, transactions, blocks columns.
 fn bench_columns_put_get(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
     defer mcdb.deinit();
     var cdb = mcdb.columnsDb();
 
@@ -460,7 +460,7 @@ fn bench_columns_put_get(n: usize) !u64 {
 /// Benchmark 13: ColumnsWriteBatch cross-column commit
 /// Accumulates writes across all columns, then commits atomically.
 fn bench_columns_write_batch(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
     defer mcdb.deinit();
     var cdb = mcdb.columnsDb();
 
@@ -491,7 +491,7 @@ fn bench_columns_write_batch(n: usize) !u64 {
 
 /// Benchmark 14: ColumnDbSnapshot create + read (point-in-time reads)
 fn bench_columns_snapshot(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
     defer mcdb.deinit();
     var cdb = mcdb.columnsDb();
 
@@ -520,7 +520,7 @@ fn bench_columns_snapshot(n: usize) !u64 {
 /// Benchmark 15: Column isolation verification (write to one, check absence in others)
 /// Measures the overhead of column family dispatch vs single DB.
 fn bench_columns_isolation_overhead(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
     defer mcdb.deinit();
     var cdb = mcdb.columnsDb();
 
@@ -544,7 +544,7 @@ fn bench_columns_isolation_overhead(n: usize) !u64 {
 /// Benchmark 16: BlobTxsColumns (3-column EIP-4844 pattern)
 /// Simulates blob transaction lifecycle: full -> light -> processed
 fn bench_blob_columns_lifecycle(n: usize) !u64 {
-    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.heap.page_allocator);
+    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.heap.page_allocator, .blob_transactions);
     defer mcdb.deinit();
     var cdb = mcdb.columnsDb();
 
@@ -564,6 +564,201 @@ fn bench_blob_columns_lifecycle(n: usize) !u64 {
         try cdb.getColumnDb(.processed_txs).put(&key_buf, &val_buf);
         // Stage 4: Read back processed
         _ = try cdb.getColumnDb(.processed_txs).get(&key_buf);
+    }
+    return timer.read();
+}
+
+// ============================================================================
+// Factory benchmarks (DB-002: DbFactory, MemDbFactory, ReadOnlyDbFactory)
+// ============================================================================
+
+const factory = @import("factory.zig");
+const MemDbFactory = factory.MemDbFactory;
+const ReadOnlyDbFactory = factory.ReadOnlyDbFactory;
+const NullDbFactory = factory.NullDbFactory;
+const DbFactory = factory.DbFactory;
+const DbSettings = @import("rocksdb.zig").DbSettings;
+const prov = @import("provider.zig");
+const DbProvider = prov.DbProvider;
+
+/// Benchmark 17: MemDbFactory createDb throughput
+/// Measures factory overhead for creating databases (heap alloc + vtable setup).
+fn bench_factory_create_db(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    const f = mem_factory.factory();
+
+    // Pre-allocate an array to hold owned databases for cleanup
+    var owned_dbs = try std.heap.page_allocator.alloc(adapter.OwnedDatabase, n);
+    defer std.heap.page_allocator.free(owned_dbs);
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        owned_dbs[i] = try f.createDb(DbSettings.init(.state, "state"));
+    }
+    const elapsed = timer.read();
+
+    // Cleanup all created databases
+    for (0..n) |i| {
+        owned_dbs[i].deinit();
+    }
+
+    return elapsed;
+}
+
+/// Benchmark 18: Factory-created DB put/get throughput
+/// Measures I/O through a factory-created database vs direct MemoryDatabase.
+fn bench_factory_db_io(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    const owned = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer owned.deinit();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+        try owned.db.put(&key_buf, &val_buf);
+    }
+    // Read back all
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        const val = try owned.db.get(&key_buf);
+        if (val) |v| v.release();
+    }
+    return timer.read();
+}
+
+/// Benchmark 19: ReadOnlyDbFactory overlay write+read throughput
+/// Measures overlay-based read/write performance through the factory chain.
+fn bench_readonly_factory_overlay(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator);
+    defer ro_factory.deinit();
+
+    const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer owned.deinit();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    // Writes go to overlay
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+        try owned.db.put(&key_buf, &val_buf);
+    }
+    // Reads check overlay first
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        const val = try owned.db.get(&key_buf);
+        if (val) |v| v.release();
+    }
+    return timer.read();
+}
+
+/// Benchmark 20: Factory vtable dispatch overhead
+/// Compares factory.createDb (vtable) vs direct MemDbFactory.createDbImpl cost.
+/// This isolates the vtable indirection overhead in the factory layer.
+fn bench_factory_vtable_overhead(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    const f = mem_factory.factory();
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |_| {
+        const owned = try f.createDb(DbSettings.init(.state, "state"));
+        // Immediately write+read to measure full round-trip through vtable
+        try owned.db.put("bench_key", "bench_value");
+        const val = try owned.db.get("bench_key");
+        if (val) |v| v.release();
+        owned.deinit();
+    }
+    return timer.read();
+}
+
+/// Benchmark 21: Factory + DbProvider wiring throughput
+/// Simulates realistic startup: factory creates DBs, registers in provider,
+/// then performs I/O through the provider abstraction.
+fn bench_factory_provider_wiring(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    const f = mem_factory.factory();
+
+    // Create DBs and register them in a provider
+    const state_owned = try f.createDb(DbSettings.init(.state, "state"));
+    defer state_owned.deinit();
+    const code_owned = try f.createDb(DbSettings.init(.code, "code"));
+    defer code_owned.deinit();
+    const storage_owned = try f.createDb(DbSettings.init(.storage, "storage"));
+    defer storage_owned.deinit();
+
+    var db_provider = DbProvider.init();
+    db_provider.register(.state, state_owned.db);
+    db_provider.register(.code, code_owned.db);
+    db_provider.register(.storage, storage_owned.db);
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+
+        // Distribute across providers (simulating block processing)
+        const db = switch (i % 3) {
+            0 => try db_provider.get(.state),
+            1 => try db_provider.get(.code),
+            else => try db_provider.get(.storage),
+        };
+        try db.put(&key_buf, &val_buf);
+    }
+    // Read back through provider
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        const db = switch (i % 3) {
+            0 => try db_provider.get(.state),
+            1 => try db_provider.get(.code),
+            else => try db_provider.get(.storage),
+        };
+        const val = try db.get(&key_buf);
+        if (val) |v| v.release();
+    }
+    return timer.read();
+}
+
+/// Benchmark 22: MemDbFactory createColumnsDb throughput
+/// Measures factory column-database creation (comptime dispatch path).
+fn bench_factory_columns_db(n: usize) !u64 {
+    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+    defer mem_factory.deinit();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var mcdb = mem_factory.createColumnsDb(ReceiptsColumns, .receipts);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+        // Write to all 3 columns via factory-created ColumnsDb
+        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
+        try cdb.getColumnDb(.transactions).put(&key_buf, &val_buf);
+        try cdb.getColumnDb(.blocks).put(&key_buf, &val_buf);
     }
     return timer.read();
 }
@@ -661,6 +856,32 @@ pub fn main() !void {
     try print_result(try run_bench("blob-columns lifecycle (1K)", SMALL_N, bench_blob_columns_lifecycle));
     try print_result(try run_bench("blob-columns lifecycle (10K)", MEDIUM_N, bench_blob_columns_lifecycle));
     try print_result(try run_bench("blob-columns lifecycle (100K)", LARGE_N, bench_blob_columns_lifecycle));
+    std.debug.print("\n", .{});
+
+    // -- Factory operations (DB-002) --
+    std.debug.print("--- Factory Operations (DB-002: DbFactory) ---\n", .{});
+    try print_result(try run_bench("factory createDb (1K)", SMALL_N, bench_factory_create_db));
+    try print_result(try run_bench("factory createDb (10K)", MEDIUM_N, bench_factory_create_db));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("factory DB put+get (10K)", MEDIUM_N, bench_factory_db_io));
+    try print_result(try run_bench("factory DB put+get (100K)", LARGE_N, bench_factory_db_io));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("ReadOnly overlay put+get (10K)", MEDIUM_N, bench_readonly_factory_overlay));
+    try print_result(try run_bench("ReadOnly overlay put+get (100K)", LARGE_N, bench_readonly_factory_overlay));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("factory vtable create+io (1K)", SMALL_N, bench_factory_vtable_overhead));
+    try print_result(try run_bench("factory vtable create+io (10K)", MEDIUM_N, bench_factory_vtable_overhead));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("factory+provider wiring (10K)", MEDIUM_N, bench_factory_provider_wiring));
+    try print_result(try run_bench("factory+provider wiring (100K)", LARGE_N, bench_factory_provider_wiring));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("factory createColumnsDb put (10K)", MEDIUM_N, bench_factory_columns_db));
+    try print_result(try run_bench("factory createColumnsDb put (100K)", LARGE_N, bench_factory_columns_db));
     std.debug.print("\n", .{});
 
     // -- Block processing simulation --
