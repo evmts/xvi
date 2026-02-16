@@ -154,6 +154,103 @@ pub fn createColumnsDb(
     return factory_ptr.createColumnsDb(T, db_name);
 }
 
+const MemoryDatabase = @import("memory.zig").MemoryDatabase;
+const columns = @import("columns.zig");
+
+/// In-memory database factory.
+///
+/// Mirrors Nethermind's `MemDbFactory` (`Nethermind.Db/MemDbFactory.cs`).
+/// Creates `MemoryDatabase` instances for testing and diagnostic modes.
+///
+/// Each `createDb` call heap-allocates a `MemoryDatabase` using the factory's
+/// allocator. The returned `OwnedDatabase` cleans up the allocation on
+/// `deinit()`.
+///
+/// ## Usage
+///
+/// ```zig
+/// var mem_factory = MemDbFactory.init(allocator);
+/// defer mem_factory.deinit();
+///
+/// const owned = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+/// defer owned.deinit();
+///
+/// try owned.db.put("key", "value");
+/// ```
+pub const MemDbFactory = struct {
+    allocator: std.mem.Allocator,
+
+    /// Create a new MemDbFactory using the given allocator.
+    pub fn init(allocator: std.mem.Allocator) MemDbFactory {
+        return .{ .allocator = allocator };
+    }
+
+    /// No-op — the factory itself holds no resources.
+    /// Individual databases must be cleaned up via `OwnedDatabase.deinit()`.
+    pub fn deinit(self: *MemDbFactory) void {
+        _ = self;
+    }
+
+    /// Return a `DbFactory` vtable interface backed by this MemDbFactory.
+    pub fn factory(self: *MemDbFactory) DbFactory {
+        return DbFactory.init(MemDbFactory, self, .{
+            .create_db = createDbImpl,
+            .get_full_db_path = getFullDbPathImpl,
+            .deinit = deinitImpl,
+        });
+    }
+
+    /// Create a `MemColumnsDb(T)` for the given column enum type.
+    ///
+    /// This is the comptime-generic counterpart to `createDb`. It creates
+    /// one `MemoryDatabase` per column variant, owned by the returned
+    /// `MemColumnsDb`.
+    pub fn createColumnsDb(self: *MemDbFactory, comptime T: type, db_name: DbName) columns.MemColumnsDb(T) {
+        return columns.MemColumnsDb(T).init(self.allocator, db_name);
+    }
+
+    // -- Internal vtable implementations --------------------------------------
+
+    /// Heap-allocated context for cleanup of a factory-created MemoryDatabase.
+    /// Stored alongside the MemoryDatabase to avoid a separate allocation.
+    const OwnedContext = struct {
+        db: MemoryDatabase,
+        allocator: std.mem.Allocator,
+    };
+
+    fn createDbImpl(self: *MemDbFactory, settings: DbSettings) Error!OwnedDatabase {
+        // Heap-allocate the context (MemoryDatabase + allocator for cleanup).
+        const ctx = self.allocator.create(OwnedContext) catch return error.OutOfMemory;
+        ctx.* = .{
+            .db = MemoryDatabase.init(self.allocator, settings.name),
+            .allocator = self.allocator,
+        };
+        return .{
+            .db = ctx.db.database(),
+            .deinit_ctx = @ptrCast(ctx),
+            .deinit_fn = destroyOwnedContext,
+        };
+    }
+
+    fn destroyOwnedContext(raw: ?*anyopaque) void {
+        if (raw) |ptr| {
+            const ctx: *OwnedContext = @ptrCast(@alignCast(ptr));
+            ctx.db.deinit();
+            ctx.allocator.destroy(ctx);
+        }
+    }
+
+    fn getFullDbPathImpl(_: *MemDbFactory, settings: DbSettings) []const u8 {
+        // In-memory databases don't have a filesystem path.
+        // Return the settings path as-is (matches Nethermind default).
+        return settings.path;
+    }
+
+    fn deinitImpl(_: *MemDbFactory) void {
+        // No-op — factory itself holds no resources.
+    }
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -227,4 +324,155 @@ test "DbFactory: init generates correct wrappers" {
 
     factory.deinit();
     try std.testing.expectEqual(@as(u64, 101), backend.value);
+}
+
+// -- MemDbFactory tests ---------------------------------------------------
+
+test "MemDbFactory: createDb returns a functional database" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const owned = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer owned.deinit();
+
+    // The database should work normally
+    try owned.db.put("key", "value");
+    const val = try owned.db.get("key");
+    try std.testing.expect(val != null);
+    defer val.?.release();
+    try std.testing.expectEqualStrings("value", val.?.bytes);
+}
+
+test "MemDbFactory: created database supports put/get/delete" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const owned = try mem_factory.factory().createDb(DbSettings.init(.code, "code"));
+    defer owned.deinit();
+
+    // put + get
+    try owned.db.put("a", "1");
+    const val_a = try owned.db.get("a");
+    try std.testing.expect(val_a != null);
+    defer val_a.?.release();
+    try std.testing.expectEqualStrings("1", val_a.?.bytes);
+
+    // delete
+    try owned.db.delete("a");
+    const val_deleted = try owned.db.get("a");
+    try std.testing.expect(val_deleted == null);
+
+    // contains
+    try owned.db.put("b", "2");
+    try std.testing.expect(try owned.db.contains("b"));
+    try std.testing.expect(!try owned.db.contains("missing"));
+}
+
+test "MemDbFactory: OwnedDatabase.deinit frees MemoryDatabase (no leak)" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const owned = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+
+    // Write data to ensure allocations exist
+    try owned.db.put("key1", "value1_with_some_length");
+    try owned.db.put("key2", "value2_with_some_length");
+    try owned.db.put("key3", "value3_with_some_length");
+
+    // If deinit doesn't free properly, testing allocator will report a leak
+    owned.deinit();
+}
+
+test "MemDbFactory: multiple databases can be created from one factory" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const f = mem_factory.factory();
+
+    const db1 = try f.createDb(DbSettings.init(.state, "state"));
+    defer db1.deinit();
+
+    const db2 = try f.createDb(DbSettings.init(.code, "code"));
+    defer db2.deinit();
+
+    const db3 = try f.createDb(DbSettings.init(.headers, "headers"));
+    defer db3.deinit();
+
+    // Each database is independent
+    try db1.db.put("key", "state_value");
+    try db2.db.put("key", "code_value");
+
+    const v1 = try db1.db.get("key");
+    try std.testing.expect(v1 != null);
+    defer v1.?.release();
+    try std.testing.expectEqualStrings("state_value", v1.?.bytes);
+
+    const v2 = try db2.db.get("key");
+    try std.testing.expect(v2 != null);
+    defer v2.?.release();
+    try std.testing.expectEqualStrings("code_value", v2.?.bytes);
+
+    // db3 has no data
+    const v3 = try db3.db.get("key");
+    try std.testing.expect(v3 == null);
+}
+
+test "MemDbFactory: database name matches settings" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const owned = try mem_factory.factory().createDb(DbSettings.init(.receipts, "receipts"));
+    defer owned.deinit();
+
+    try std.testing.expectEqual(DbName.receipts, owned.db.name());
+}
+
+test "MemDbFactory: getFullDbPath returns settings path" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    const path = mem_factory.factory().getFullDbPath(DbSettings.init(.state, "/tmp/state"));
+    try std.testing.expectEqualStrings("/tmp/state", path);
+}
+
+test "MemDbFactory: createColumnsDb returns functional MemColumnsDb" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var mcdb = mem_factory.createColumnsDb(columns.ReceiptsColumns, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    // Write to different columns
+    try cdb.getColumnDb(.default).put("k1", "v1");
+    try cdb.getColumnDb(.transactions).put("k2", "v2");
+
+    // Read back
+    const v1 = try cdb.getColumnDb(.default).get("k1");
+    try std.testing.expect(v1 != null);
+    try std.testing.expectEqualStrings("v1", v1.?.bytes);
+
+    const v2 = try cdb.getColumnDb(.transactions).get("k2");
+    try std.testing.expect(v2 != null);
+    try std.testing.expectEqualStrings("v2", v2.?.bytes);
+
+    // Column isolation
+    const v_cross = try cdb.getColumnDb(.blocks).get("k1");
+    try std.testing.expect(v_cross == null);
+}
+
+test "MemDbFactory: createColumnsDb via comptime helper" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var mcdb = createColumnsDb(columns.BlobTxsColumns, MemDbFactory, &mem_factory, .blob_transactions);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    try cdb.getColumnDb(.full_blob_txs).put("blob1", "data");
+    const val = try cdb.getColumnDb(.full_blob_txs).get("blob1");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("data", val.?.bytes);
 }
