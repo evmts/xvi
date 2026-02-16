@@ -278,13 +278,15 @@ pub fn MemColumnsDb(comptime T: type) type {
 
         /// Create a new `MemColumnsDb` with one `MemoryDatabase` per column.
         ///
-        /// Uses `.receipts` as the `DbName` for all columns. The `DbName`
-        /// identifies the logical database group; individual columns are
-        /// distinguished by the enum key, not by `DbName`.
-        pub fn init(allocator: std.mem.Allocator) Self {
+        /// The `db_name` identifies the logical database group; individual
+        /// columns are distinguished by the enum key, not by `DbName`.
+        /// Callers should pass the appropriate name for the column family
+        /// (e.g., `.receipts` for `ReceiptsColumns`, `.blob_transactions`
+        /// for `BlobTxsColumns`).
+        pub fn init(allocator: std.mem.Allocator, db_name: DbName) Self {
             var databases: std.EnumArray(T, MemoryDatabase) = undefined;
             for (std.meta.tags(T)) |tag| {
-                databases.set(tag, MemoryDatabase.init(allocator, .receipts));
+                databases.set(tag, MemoryDatabase.init(allocator, db_name));
             }
             return .{ .databases = databases, .allocator = allocator };
         }
@@ -646,7 +648,7 @@ test "ColumnsDb startWriteBatch then createSnapshot end-to-end" {
 // -- MemColumnsDb tests ------------------------------------------------------
 
 test "MemColumnsDb init creates N databases" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
     defer mcdb.deinit();
 
     // Each column should have an empty MemoryDatabase.
@@ -656,7 +658,7 @@ test "MemColumnsDb init creates N databases" {
 }
 
 test "MemColumnsDb deinit frees all memory (leak check)" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
 
     // Write data to each column to ensure there's memory to free.
     var cdb = mcdb.columnsDb();
@@ -669,7 +671,7 @@ test "MemColumnsDb deinit frees all memory (leak check)" {
 }
 
 test "MemColumnsDb columnsDb returns working interface" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
     defer mcdb.deinit();
 
     var cdb = mcdb.columnsDb();
@@ -689,7 +691,7 @@ test "MemColumnsDb columnsDb returns working interface" {
 }
 
 test "MemColumnsDb column isolation" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
     defer mcdb.deinit();
 
     var cdb = mcdb.columnsDb();
@@ -707,7 +709,7 @@ test "MemColumnsDb column isolation" {
 }
 
 test "MemColumnsDb full round-trip put/get per column" {
-    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.testing.allocator, .blob_transactions);
     defer mcdb.deinit();
 
     var cdb = mcdb.columnsDb();
@@ -730,7 +732,7 @@ test "MemColumnsDb full round-trip put/get per column" {
 }
 
 test "MemColumnsDb write batch round-trip" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
     defer mcdb.deinit();
 
     var cdb = mcdb.columnsDb();
@@ -752,7 +754,7 @@ test "MemColumnsDb write batch round-trip" {
 }
 
 test "MemColumnsDb snapshot isolation" {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator);
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
     defer mcdb.deinit();
 
     var cdb = mcdb.columnsDb();
