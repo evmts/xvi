@@ -12,10 +12,11 @@
 ///
 /// ## Generic Types
 ///
-/// - `ColumnsDb(T)` — Non-owning column family accessor
-/// - `ColumnsWriteBatch(T)` — Cross-column batched writes
-/// - `ColumnDbSnapshot(T)` — Cross-column consistent snapshots
-/// - `MemColumnsDb(T)` — In-memory implementation (owns N MemoryDatabases)
+/// - `ColumnsDb(T)` — Non-owning column family accessor (IColumnsDb<TKey>)
+/// - `ColumnsWriteBatch(T)` — Cross-column batched writes (IColumnsWriteBatch<TKey>)
+/// - `ColumnDbSnapshot(T)` — Cross-column consistent snapshots (IColumnDbSnapshot<TKey>)
+/// - `MemColumnsDb(T)` — In-memory implementation (MemColumnsDb<TKey>)
+/// - `ReadOnlyColumnsDb(T)` — Read-only wrapper with optional overlay (ReadOnlyColumnsDb<TKey>)
 const std = @import("std");
 const adapter = @import("adapter.zig");
 const Database = adapter.Database;
