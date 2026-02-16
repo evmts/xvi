@@ -25,6 +25,7 @@ const Error = adapter.Error;
 const memory = @import("memory.zig");
 const MemoryDatabase = memory.MemoryDatabase;
 const DbName = adapter.DbName;
+const DbMetric = adapter.DbMetric;
 const ReadFlags = adapter.ReadFlags;
 
 /// Column families for receipt storage.
@@ -151,6 +152,57 @@ pub fn ColumnsDb(comptime T: type) type {
                 created += 1;
             }
             return .{ .snapshots = snapshots };
+        }
+
+        // -- IDbMeta lifecycle operations (Nethermind parity) -----------------
+
+        /// Flush pending writes across all columns.
+        ///
+        /// Mirrors Nethermind's `IDbMeta.Flush(bool onlyWal)` applied to each
+        /// column database. On error, returns immediately — remaining columns
+        /// are NOT flushed.
+        pub fn flush(self: *const Self, only_wal: bool) Error!void {
+            for (comptime std.meta.tags(T)) |tag| {
+                try self.columns.get(tag).flush(only_wal);
+            }
+        }
+
+        /// Clear all entries across all columns.
+        ///
+        /// Mirrors Nethermind's `IDbMeta.Clear()` applied to each column database.
+        /// On error, returns immediately — remaining columns are NOT cleared.
+        pub fn clear(self: *const Self) Error!void {
+            for (comptime std.meta.tags(T)) |tag| {
+                try self.columns.get(tag).clear();
+            }
+        }
+
+        /// Compact storage across all columns.
+        ///
+        /// Mirrors Nethermind's `IDbMeta.Compact()` applied to each column database.
+        /// On error, returns immediately — remaining columns are NOT compacted.
+        pub fn compact(self: *const Self) Error!void {
+            for (comptime std.meta.tags(T)) |tag| {
+                try self.columns.get(tag).compact();
+            }
+        }
+
+        /// Gather diagnostic metrics aggregated across all columns.
+        ///
+        /// Mirrors Nethermind's `IDbMeta.GatherMetric()`. Returns the sum of
+        /// all per-column metrics. On error, returns immediately.
+        pub fn gatherMetric(self: *const Self) Error!DbMetric {
+            var total = DbMetric{};
+            for (comptime std.meta.tags(T)) |tag| {
+                const m = try self.columns.get(tag).gather_metric();
+                total.size += m.size;
+                total.cache_size += m.cache_size;
+                total.index_size += m.index_size;
+                total.memtable_size += m.memtable_size;
+                total.total_reads += m.total_reads;
+                total.total_writes += m.total_writes;
+            }
+            return total;
         }
     };
 }
@@ -643,6 +695,63 @@ test "ColumnsDb startWriteBatch then createSnapshot end-to-end" {
     const val = try snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
     try std.testing.expect(val != null);
     try std.testing.expectEqualStrings("batch_val", val.?.bytes);
+}
+
+// -- IDbMeta lifecycle tests --------------------------------------------------
+
+test "ColumnsDb flush delegates to all columns" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    // Write data to columns.
+    try cdb.getColumnDb(.default).put("k", "v");
+    try cdb.getColumnDb(.transactions).put("k", "v");
+
+    // Flush should succeed (MemoryDatabase flush is a no-op).
+    try cdb.flush(false);
+    try cdb.flush(true);
+}
+
+test "ColumnsDb clear removes all data from all columns" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    try cdb.getColumnDb(.default).put("k", "v");
+    try cdb.getColumnDb(.transactions).put("k", "v");
+
+    try cdb.clear();
+
+    // All data should be gone.
+    try std.testing.expect((try cdb.getColumnDb(.default).get("k")) == null);
+    try std.testing.expect((try cdb.getColumnDb(.transactions).get("k")) == null);
+}
+
+test "ColumnsDb compact delegates to all columns" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    const cdb = mcdb.columnsDb();
+
+    // Compact should succeed (MemoryDatabase compact is a no-op).
+    try cdb.compact();
+}
+
+test "ColumnsDb gatherMetric aggregates across columns" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    const cdb = mcdb.columnsDb();
+
+    // MemoryDatabase returns zeroed metrics, so aggregate should also be zero.
+    const metric = try cdb.gatherMetric();
+    try std.testing.expectEqual(@as(u64, 0), metric.size);
+    try std.testing.expectEqual(@as(u64, 0), metric.cache_size);
+    try std.testing.expectEqual(@as(u64, 0), metric.total_reads);
+    try std.testing.expectEqual(@as(u64, 0), metric.total_writes);
 }
 
 // -- MemColumnsDb tests ------------------------------------------------------
