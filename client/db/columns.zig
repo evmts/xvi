@@ -484,14 +484,14 @@ test "ColumnDbSnapshot getColumnSnapshot returns correct snapshot per column" {
     try db1.put("key", "old_txs");
 
     // Create snapshots for both columns.
-    var snap0 = try db0.database().snapshot();
-    var snap1 = try db1.database().snapshot();
+    const snap0 = try db0.database().snapshot();
+    const snap1 = try db1.database().snapshot();
 
     // Build ColumnDbSnapshot.
     // For the third column (blocks), create a trivial db + snapshot.
     var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
     defer db2.deinit();
-    var snap2 = try db2.database().snapshot();
+    const snap2 = try db2.database().snapshot();
 
     var col_snap = ColumnDbSnapshot(ReceiptsColumns){
         .snapshots = std.EnumArray(ReceiptsColumns, DbSnapshot).init(.{
@@ -526,9 +526,9 @@ test "ColumnDbSnapshot deinit releases all snapshot resources" {
 
     try db0.put("a", "1");
 
-    var snap0 = try db0.database().snapshot();
-    var snap1 = try db1.database().snapshot();
-    var snap2 = try db2.database().snapshot();
+    const snap0 = try db0.database().snapshot();
+    const snap1 = try db1.database().snapshot();
+    const snap2 = try db2.database().snapshot();
 
     var col_snap = ColumnDbSnapshot(ReceiptsColumns){
         .snapshots = std.EnumArray(ReceiptsColumns, DbSnapshot).init(.{

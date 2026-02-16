@@ -44,6 +44,7 @@ const rocksdb = @import("rocksdb.zig");
 const read_only = @import("read_only.zig");
 const provider = @import("provider.zig");
 const ro_provider = @import("read_only_provider.zig");
+const columns = @import("columns.zig");
 
 // -- Public API: flat re-exports of all user-facing types -----------------
 
@@ -88,6 +89,18 @@ pub const ProviderError = provider.ProviderError;
 /// Read-only provider wrapper with optional per-DB overlay.
 pub const ReadOnlyDbProvider = ro_provider.ReadOnlyDbProvider;
 pub const ReadOnlyProviderError = ro_provider.ReadOnlyProviderError;
+/// Comptime-generic column family database (mirrors Nethermind's `IColumnsDb<TKey>`).
+pub const ColumnsDb = columns.ColumnsDb;
+/// Cross-column write batch (mirrors Nethermind's `IColumnsWriteBatch<TKey>`).
+pub const ColumnsWriteBatch = columns.ColumnsWriteBatch;
+/// Cross-column snapshot (mirrors Nethermind's `IColumnDbSnapshot<TKey>`).
+pub const ColumnDbSnapshot = columns.ColumnDbSnapshot;
+/// In-memory column family database (mirrors Nethermind's `MemColumnsDb<TKey>`).
+pub const MemColumnsDb = columns.MemColumnsDb;
+/// Column families for receipt storage.
+pub const ReceiptsColumns = columns.ReceiptsColumns;
+/// Column families for blob transaction storage (EIP-4844).
+pub const BlobTxsColumns = columns.BlobTxsColumns;
 
 test {
     // Ensure all sub-modules compile and their tests run.
