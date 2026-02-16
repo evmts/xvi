@@ -227,10 +227,27 @@ pub fn ColumnsDb(comptime T: type) type {
 /// Mirrors Nethermind's `IColumnsWriteBatch<TKey>`. Wraps one `WriteBatch` per
 /// column. Operations are accumulated per-column and committed together.
 ///
-/// NOTE: Atomicity is per-column (each column's WriteBatch commits independently).
-/// True cross-column atomicity requires the underlying backend to support it
+/// ## Lifecycle (matches Nethermind's IDisposable pattern)
+///
+/// ```
+/// var batch = cdb.startWriteBatch(allocator);
+/// defer batch.deinit();          // always release memory
+///
+/// try batch.getColumnBatch(.col1).put("k", "v");
+/// try batch.commit();            // apply all pending ops
+/// // batch is reusable after commit (ops cleared, memory reclaimed)
+/// ```
+///
+/// ## Atomicity
+///
+/// Commits are **per-column** — each column's `WriteBatch` commits independently.
+/// True cross-column atomicity requires the backend to support it natively
 /// (e.g., RocksDB WriteBatch across column families). For `MemoryDatabase`
 /// backends, commits are sequential per-column.
+///
+/// On partial failure: `committed_columns` tracks how many columns succeeded.
+/// Already-committed columns are NOT rolled back. Callers can inspect
+/// `committed_columns` to determine which columns need reconciliation.
 pub fn ColumnsWriteBatch(comptime T: type) type {
     comptime {
         if (@typeInfo(T) != .@"enum") {
@@ -243,6 +260,10 @@ pub fn ColumnsWriteBatch(comptime T: type) type {
 
         /// One `WriteBatch` per column.
         batches: std.EnumArray(T, WriteBatch),
+        /// Number of columns successfully committed during the last `commit()`.
+        /// Reset to 0 on each `commit()` call. On error, indicates how many
+        /// columns were committed before the failure.
+        committed_columns: usize = 0,
 
         /// Create a cross-column write batch targeting the given columns.
         pub fn init(allocator: std.mem.Allocator, columns: std.EnumArray(T, Database)) Self {
@@ -263,13 +284,31 @@ pub fn ColumnsWriteBatch(comptime T: type) type {
         /// Commits are sequential per-column. If a column commit fails,
         /// the error is returned immediately and remaining columns are
         /// NOT committed. Previously committed columns are NOT rolled back.
+        ///
+        /// On success, `committed_columns` equals the number of enum variants.
+        /// On error, `committed_columns` indicates how many columns succeeded.
         pub fn commit(self: *Self) Error!void {
+            self.committed_columns = 0;
             for (std.meta.tags(T)) |tag| {
                 try self.batches.getPtr(tag).commit();
+                self.committed_columns += 1;
+            }
+        }
+
+        /// Discard all pending operations across all columns without committing.
+        ///
+        /// Resets each per-column batch, freeing accumulated key/value memory.
+        /// The batch is reusable after `reset()`.
+        pub fn reset(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.batches.getPtr(tag).clear();
             }
         }
 
         /// Release all memory owned by all column batches.
+        ///
+        /// Must be called even after `commit()` to free internal allocations.
+        /// Mirrors Nethermind's `IDisposable.Dispose()` pattern.
         pub fn deinit(self: *Self) void {
             for (std.meta.tags(T)) |tag| {
                 self.batches.getPtr(tag).deinit();
