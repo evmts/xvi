@@ -81,6 +81,49 @@ pub const BlobTxsColumns = enum {
     }
 };
 
+/// Generic column family database.
+///
+/// Mirrors Nethermind's `IColumnsDb<TKey>` interface. Each enum variant of `T`
+/// maps to a separate `Database` instance. The `ColumnsDb` does not own the
+/// underlying databases; lifetime management is the caller's responsibility.
+///
+/// `T` must be a Zig `enum` type (validated at comptime).
+///
+/// Uses `std.EnumArray(T, Database)` for zero-allocation dense column mapping,
+/// following the same pattern as `DbProvider`.
+pub fn ColumnsDb(comptime T: type) type {
+    comptime {
+        if (@typeInfo(T) != .@"enum") {
+            @compileError("ColumnsDb requires an enum type, got " ++ @typeName(T));
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        /// Dense mapping from column enum variant to `Database` handle.
+        columns: std.EnumArray(T, Database),
+
+        /// Get the `Database` for a specific column.
+        pub fn getColumnDb(self: *const Self, key: T) Database {
+            return self.columns.get(key);
+        }
+
+        /// Return all column keys (comptime-known slice of enum fields).
+        pub fn columnKeys() []const T {
+            return comptime blk: {
+                const fields = std.meta.fields(T);
+                var keys: [fields.len]T = undefined;
+                for (fields, 0..) |field, i| {
+                    keys[i] = @enumFromInt(field.value);
+                }
+                const result = keys;
+                break :blk &result;
+            };
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -105,4 +148,57 @@ test "BlobTxsColumns to_string matches Nethermind" {
     try std.testing.expectEqualStrings("FullBlobTxs", BlobTxsColumns.full_blob_txs.to_string());
     try std.testing.expectEqualStrings("LightBlobTxs", BlobTxsColumns.light_blob_txs.to_string());
     try std.testing.expectEqualStrings("ProcessedTxs", BlobTxsColumns.processed_txs.to_string());
+}
+
+test "ColumnsDb getColumnDb returns correct Database per column" {
+    // Create 3 MemoryDatabases — one per ReceiptsColumns variant.
+    var db_default = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db_default.deinit();
+    var db_txs = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db_txs.deinit();
+    var db_blocks = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db_blocks.deinit();
+
+    // Write unique values to each database.
+    try db_default.put("key", "default_val");
+    try db_txs.put("key", "txs_val");
+    try db_blocks.put("key", "blocks_val");
+
+    // Build the ColumnsDb.
+    var cdb = ColumnsDb(ReceiptsColumns){
+        .columns = std.EnumArray(ReceiptsColumns, Database).init(.{
+            .default = db_default.database(),
+            .transactions = db_txs.database(),
+            .blocks = db_blocks.database(),
+        }),
+    };
+
+    // Verify each column returns the correct database.
+    const val_default = try cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(val_default != null);
+    try std.testing.expectEqualStrings("default_val", val_default.?.bytes);
+
+    const val_txs = try cdb.getColumnDb(.transactions).get("key");
+    try std.testing.expect(val_txs != null);
+    try std.testing.expectEqualStrings("txs_val", val_txs.?.bytes);
+
+    const val_blocks = try cdb.getColumnDb(.blocks).get("key");
+    try std.testing.expect(val_blocks != null);
+    try std.testing.expectEqualStrings("blocks_val", val_blocks.?.bytes);
+}
+
+test "ColumnsDb columnKeys returns all enum variants" {
+    const keys = ColumnsDb(ReceiptsColumns).columnKeys();
+    try std.testing.expectEqual(@as(usize, 3), keys.len);
+    try std.testing.expectEqual(ReceiptsColumns.default, keys[0]);
+    try std.testing.expectEqual(ReceiptsColumns.transactions, keys[1]);
+    try std.testing.expectEqual(ReceiptsColumns.blocks, keys[2]);
+}
+
+test "ColumnsDb columnKeys works for BlobTxsColumns" {
+    const keys = ColumnsDb(BlobTxsColumns).columnKeys();
+    try std.testing.expectEqual(@as(usize, 3), keys.len);
+    try std.testing.expectEqual(BlobTxsColumns.full_blob_txs, keys[0]);
+    try std.testing.expectEqual(BlobTxsColumns.light_blob_txs, keys[1]);
+    try std.testing.expectEqual(BlobTxsColumns.processed_txs, keys[2]);
 }
