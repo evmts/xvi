@@ -97,6 +97,8 @@ pub const ColumnsWriteBatch = columns.ColumnsWriteBatch;
 pub const ColumnDbSnapshot = columns.ColumnDbSnapshot;
 /// In-memory column family database (mirrors Nethermind's `MemColumnsDb<TKey>`).
 pub const MemColumnsDb = columns.MemColumnsDb;
+/// Read-only column family database (mirrors Nethermind's `ReadOnlyColumnsDb<TKey>`).
+pub const ReadOnlyColumnsDb = columns.ReadOnlyColumnsDb;
 /// Column families for receipt storage.
 pub const ReceiptsColumns = columns.ReceiptsColumns;
 /// Column families for blob transaction storage (EIP-4844).

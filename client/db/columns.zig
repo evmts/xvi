@@ -24,6 +24,8 @@ const DbSnapshot = adapter.DbSnapshot;
 const Error = adapter.Error;
 const memory = @import("memory.zig");
 const MemoryDatabase = memory.MemoryDatabase;
+const read_only = @import("read_only.zig");
+const ReadOnlyDb = read_only.ReadOnlyDb;
 const DbName = adapter.DbName;
 const DbMetric = adapter.DbMetric;
 const ReadFlags = adapter.ReadFlags;
@@ -152,6 +154,19 @@ pub fn ColumnsDb(comptime T: type) type {
                 created += 1;
             }
             return .{ .snapshots = snapshots };
+        }
+
+        /// Create a read-only view of this column database.
+        ///
+        /// Mirrors Nethermind's `IColumnsDb<TKey>.CreateReadOnly(bool)`.
+        /// When `create_in_mem_write_store` is true, each column gets an
+        /// in-memory overlay for temporary writes (cleared via
+        /// `ReadOnlyColumnsDb.clearTempChanges()`).
+        ///
+        /// The returned `ReadOnlyColumnsDb` owns the `ReadOnlyDb` instances.
+        /// The caller must call `deinit()` when done.
+        pub fn createReadOnly(self: *const Self, allocator: std.mem.Allocator, create_in_mem_write_store: bool) Error!ReadOnlyColumnsDb(T) {
+            return ReadOnlyColumnsDb(T).init(allocator, self.columns, create_in_mem_write_store);
         }
 
         // -- IDbMeta lifecycle operations (Nethermind parity) -----------------
@@ -361,6 +376,92 @@ pub fn MemColumnsDb(comptime T: type) type {
                 db_array.set(tag, self.databases.getPtr(tag).database());
             }
             return .{ .columns = db_array };
+        }
+    };
+}
+
+/// Read-only column family database.
+///
+/// Mirrors Nethermind's `ReadOnlyColumnsDb<TKey>`. Wraps each column in a
+/// `ReadOnlyDb` with an optional in-memory write overlay. Reads delegate to
+/// the underlying `Database`; writes go to the overlay (if enabled) or error.
+///
+/// Call `clearTempChanges()` to discard all overlay writes across all columns.
+/// Call `deinit()` to release all owned `ReadOnlyDb` resources.
+pub fn ReadOnlyColumnsDb(comptime T: type) type {
+    comptime {
+        if (@typeInfo(T) != .@"enum") {
+            @compileError("ReadOnlyColumnsDb requires an enum type, got " ++ @typeName(T));
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        /// Owned `ReadOnlyDb` instances, one per column.
+        read_only_dbs: std.EnumArray(T, ReadOnlyDb),
+        /// Allocator used for construction.
+        allocator: std.mem.Allocator,
+
+        /// Create a read-only view of the given columns.
+        ///
+        /// If `create_in_mem_write_store` is true, each column gets an in-memory
+        /// overlay for temporary writes. Otherwise, writes will error.
+        ///
+        /// If creating an overlay for one column fails, already-created overlays
+        /// are cleaned up via `errdefer`.
+        pub fn init(allocator: std.mem.Allocator, columns: std.EnumArray(T, Database), create_in_mem_write_store: bool) Error!Self {
+            var read_only_dbs: std.EnumArray(T, ReadOnlyDb) = undefined;
+            const tags = comptime std.meta.tags(T);
+            var created: usize = 0;
+            errdefer {
+                for (tags[0..created]) |tag| {
+                    read_only_dbs.getPtr(tag).deinit();
+                }
+            }
+            for (tags) |tag| {
+                if (create_in_mem_write_store) {
+                    read_only_dbs.set(tag, try ReadOnlyDb.init_with_write_store(columns.get(tag), allocator));
+                } else {
+                    read_only_dbs.set(tag, ReadOnlyDb.init(columns.get(tag)));
+                }
+                created += 1;
+            }
+            return .{ .read_only_dbs = read_only_dbs, .allocator = allocator };
+        }
+
+        /// Release all owned `ReadOnlyDb` resources.
+        pub fn deinit(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.read_only_dbs.getPtr(tag).deinit();
+            }
+        }
+
+        /// Get the read-only `Database` interface for a specific column.
+        pub fn getColumnDb(self: *Self, key: T) Database {
+            return self.read_only_dbs.getPtr(key).database();
+        }
+
+        /// Return a `ColumnsDb(T)` wrapping the read-only views.
+        ///
+        /// The returned `ColumnsDb` is valid only while this `ReadOnlyColumnsDb`
+        /// is alive. Writes through this interface go to the overlay (if enabled).
+        pub fn columnsDb(self: *Self) ColumnsDb(T) {
+            var db_array: std.EnumArray(T, Database) = undefined;
+            for (std.meta.tags(T)) |tag| {
+                db_array.set(tag, self.read_only_dbs.getPtr(tag).database());
+            }
+            return .{ .columns = db_array };
+        }
+
+        /// Discard all temporary overlay writes across all columns.
+        ///
+        /// No-op for columns without write overlay.
+        /// Mirrors Nethermind's `ReadOnlyColumnsDb.ClearTempChanges()`.
+        pub fn clearTempChanges(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.read_only_dbs.getPtr(tag).clear_temp_changes();
+            }
         }
     };
 }
@@ -885,4 +986,140 @@ test "MemColumnsDb snapshot isolation" {
     const live_val = try cdb.getColumnDb(.default).get("key");
     try std.testing.expect(live_val != null);
     try std.testing.expectEqualStrings("after_snapshot", live_val.?.bytes);
+}
+
+// -- ReadOnlyColumnsDb tests -------------------------------------------------
+
+test "ReadOnlyColumnsDb strict read-only rejects writes" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("key", "value");
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, cdb.columns, false);
+    defer ro.deinit();
+
+    // Reads should work.
+    const val = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("value", val.?.bytes);
+
+    // Writes should be rejected.
+    try std.testing.expectError(error.StorageError, ro.getColumnDb(.default).put("key", "new"));
+}
+
+test "ReadOnlyColumnsDb with overlay buffers writes" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("key", "original");
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, cdb.columns, true);
+    defer ro.deinit();
+
+    // Write to overlay.
+    try ro.getColumnDb(.default).put("key", "overlay_value");
+
+    // Read sees overlay value.
+    const val = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("overlay_value", val.?.bytes);
+
+    // Underlying database is untouched.
+    const orig = try cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(orig != null);
+    try std.testing.expectEqualStrings("original", orig.?.bytes);
+}
+
+test "ReadOnlyColumnsDb clearTempChanges discards overlay writes" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("key", "original");
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, cdb.columns, true);
+    defer ro.deinit();
+
+    // Write to overlay.
+    try ro.getColumnDb(.default).put("key", "temp");
+    try ro.getColumnDb(.transactions).put("tx_key", "tx_val");
+
+    // Clear all overlays.
+    ro.clearTempChanges();
+
+    // Should fall back to underlying value.
+    const val = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("original", val.?.bytes);
+
+    // Overlay-only key should be gone.
+    const tx_val = try ro.getColumnDb(.transactions).get("tx_key");
+    try std.testing.expect(tx_val == null);
+}
+
+test "ReadOnlyColumnsDb columnsDb returns working interface" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var base = mcdb.columnsDb();
+    try base.getColumnDb(.default).put("key", "value");
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, base.columns, true);
+    defer ro.deinit();
+
+    const ro_cdb = ro.columnsDb();
+
+    // Read through ColumnsDb interface.
+    const val = try ro_cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("value", val.?.bytes);
+}
+
+test "ReadOnlyColumnsDb createReadOnly factory on ColumnsDb" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("key", "value");
+
+    // Use the factory method on ColumnsDb.
+    var ro = try cdb.createReadOnly(std.testing.allocator, true);
+    defer ro.deinit();
+
+    // Read should work.
+    const val = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("value", val.?.bytes);
+
+    // Write to overlay should work.
+    try ro.getColumnDb(.default).put("key", "overlay");
+    const ov = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(ov != null);
+    try std.testing.expectEqualStrings("overlay", ov.?.bytes);
+
+    // Clear should revert.
+    ro.clearTempChanges();
+    const reverted = try ro.getColumnDb(.default).get("key");
+    try std.testing.expect(reverted != null);
+    try std.testing.expectEqualStrings("value", reverted.?.bytes);
+}
+
+test "ReadOnlyColumnsDb deinit frees all memory (leak check)" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    const cdb = mcdb.columnsDb();
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, cdb.columns, true);
+
+    // Write data to overlay.
+    try ro.getColumnDb(.default).put("k1", "v1_with_length");
+    try ro.getColumnDb(.transactions).put("k2", "v2_with_length");
+    try ro.getColumnDb(.blocks).put("k3", "v3_with_length");
+
+    // If deinit doesn't free properly, testing allocator will report a leak.
+    ro.deinit();
 }
