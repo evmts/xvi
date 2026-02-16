@@ -121,6 +121,37 @@ pub fn ColumnsDb(comptime T: type) type {
                 break :blk &result;
             };
         }
+
+        /// Create a cross-column write batch targeting all columns.
+        ///
+        /// Mirrors Nethermind's `IColumnsDb<TKey>.StartWriteBatch()`.
+        pub fn startWriteBatch(self: *const Self, allocator: std.mem.Allocator) ColumnsWriteBatch(T) {
+            return ColumnsWriteBatch(T).init(allocator, self.columns);
+        }
+
+        /// Create a cross-column snapshot for consistent point-in-time reads.
+        ///
+        /// Mirrors Nethermind's `IColumnsDb<TKey>.CreateSnapshot()`.
+        ///
+        /// If creating a snapshot for one column succeeds but another fails,
+        /// already-created snapshots are cleaned up via `errdefer`.
+        pub fn createSnapshot(self: *const Self) Error!ColumnDbSnapshot(T) {
+            var snapshots: std.EnumArray(T, DbSnapshot) = undefined;
+            const tags = comptime std.meta.tags(T);
+            // Track how many snapshots were successfully created for cleanup.
+            var created: usize = 0;
+            errdefer {
+                // Clean up already-created snapshots on partial failure.
+                for (tags[0..created]) |tag| {
+                    snapshots.get(tag).deinit();
+                }
+            }
+            for (tags) |tag| {
+                snapshots.set(tag, try self.columns.get(tag).snapshot());
+                created += 1;
+            }
+            return .{ .snapshots = snapshots };
+        }
     };
 }
 
@@ -451,4 +482,105 @@ test "ColumnDbSnapshot deinit releases all snapshot resources" {
 
     // If deinit doesn't release properly, testing allocator will report a leak.
     col_snap.deinit();
+}
+
+test "ColumnsDb startWriteBatch returns working batch" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cdb = ColumnsDb(ReceiptsColumns){
+        .columns = std.EnumArray(ReceiptsColumns, Database).init(.{
+            .default = db0.database(),
+            .transactions = db1.database(),
+            .blocks = db2.database(),
+        }),
+    };
+
+    var batch = cdb.startWriteBatch(std.testing.allocator);
+    defer batch.deinit();
+
+    try batch.getColumnBatch(.default).put("k1", "v1");
+    try batch.getColumnBatch(.blocks).put("k2", "v2");
+    try batch.commit();
+
+    // Verify data was written.
+    const val1 = db0.get("k1");
+    try std.testing.expect(val1 != null);
+    try std.testing.expectEqualStrings("v1", val1.?.bytes);
+
+    const val2 = db2.get("k2");
+    try std.testing.expect(val2 != null);
+    try std.testing.expectEqualStrings("v2", val2.?.bytes);
+
+    // Other column unaffected.
+    try std.testing.expect(db1.get("k1") == null);
+}
+
+test "ColumnsDb createSnapshot returns working snapshot" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    try db0.put("key", "before");
+
+    const cdb = ColumnsDb(ReceiptsColumns){
+        .columns = std.EnumArray(ReceiptsColumns, Database).init(.{
+            .default = db0.database(),
+            .transactions = db1.database(),
+            .blocks = db2.database(),
+        }),
+    };
+
+    var snap = try cdb.createSnapshot();
+    defer snap.deinit();
+
+    // Write after snapshot.
+    try db0.put("key", "after");
+
+    // Snapshot sees old value.
+    const val = try snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("before", val.?.bytes);
+}
+
+test "ColumnsDb startWriteBatch then createSnapshot end-to-end" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cdb = ColumnsDb(ReceiptsColumns){
+        .columns = std.EnumArray(ReceiptsColumns, Database).init(.{
+            .default = db0.database(),
+            .transactions = db1.database(),
+            .blocks = db2.database(),
+        }),
+    };
+
+    // Write via batch.
+    var batch = cdb.startWriteBatch(std.testing.allocator);
+    defer batch.deinit();
+    try batch.getColumnBatch(.default).put("key", "batch_val");
+    try batch.commit();
+
+    // Snapshot after batch commit.
+    var snap = try cdb.createSnapshot();
+    defer snap.deinit();
+
+    // Write again.
+    try db0.put("key", "overwritten");
+
+    // Snapshot sees batch_val.
+    const val = try snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("batch_val", val.?.bytes);
 }
