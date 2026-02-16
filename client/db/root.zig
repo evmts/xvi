@@ -104,8 +104,121 @@ pub const ReadOnlyColumnsDb = columns.ReadOnlyColumnsDb;
 pub const ReceiptsColumns = columns.ReceiptsColumns;
 /// Column families for blob transaction storage (EIP-4844).
 pub const BlobTxsColumns = columns.BlobTxsColumns;
+/// Owned database handle with cleanup callback (returned by factories).
+pub const OwnedDatabase = adapter.OwnedDatabase;
+/// Type-erased database factory interface (mirrors Nethermind's `IDbFactory`).
+pub const DbFactory = factory.DbFactory;
+/// In-memory database factory for testing and diagnostic modes.
+pub const MemDbFactory = factory.MemDbFactory;
+/// Sentinel factory that rejects all creation attempts.
+pub const NullDbFactory = factory.NullDbFactory;
+/// Decorator factory returning read-only database views.
+pub const ReadOnlyDbFactory = factory.ReadOnlyDbFactory;
+/// Comptime helper for creating column databases via a concrete factory.
+pub const createColumnsDb = factory.createColumnsDb;
+
+const std = @import("std");
 
 test {
     // Ensure all sub-modules compile and their tests run.
-    @import("std").testing.refAllDecls(@This());
+    std.testing.refAllDecls(@This());
+}
+
+test "integration: MemDbFactory populates DbProvider" {
+    const testing = std.testing;
+
+    var mem_factory = MemDbFactory.init(testing.allocator);
+    defer mem_factory.deinit();
+
+    var prov = DbProvider.init();
+
+    // Create databases via factory
+    const state_db = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer state_db.deinit();
+    prov.register(.state, state_db.db);
+
+    const code_db = try mem_factory.factory().createDb(DbSettings.init(.code, "code"));
+    defer code_db.deinit();
+    prov.register(.code, code_db.db);
+
+    // Use provider as normal
+    const db = try prov.get(.state);
+    try db.put("key", "value");
+    const val = try db.get("key");
+    try testing.expect(val != null);
+    defer val.?.release();
+    try testing.expectEqualStrings("value", val.?.bytes);
+
+    // Code db is independent
+    const code = try prov.get(.code);
+    try code.put("code_key", "bytecode");
+    const code_val = try code.get("code_key");
+    try testing.expect(code_val != null);
+    defer code_val.?.release();
+    try testing.expectEqualStrings("bytecode", code_val.?.bytes);
+
+    // State db doesn't have code_key
+    const cross = try db.get("code_key");
+    try testing.expect(cross == null);
+}
+
+test "integration: ReadOnlyDbFactory wraps MemDbFactory" {
+    const testing = std.testing;
+
+    var mem_factory = MemDbFactory.init(testing.allocator);
+    defer mem_factory.deinit();
+
+    // Write data to a base database
+    const base_db = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer base_db.deinit();
+    try base_db.db.put("existing", "original");
+
+    // Create a read-only factory wrapping the mem factory
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), testing.allocator);
+    defer ro_factory.deinit();
+
+    // Create a read-only database
+    const ro_owned = try ro_factory.factory().createDb(DbSettings.init(.headers, "headers"));
+    defer ro_owned.deinit();
+
+    // Read-only db starts empty (it's a new database, not wrapping base_db)
+    const val = try ro_owned.db.get("existing");
+    try testing.expect(val == null);
+
+    // But overlay writes work
+    try ro_owned.db.put("new_key", "new_value");
+    const new_val = try ro_owned.db.get("new_key");
+    try testing.expect(new_val != null);
+    defer new_val.?.release();
+    try testing.expectEqualStrings("new_value", new_val.?.bytes);
+}
+
+test "integration: factory swap at startup (MemDb vs NullDb)" {
+    const testing = std.testing;
+
+    // Simulate startup config: choose factory based on mode
+    const use_mem = true;
+
+    var mem_factory = MemDbFactory.init(testing.allocator);
+    defer mem_factory.deinit();
+
+    var null_factory = NullDbFactory.init();
+    defer null_factory.deinit();
+
+    // Select factory at "startup"
+    const f: DbFactory = if (use_mem) mem_factory.factory() else null_factory.factory();
+
+    // Consumer code doesn't know which factory was chosen
+    const result = f.createDb(DbSettings.init(.state, "state"));
+    if (result) |owned| {
+        defer owned.deinit();
+        try owned.db.put("key", "value");
+        const val = try owned.db.get("key");
+        try testing.expect(val != null);
+        defer val.?.release();
+        try testing.expectEqualStrings("value", val.?.bytes);
+    } else |_| {
+        // NullDbFactory would error here
+        try testing.expect(!use_mem);
+    }
 }
