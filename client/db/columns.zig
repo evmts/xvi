@@ -124,6 +124,71 @@ pub fn ColumnsDb(comptime T: type) type {
     };
 }
 
+/// Cross-column write batch.
+///
+/// Mirrors Nethermind's `IColumnsWriteBatch<TKey>`. Wraps one `WriteBatch` per
+/// column. Operations are accumulated per-column and committed together.
+///
+/// NOTE: Atomicity is per-column (each column's WriteBatch commits independently).
+/// True cross-column atomicity requires the underlying backend to support it
+/// (e.g., RocksDB WriteBatch across column families). For `MemoryDatabase`
+/// backends, commits are sequential per-column.
+pub fn ColumnsWriteBatch(comptime T: type) type {
+    comptime {
+        if (@typeInfo(T) != .@"enum") {
+            @compileError("ColumnsWriteBatch requires an enum type, got " ++ @typeName(T));
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        /// One `WriteBatch` per column.
+        batches: std.EnumArray(T, WriteBatch),
+
+        /// Create a cross-column write batch targeting the given columns.
+        pub fn init(allocator: std.mem.Allocator, columns: std.EnumArray(T, Database)) Self {
+            var batches: std.EnumArray(T, WriteBatch) = undefined;
+            for (std.meta.tags(T)) |tag| {
+                batches.set(tag, WriteBatch.init(allocator, columns.get(tag)));
+            }
+            return .{ .batches = batches };
+        }
+
+        /// Get the `WriteBatch` for a specific column.
+        pub fn getColumnBatch(self: *Self, key: T) *WriteBatch {
+            return self.batches.getPtr(key);
+        }
+
+        /// Commit all pending operations across all columns.
+        ///
+        /// Commits are sequential per-column. If a column commit fails,
+        /// the error is returned immediately and remaining columns are
+        /// NOT committed. Previously committed columns are NOT rolled back.
+        pub fn commit(self: *Self) Error!void {
+            for (std.meta.tags(T)) |tag| {
+                try self.batches.getPtr(tag).commit();
+            }
+        }
+
+        /// Release all memory owned by all column batches.
+        pub fn deinit(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.batches.getPtr(tag).deinit();
+            }
+        }
+
+        /// Return total pending operations across all columns.
+        pub fn pending(self: *const Self) usize {
+            var total: usize = 0;
+            for (std.meta.tags(T)) |tag| {
+                total += self.batches.get(tag).pending();
+            }
+            return total;
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -201,4 +266,87 @@ test "ColumnsDb columnKeys works for BlobTxsColumns" {
     try std.testing.expectEqual(BlobTxsColumns.full_blob_txs, keys[0]);
     try std.testing.expectEqual(BlobTxsColumns.light_blob_txs, keys[1]);
     try std.testing.expectEqual(BlobTxsColumns.processed_txs, keys[2]);
+}
+
+test "ColumnsWriteBatch getColumnBatch returns correct batch per column" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    // Queue ops on different column batches.
+    try batch.getColumnBatch(.default).put("k1", "v1");
+    try batch.getColumnBatch(.transactions).put("k2", "v2");
+    try batch.getColumnBatch(.blocks).put("k3", "v3");
+
+    try std.testing.expectEqual(@as(usize, 3), batch.pending());
+}
+
+test "ColumnsWriteBatch commit applies all ops across columns" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    try batch.getColumnBatch(.default).put("k1", "v1");
+    try batch.getColumnBatch(.transactions).put("k2", "v2");
+    try batch.commit();
+
+    try std.testing.expectEqual(@as(usize, 0), batch.pending());
+
+    // Verify data was written to the correct databases.
+    const val1 = db0.get("k1");
+    try std.testing.expect(val1 != null);
+    try std.testing.expectEqualStrings("v1", val1.?.bytes);
+
+    const val2 = db1.get("k2");
+    try std.testing.expect(val2 != null);
+    try std.testing.expectEqualStrings("v2", val2.?.bytes);
+
+    // db2 should have no data.
+    try std.testing.expect(db2.get("k3") == null);
+}
+
+test "ColumnsWriteBatch deinit frees all memory (leak check)" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    try batch.getColumnBatch(.default).put("key", "large_value_for_alloc");
+    try batch.getColumnBatch(.transactions).put("key2", "another_value");
+
+    // If deinit doesn't free properly, testing allocator will report a leak.
+    batch.deinit();
 }
