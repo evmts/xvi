@@ -326,6 +326,55 @@ test "DbFactory: init generates correct wrappers" {
     try std.testing.expectEqual(@as(u64, 101), backend.value);
 }
 
+/// Sentinel factory that rejects all database creation attempts.
+///
+/// Mirrors Nethermind's `NullRocksDbFactory` (`Nethermind.Db/NullRocksDbFactory.cs`).
+/// Used as a default/sentinel when no real factory is configured, preventing
+/// accidental database creation in modes that shouldn't have persistence.
+///
+/// All `createDb` calls return `error.UnsupportedOperation`.
+///
+/// ## Usage
+///
+/// ```zig
+/// var null_factory = NullDbFactory.init();
+/// const factory = null_factory.factory();
+///
+/// // Will always error
+/// const result = factory.createDb(DbSettings.init(.state, "state"));
+/// // result == error.UnsupportedOperation
+/// ```
+pub const NullDbFactory = struct {
+    /// Create a new NullDbFactory.
+    pub fn init() NullDbFactory {
+        return .{};
+    }
+
+    /// No-op — NullDbFactory holds no resources.
+    pub fn deinit(self: *NullDbFactory) void {
+        _ = self;
+    }
+
+    /// Return a `DbFactory` vtable interface backed by this NullDbFactory.
+    pub fn factory(self: *NullDbFactory) DbFactory {
+        return DbFactory.init(NullDbFactory, self, .{
+            .create_db = createDbImpl,
+            .get_full_db_path = getFullDbPathImpl,
+            .deinit = deinitImpl,
+        });
+    }
+
+    fn createDbImpl(_: *NullDbFactory, _: DbSettings) Error!OwnedDatabase {
+        return error.UnsupportedOperation;
+    }
+
+    fn getFullDbPathImpl(_: *NullDbFactory, settings: DbSettings) []const u8 {
+        return settings.path;
+    }
+
+    fn deinitImpl(_: *NullDbFactory) void {}
+};
+
 // -- MemDbFactory tests ---------------------------------------------------
 
 test "MemDbFactory: createDb returns a functional database" {
@@ -475,4 +524,33 @@ test "MemDbFactory: createColumnsDb via comptime helper" {
     const val = try cdb.getColumnDb(.full_blob_txs).get("blob1");
     try std.testing.expect(val != null);
     try std.testing.expectEqualStrings("data", val.?.bytes);
+}
+
+// -- NullDbFactory tests --------------------------------------------------
+
+test "NullDbFactory: createDb returns UnsupportedOperation" {
+    var null_factory = NullDbFactory.init();
+    defer null_factory.deinit();
+
+    const f = null_factory.factory();
+    try std.testing.expectError(error.UnsupportedOperation, f.createDb(DbSettings.init(.state, "state")));
+}
+
+test "NullDbFactory: getFullDbPath returns settings path" {
+    var null_factory = NullDbFactory.init();
+    defer null_factory.deinit();
+
+    const path = null_factory.factory().getFullDbPath(DbSettings.init(.headers, "/tmp/headers"));
+    try std.testing.expectEqualStrings("/tmp/headers", path);
+}
+
+test "NullDbFactory: deinit is safe no-op" {
+    var null_factory = NullDbFactory.init();
+
+    // Should not panic or crash
+    null_factory.deinit();
+
+    // Also safe via vtable
+    const f = null_factory.factory();
+    f.deinit();
 }
