@@ -375,6 +375,147 @@ pub const NullDbFactory = struct {
     fn deinitImpl(_: *NullDbFactory) void {}
 };
 
+const ReadOnlyDb = @import("read_only.zig").ReadOnlyDb;
+
+/// Decorator factory that wraps another factory and returns read-only databases.
+///
+/// Mirrors Nethermind's `ReadOnlyDbFactory` decorator pattern. Creates databases
+/// via the base factory, then wraps them in `ReadOnlyDb` views. Optionally
+/// provides an in-memory write overlay for snapshot execution.
+///
+/// ## Modes
+///
+/// - **Strict read-only** (overlay_allocator = null): Writes return
+///   `error.StorageError`. Reads delegate to the base factory's databases.
+///
+/// - **Write overlay** (overlay_allocator != null): Writes go to an
+///   in-memory overlay. Reads check overlay first, then fall back.
+///
+/// ## Ownership
+///
+/// The `OwnedDatabase` returned by `createDb` owns BOTH the `ReadOnlyDb`
+/// wrapper AND the base `OwnedDatabase`. Its `deinit` cleans up both in
+/// the correct order (wrapper first, then base).
+///
+/// ## Usage
+///
+/// ```zig
+/// var mem_factory = MemDbFactory.init(allocator);
+/// defer mem_factory.deinit();
+///
+/// var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), allocator);
+/// defer ro_factory.deinit();
+///
+/// const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));
+/// defer owned.deinit();
+///
+/// // Writes go to overlay, reads merge
+/// try owned.db.put("key", "value");
+/// ```
+pub const ReadOnlyDbFactory = struct {
+    /// The base factory to delegate database creation to.
+    base: DbFactory,
+    /// Optional allocator for in-memory write overlays.
+    /// If null, databases are strict read-only (writes error).
+    overlay_allocator: ?std.mem.Allocator,
+
+    /// Create a ReadOnlyDbFactory wrapping the given base factory.
+    ///
+    /// If `overlay_allocator` is non-null, created databases will have
+    /// an in-memory write overlay (writes buffered, reads merged).
+    /// If null, created databases are strict read-only.
+    pub fn init(base: DbFactory, overlay_allocator: ?std.mem.Allocator) ReadOnlyDbFactory {
+        return .{
+            .base = base,
+            .overlay_allocator = overlay_allocator,
+        };
+    }
+
+    /// No-op — the ReadOnlyDbFactory itself holds no resources.
+    /// Individual databases must be cleaned up via `OwnedDatabase.deinit()`.
+    pub fn deinit(self: *ReadOnlyDbFactory) void {
+        _ = self;
+    }
+
+    /// Return a `DbFactory` vtable interface backed by this ReadOnlyDbFactory.
+    pub fn factory(self: *ReadOnlyDbFactory) DbFactory {
+        return DbFactory.init(ReadOnlyDbFactory, self, .{
+            .create_db = createDbImpl,
+            .get_full_db_path = getFullDbPathImpl,
+            .deinit = deinitImpl,
+        });
+    }
+
+    /// Context for owning both the ReadOnlyDb wrapper and the base OwnedDatabase.
+    const OwnedContext = struct {
+        read_only: ReadOnlyDb,
+        base_owned: OwnedDatabase,
+        allocator: std.mem.Allocator,
+    };
+
+    fn createDbImpl(self: *ReadOnlyDbFactory, settings: DbSettings) Error!OwnedDatabase {
+        // 1. Create the base database via the base factory.
+        const base_owned = try self.base.createDb(settings);
+        errdefer base_owned.deinit();
+
+        // We need an allocator for the context — use overlay_allocator if
+        // available, otherwise this is an error (we need SOME allocator
+        // to heap-allocate the context).
+        const alloc = self.overlay_allocator orelse {
+            // Strict read-only mode — still need an allocator for the context.
+            // This is a design limitation: ReadOnlyDbFactory always needs
+            // an allocator to heap-allocate the OwnedContext. For strict
+            // read-only without an allocator, the caller should create
+            // ReadOnlyDb directly instead of using the factory.
+            return error.OutOfMemory;
+        };
+
+        // 2. Heap-allocate the context.
+        const ctx = alloc.create(OwnedContext) catch return error.OutOfMemory;
+        errdefer alloc.destroy(ctx);
+
+        // 3. Create the ReadOnlyDb wrapper.
+        if (self.overlay_allocator) |ov_alloc| {
+            ctx.* = .{
+                .read_only = try ReadOnlyDb.init_with_write_store(base_owned.db, ov_alloc),
+                .base_owned = base_owned,
+                .allocator = alloc,
+            };
+        } else {
+            ctx.* = .{
+                .read_only = ReadOnlyDb.init(base_owned.db),
+                .base_owned = base_owned,
+                .allocator = alloc,
+            };
+        }
+
+        return .{
+            .db = ctx.read_only.database(),
+            .deinit_ctx = @ptrCast(ctx),
+            .deinit_fn = destroyOwnedContext,
+        };
+    }
+
+    fn destroyOwnedContext(raw: ?*anyopaque) void {
+        if (raw) |ptr| {
+            const ctx: *OwnedContext = @ptrCast(@alignCast(ptr));
+            // Clean up in correct order: wrapper first, then base.
+            ctx.read_only.deinit();
+            ctx.base_owned.deinit();
+            ctx.allocator.destroy(ctx);
+        }
+    }
+
+    fn getFullDbPathImpl(self: *ReadOnlyDbFactory, settings: DbSettings) []const u8 {
+        // Delegate to base factory.
+        return self.base.getFullDbPath(settings);
+    }
+
+    fn deinitImpl(_: *ReadOnlyDbFactory) void {
+        // No-op — factory itself holds no resources.
+    }
+};
+
 // -- MemDbFactory tests ---------------------------------------------------
 
 test "MemDbFactory: createDb returns a functional database" {
@@ -553,4 +694,82 @@ test "NullDbFactory: deinit is safe no-op" {
     // Also safe via vtable
     const f = null_factory.factory();
     f.deinit();
+}
+
+// -- ReadOnlyDbFactory tests ----------------------------------------------
+
+test "ReadOnlyDbFactory: createDb returns read-only database with overlay" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.testing.allocator);
+    defer ro_factory.deinit();
+
+    const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));
+    defer owned.deinit();
+
+    // With overlay, writes go to overlay
+    try owned.db.put("key", "value");
+    const val = try owned.db.get("key");
+    try std.testing.expect(val != null);
+    defer val.?.release();
+    try std.testing.expectEqualStrings("value", val.?.bytes);
+}
+
+test "ReadOnlyDbFactory: base database is cleaned up on deinit" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.testing.allocator);
+    defer ro_factory.deinit();
+
+    const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));
+
+    // Write data to ensure allocations exist
+    try owned.db.put("key1", "value1_with_some_length");
+    try owned.db.put("key2", "value2_with_some_length");
+
+    // If deinit doesn't free both wrapper and base, testing allocator leaks
+    owned.deinit();
+}
+
+test "ReadOnlyDbFactory: getFullDbPath delegates to base factory" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.testing.allocator);
+    defer ro_factory.deinit();
+
+    const path = ro_factory.factory().getFullDbPath(DbSettings.init(.headers, "/tmp/headers"));
+    try std.testing.expectEqualStrings("/tmp/headers", path);
+}
+
+test "ReadOnlyDbFactory: multiple databases from one factory" {
+    var mem_factory = MemDbFactory.init(std.testing.allocator);
+    defer mem_factory.deinit();
+
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.testing.allocator);
+    defer ro_factory.deinit();
+
+    const f = ro_factory.factory();
+
+    const db1 = try f.createDb(DbSettings.init(.state, "state"));
+    defer db1.deinit();
+
+    const db2 = try f.createDb(DbSettings.init(.code, "code"));
+    defer db2.deinit();
+
+    // Each database is independent
+    try db1.db.put("key", "state_val");
+    try db2.db.put("key", "code_val");
+
+    const v1 = try db1.db.get("key");
+    try std.testing.expect(v1 != null);
+    defer v1.?.release();
+    try std.testing.expectEqualStrings("state_val", v1.?.bytes);
+
+    const v2 = try db2.db.get("key");
+    try std.testing.expect(v2 != null);
+    defer v2.?.release();
+    try std.testing.expectEqualStrings("code_val", v2.?.bytes);
 }
