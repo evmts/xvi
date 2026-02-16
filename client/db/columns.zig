@@ -189,6 +189,39 @@ pub fn ColumnsWriteBatch(comptime T: type) type {
     };
 }
 
+/// Cross-column snapshot for consistent point-in-time reads.
+///
+/// Mirrors Nethermind's `IColumnDbSnapshot<TKey>`. Each column gets its own
+/// `DbSnapshot`, all created at the same logical point in time.
+///
+/// `deinit()` releases all snapshot resources across all columns.
+pub fn ColumnDbSnapshot(comptime T: type) type {
+    comptime {
+        if (@typeInfo(T) != .@"enum") {
+            @compileError("ColumnDbSnapshot requires an enum type, got " ++ @typeName(T));
+        }
+    }
+
+    return struct {
+        const Self = @This();
+
+        /// One `DbSnapshot` per column.
+        snapshots: std.EnumArray(T, DbSnapshot),
+
+        /// Get the `DbSnapshot` for a specific column.
+        pub fn getColumnSnapshot(self: *const Self, key: T) DbSnapshot {
+            return self.snapshots.get(key);
+        }
+
+        /// Release all snapshot resources across all columns.
+        pub fn deinit(self: *Self) void {
+            for (std.meta.tags(T)) |tag| {
+                self.snapshots.get(tag).deinit();
+            }
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -349,4 +382,73 @@ test "ColumnsWriteBatch deinit frees all memory (leak check)" {
 
     // If deinit doesn't free properly, testing allocator will report a leak.
     batch.deinit();
+}
+
+test "ColumnDbSnapshot getColumnSnapshot returns correct snapshot per column" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+
+    // Write initial data.
+    try db0.put("key", "old_default");
+    try db1.put("key", "old_txs");
+
+    // Create snapshots for both columns.
+    var snap0 = try db0.database().snapshot();
+    var snap1 = try db1.database().snapshot();
+
+    // Build ColumnDbSnapshot.
+    // For the third column (blocks), create a trivial db + snapshot.
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+    var snap2 = try db2.database().snapshot();
+
+    var col_snap = ColumnDbSnapshot(ReceiptsColumns){
+        .snapshots = std.EnumArray(ReceiptsColumns, DbSnapshot).init(.{
+            .default = snap0,
+            .transactions = snap1,
+            .blocks = snap2,
+        }),
+    };
+    defer col_snap.deinit();
+
+    // Write new data AFTER snapshot.
+    try db0.put("key", "new_default");
+    try db1.put("key", "new_txs");
+
+    // Snapshot should see OLD data.
+    const val0 = try col_snap.getColumnSnapshot(.default).get("key", ReadFlags.none);
+    try std.testing.expect(val0 != null);
+    try std.testing.expectEqualStrings("old_default", val0.?.bytes);
+
+    const val1 = try col_snap.getColumnSnapshot(.transactions).get("key", ReadFlags.none);
+    try std.testing.expect(val1 != null);
+    try std.testing.expectEqualStrings("old_txs", val1.?.bytes);
+}
+
+test "ColumnDbSnapshot deinit releases all snapshot resources" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    try db0.put("a", "1");
+
+    var snap0 = try db0.database().snapshot();
+    var snap1 = try db1.database().snapshot();
+    var snap2 = try db2.database().snapshot();
+
+    var col_snap = ColumnDbSnapshot(ReceiptsColumns){
+        .snapshots = std.EnumArray(ReceiptsColumns, DbSnapshot).init(.{
+            .default = snap0,
+            .transactions = snap1,
+            .blocks = snap2,
+        }),
+    };
+
+    // If deinit doesn't release properly, testing allocator will report a leak.
+    col_snap.deinit();
 }
