@@ -45,6 +45,7 @@ const read_only = @import("read_only.zig");
 const provider = @import("provider.zig");
 const ro_provider = @import("read_only_provider.zig");
 const columns = @import("columns.zig");
+const factory = @import("factory.zig");
 
 // -- Public API: flat re-exports of all user-facing types -----------------
 
