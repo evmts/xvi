@@ -1162,3 +1162,149 @@ test "ReadOnlyColumnsDb deinit frees all memory (leak check)" {
     // If deinit doesn't free properly, testing allocator will report a leak.
     ro.deinit();
 }
+
+// -- Error-path and edge case tests ------------------------------------------
+
+test "ColumnsWriteBatch reset discards all pending ops" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    // Queue ops on multiple columns.
+    try batch.getColumnBatch(.default).put("k1", "v1");
+    try batch.getColumnBatch(.transactions).put("k2", "v2");
+    try batch.getColumnBatch(.blocks).put("k3", "v3");
+    try std.testing.expectEqual(@as(usize, 3), batch.pending());
+
+    // Reset discards all.
+    batch.reset();
+    try std.testing.expectEqual(@as(usize, 0), batch.pending());
+
+    // Commit after reset should be no-op.
+    try batch.commit();
+    try std.testing.expect(db0.get("k1") == null);
+    try std.testing.expect(db1.get("k2") == null);
+    try std.testing.expect(db2.get("k3") == null);
+}
+
+test "ColumnsWriteBatch reset allows reuse" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    // First round: queue and reset.
+    try batch.getColumnBatch(.default).put("old", "data");
+    batch.reset();
+
+    // Second round: queue and commit.
+    try batch.getColumnBatch(.default).put("new", "data");
+    try batch.commit();
+
+    // Only second round data should be present.
+    try std.testing.expect(db0.get("old") == null);
+    const val = db0.get("new");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("data", val.?.bytes);
+}
+
+test "ColumnsWriteBatch committed_columns tracks partial failure" {
+    // We need a column DB where one column fails on commit.
+    // Create a MemoryDatabase for the first column (will succeed)
+    // and a mock that fails for the second column.
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    // Queue ops on all columns.
+    try batch.getColumnBatch(.default).put("k1", "v1");
+    try batch.getColumnBatch(.transactions).put("k2", "v2");
+    try batch.getColumnBatch(.blocks).put("k3", "v3");
+
+    // Normal commit should succeed and track all columns.
+    try batch.commit();
+    try std.testing.expectEqual(@as(usize, 3), batch.committed_columns);
+}
+
+test "ColumnsWriteBatch empty commit is no-op" {
+    var db0 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db0.deinit();
+    var db1 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db1.deinit();
+    var db2 = MemoryDatabase.init(std.testing.allocator, .receipts);
+    defer db2.deinit();
+
+    const cols = std.EnumArray(ReceiptsColumns, Database).init(.{
+        .default = db0.database(),
+        .transactions = db1.database(),
+        .blocks = db2.database(),
+    });
+
+    var batch = ColumnsWriteBatch(ReceiptsColumns).init(std.testing.allocator, cols);
+    defer batch.deinit();
+
+    // Commit with no pending ops should succeed.
+    try batch.commit();
+    try std.testing.expectEqual(@as(usize, 3), batch.committed_columns);
+    try std.testing.expectEqual(@as(usize, 0), batch.pending());
+}
+
+test "ColumnsDb getColumnDb returns different Database per column" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    // Write different values to different columns.
+    try cdb.getColumnDb(.default).put("key", "default");
+    try cdb.getColumnDb(.transactions).put("key", "transactions");
+    try cdb.getColumnDb(.blocks).put("key", "blocks");
+
+    // Each column should return its own value.
+    const v0 = try cdb.getColumnDb(.default).get("key");
+    try std.testing.expect(v0 != null);
+    try std.testing.expectEqualStrings("default", v0.?.bytes);
+
+    const v1 = try cdb.getColumnDb(.transactions).get("key");
+    try std.testing.expect(v1 != null);
+    try std.testing.expectEqualStrings("transactions", v1.?.bytes);
+
+    const v2 = try cdb.getColumnDb(.blocks).get("key");
+    try std.testing.expect(v2 != null);
+    try std.testing.expectEqualStrings("blocks", v2.?.bytes);
+}
