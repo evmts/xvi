@@ -612,6 +612,43 @@ pub const Database = struct {
     }
 };
 
+/// A Database interface paired with an ownership handle for cleanup.
+///
+/// Returned by factory methods when the factory owns the backing storage.
+/// Callers must call `deinit()` when done, or rely on the factory's
+/// bulk cleanup if using arena-based allocation.
+///
+/// Mirrors the ownership pattern needed by Nethermind's `IDbFactory.CreateDb()`,
+/// where the factory creates and owns the database instance, but returns an
+/// interface handle to the caller.
+pub const OwnedDatabase = struct {
+    /// Type-erased Database interface (non-owning handle into the backing storage).
+    db: Database,
+    /// Opaque context pointer passed to the deinit callback (e.g., the allocator or factory).
+    deinit_ctx: ?*anyopaque = null,
+    /// Cleanup callback that releases the backing storage.
+    deinit_fn: ?*const fn (ctx: ?*anyopaque) void = null,
+
+    /// Release the owned database resources.
+    ///
+    /// Safe to call even if no deinit callback was set (e.g., for unmanaged databases).
+    /// After calling deinit, the `db` handle is invalid and must not be used.
+    pub fn deinit(self: OwnedDatabase) void {
+        if (self.deinit_fn) |f| {
+            f(self.deinit_ctx);
+        }
+    }
+
+    /// Create a non-owned wrapper (for databases not created by a factory).
+    ///
+    /// The returned `OwnedDatabase` has no cleanup callback. This is useful
+    /// when a `Database` handle is obtained from a long-lived backend that
+    /// manages its own lifetime.
+    pub fn unmanaged(db: Database) OwnedDatabase {
+        return .{ .db = db };
+    }
+};
+
 /// A single write operation for use with `Database.VTable.write_batch`.
 ///
 /// Each operation represents either a key-value insertion or a key deletion.
@@ -1517,4 +1554,73 @@ test "Database.init without write_batch defaults to null" {
 
     try std.testing.expect(!db.supports_write_batch());
     try std.testing.expectEqual(DbName.metadata, db.name());
+}
+
+// -- OwnedDatabase tests ---------------------------------------------------
+
+test "OwnedDatabase: deinit calls cleanup function" {
+    const Tracker = struct {
+        var called: bool = false;
+        fn cleanup(_: ?*anyopaque) void {
+            called = true;
+        }
+    };
+    Tracker.called = false;
+
+    const owned = OwnedDatabase{
+        .db = Database{ .ptr = undefined, .vtable = &MockDb.vtable },
+        .deinit_ctx = null,
+        .deinit_fn = Tracker.cleanup,
+    };
+
+    owned.deinit();
+    try std.testing.expect(Tracker.called);
+}
+
+test "OwnedDatabase: deinit is safe with null deinit_fn" {
+    const owned = OwnedDatabase{
+        .db = Database{ .ptr = undefined, .vtable = &MockDb.vtable },
+    };
+
+    // Should not panic or crash
+    owned.deinit();
+}
+
+test "OwnedDatabase: unmanaged wraps without cleanup" {
+    var mock = MockDb{};
+    const db = mock.database();
+
+    const owned = OwnedDatabase.unmanaged(db);
+
+    // Should have no cleanup callback
+    try std.testing.expect(owned.deinit_fn == null);
+    try std.testing.expect(owned.deinit_ctx == null);
+
+    // The db handle should work normally
+    const result = try owned.db.get("test_key");
+    try std.testing.expect(result == null);
+
+    // deinit should be safe (no-op)
+    owned.deinit();
+}
+
+test "OwnedDatabase: deinit passes context to cleanup function" {
+    const Tracker = struct {
+        var received_ctx: ?*anyopaque = null;
+        fn cleanup(ctx: ?*anyopaque) void {
+            received_ctx = ctx;
+        }
+    };
+    Tracker.received_ctx = null;
+
+    var sentinel: u8 = 42;
+    const owned = OwnedDatabase{
+        .db = Database{ .ptr = undefined, .vtable = &MockDb.vtable },
+        .deinit_ctx = @ptrCast(&sentinel),
+        .deinit_fn = Tracker.cleanup,
+    };
+
+    owned.deinit();
+    try std.testing.expect(Tracker.received_ctx != null);
+    try std.testing.expectEqual(@intFromPtr(&sentinel), @intFromPtr(Tracker.received_ctx.?));
 }

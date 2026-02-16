@@ -14,7 +14,7 @@ case "$SUBJECT" in
     ;;
 esac
 
-regex='^([🐛♻️🧪⚡])\s+(fix|refactor|test|perf)\([^)]+\):\s+.+$'
+regex='^(🐛|♻️|🧪|⚡)[[:space:]]+(fix|refactor|test|perf)\([^)]+\):[[:space:]]+.+$'
 
 if printf %s "$SUBJECT" | grep -Eq "$regex"; then
   exit 0
