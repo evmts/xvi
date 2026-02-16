@@ -16,8 +16,16 @@
 const std = @import("std");
 const adapter = @import("adapter.zig");
 const memory = @import("memory.zig");
+const columns = @import("columns.zig");
 const WriteBatch = adapter.WriteBatch;
 const MemoryDatabase = memory.MemoryDatabase;
+const MemColumnsDb = columns.MemColumnsDb;
+const ColumnsDb = columns.ColumnsDb;
+const ColumnsWriteBatch = columns.ColumnsWriteBatch;
+const ReceiptsColumns = columns.ReceiptsColumns;
+const BlobTxsColumns = columns.BlobTxsColumns;
+const Database = adapter.Database;
+const ReadFlags = adapter.ReadFlags;
 
 /// Number of iterations for each benchmark tier.
 const SMALL_N: usize = 1_000;
@@ -407,6 +415,160 @@ fn bench_block_processing(n: usize) !u64 {
 }
 
 // ============================================================================
+// Column family benchmarks (DB-001: ColumnsDb, ColumnsWriteBatch, etc.)
+// ============================================================================
+
+/// Benchmark 11: MemColumnsDb init + columnsDb() accessor (measures setup cost)
+fn bench_columns_init_accessor(n: usize) !u64 {
+    var timer = try std.time.Timer.start();
+    for (0..n) |_| {
+        var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+        _ = mcdb.columnsDb();
+        mcdb.deinit();
+    }
+    return timer.read();
+}
+
+/// Benchmark 12: Column-isolated put/get (write to 3 columns, read back)
+/// Simulates receipt indexing: write to default, transactions, blocks columns.
+fn bench_columns_put_get(n: usize) !u64 {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+
+        // Write to all 3 columns (simulating receipt indexing)
+        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
+        try cdb.getColumnDb(.transactions).put(&key_buf, &val_buf);
+        try cdb.getColumnDb(.blocks).put(&key_buf, &val_buf);
+
+        // Read back from each column
+        _ = try cdb.getColumnDb(.default).get(&key_buf);
+        _ = try cdb.getColumnDb(.transactions).get(&key_buf);
+        _ = try cdb.getColumnDb(.blocks).get(&key_buf);
+    }
+    return timer.read();
+}
+
+/// Benchmark 13: ColumnsWriteBatch cross-column commit
+/// Accumulates writes across all columns, then commits atomically.
+fn bench_columns_write_batch(n: usize) !u64 {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+    const batch_size: usize = 100;
+    const num_batches = n / batch_size;
+
+    var timer = try std.time.Timer.start();
+    for (0..num_batches) |batch_idx| {
+        var batch = cdb.startWriteBatch(std.heap.page_allocator);
+        for (0..batch_size) |i| {
+            const idx = batch_idx * batch_size + i;
+            generate_key(&key_buf, idx);
+            generate_value(&val_buf, idx);
+            // Distribute across columns (round-robin)
+            switch (idx % 3) {
+                0 => try batch.getColumnBatch(.default).put(&key_buf, &val_buf),
+                1 => try batch.getColumnBatch(.transactions).put(&key_buf, &val_buf),
+                else => try batch.getColumnBatch(.blocks).put(&key_buf, &val_buf),
+            }
+        }
+        try batch.commit();
+        batch.deinit();
+    }
+    return timer.read();
+}
+
+/// Benchmark 14: ColumnDbSnapshot create + read (point-in-time reads)
+fn bench_columns_snapshot(n: usize) !u64 {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    // Pre-populate
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
+    }
+
+    var timer = try std.time.Timer.start();
+    // Create snapshot
+    var snap = try cdb.createSnapshot();
+
+    // Read all keys from snapshot
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        _ = try snap.getColumnSnapshot(.default).get(&key_buf, ReadFlags.none);
+    }
+    snap.deinit();
+    return timer.read();
+}
+
+/// Benchmark 15: Column isolation verification (write to one, check absence in others)
+/// Measures the overhead of column family dispatch vs single DB.
+fn bench_columns_isolation_overhead(n: usize) !u64 {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    // Single-DB baseline: use just the default column
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+        // Write to default only
+        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
+        // Verify isolation: other columns should return null
+        _ = try cdb.getColumnDb(.transactions).get(&key_buf);
+        _ = try cdb.getColumnDb(.blocks).get(&key_buf);
+    }
+    return timer.read();
+}
+
+/// Benchmark 16: BlobTxsColumns (3-column EIP-4844 pattern)
+/// Simulates blob transaction lifecycle: full -> light -> processed
+fn bench_blob_columns_lifecycle(n: usize) !u64 {
+    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.heap.page_allocator);
+    defer mcdb.deinit();
+    var cdb = mcdb.columnsDb();
+
+    var key_buf: [KEY_SIZE]u8 = undefined;
+    var val_buf: [VALUE_SIZE]u8 = undefined;
+
+    var timer = try std.time.Timer.start();
+    for (0..n) |i| {
+        generate_key(&key_buf, i);
+        generate_value(&val_buf, i);
+
+        // Stage 1: Store full blob tx
+        try cdb.getColumnDb(.full_blob_txs).put(&key_buf, &val_buf);
+        // Stage 2: Create light version
+        try cdb.getColumnDb(.light_blob_txs).put(&key_buf, &val_buf);
+        // Stage 3: Mark as processed
+        try cdb.getColumnDb(.processed_txs).put(&key_buf, &val_buf);
+        // Stage 4: Read back processed
+        _ = try cdb.getColumnDb(.processed_txs).get(&key_buf);
+    }
+    return timer.read();
+}
+
+// ============================================================================
 // Main benchmark entry point
 // ============================================================================
 
@@ -471,6 +633,34 @@ pub fn main() !void {
             0.0;
         std.debug.print("  Vtable overhead: {d:.1}%\n", .{overhead_pct});
     }
+    std.debug.print("\n", .{});
+
+    // -- Column family operations (DB-001) --
+    std.debug.print("--- Column Family Operations (DB-001: ColumnsDb) ---\n", .{});
+    try print_result(try run_bench("MemColumnsDb init+accessor (1K cycles)", SMALL_N, bench_columns_init_accessor));
+    try print_result(try run_bench("MemColumnsDb init+accessor (10K cycles)", MEDIUM_N, bench_columns_init_accessor));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("columns put+get 3-col (1K keys)", SMALL_N, bench_columns_put_get));
+    try print_result(try run_bench("columns put+get 3-col (10K keys)", MEDIUM_N, bench_columns_put_get));
+    try print_result(try run_bench("columns put+get 3-col (100K keys)", LARGE_N, bench_columns_put_get));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("columns write-batch (10K, batch=100)", MEDIUM_N, bench_columns_write_batch));
+    try print_result(try run_bench("columns write-batch (100K, batch=100)", LARGE_N, bench_columns_write_batch));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("columns snapshot create+read (1K)", SMALL_N, bench_columns_snapshot));
+    try print_result(try run_bench("columns snapshot create+read (10K)", MEDIUM_N, bench_columns_snapshot));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("columns isolation check (10K)", MEDIUM_N, bench_columns_isolation_overhead));
+    try print_result(try run_bench("columns isolation check (100K)", LARGE_N, bench_columns_isolation_overhead));
+    std.debug.print("\n", .{});
+
+    try print_result(try run_bench("blob-columns lifecycle (1K)", SMALL_N, bench_blob_columns_lifecycle));
+    try print_result(try run_bench("blob-columns lifecycle (10K)", MEDIUM_N, bench_blob_columns_lifecycle));
+    try print_result(try run_bench("blob-columns lifecycle (100K)", LARGE_N, bench_blob_columns_lifecycle));
     std.debug.print("\n", .{});
 
     // -- Block processing simulation --
