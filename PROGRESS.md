@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-17
-**Timestamp:** ~21:00 UTC
+**Timestamp:** ~23:30 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,21 +9,28 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-No code changes since the previous progress report (~12:00 UTC today). The most recent development cycle completed the Phase 0 DB Abstraction tickets (DB-001 and DB-002). All subsystem stats remain unchanged.
+Since the previous progress report (~21:00 UTC today), the **IntegrationTest pipeline phase** has produced its first outputs:
+
+### Integration Test Results (NEW)
+
+- **Phase 0 (DB):** 165 tests passing across 10 modules. Full breakdown in `docs/test-suite-findings.md`. No memory leaks detected. Tests only runnable via direct `zig test` due to Voltaire build system blocker.
+- **Phase 1 (Trie):** 25 ethereum-tests TrieTests fixture vectors passing across 5 fixture files. 28 total test blocks (23 pass via direct `zig test`; fixture tests bundle multiple vectors). Same build system blocker.
+- **Build system blocker identified:** `zig build test-*` commands all fail due to Voltaire `wallycore` artifact panic at `voltaire/build.zig:971`. Tests pass when invoked via direct `zig test` with manual module imports.
 
 ### Previously Completed (DB-001 + DB-002)
 
-- **`ColumnsDb(T)`** — Comptime-generic column family abstraction mirroring Nethermind's `IColumnsDb<TKey>`
-- **`DbFactory`** — Vtable-based factory interface with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`
-- **`OwnedDatabase`** — Ownership wrapper pairing `Database` with cleanup callback
-- **Column families** — `ReceiptsColumns`, `BlobTxsColumns`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`, cross-column write batches & snapshots
+- **`ColumnsDb(T)`** -- Comptime-generic column family abstraction mirroring Nethermind's `IColumnsDb<TKey>`
+- **`DbFactory`** -- Vtable-based factory interface with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`
+- **`OwnedDatabase`** -- Ownership wrapper pairing `Database` with cleanup callback
+- **Column families** -- `ReceiptsColumns`, `BlobTxsColumns`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`, cross-column write batches & snapshots
 - DB module: **7,474 LOC / 164 tests** (12 files)
 
 ### Research Context Available
 
-Research context files exist for multiple subsystems (`docs/context/`):
-- Phase 0 (DB), Phase 1 (Trie), Phase 2 (World State), Phase 3 (EVM Integration), Phase 4 (Blockchain)
+Research context files exist for all 11 subsystems (`docs/context/`):
+- Phase 0 (DB), Phase 1 (Trie), Phase 2 (World State), Phase 3 (EVM Integration), Phase 4 (Blockchain), Phase 5 (TxPool), Phase 6 (JSON-RPC), Phase 7 (Engine API), Phase 8 (Networking), Phase 9 (Sync), Phase 10 (Runner)
 - Targeted research for tickets: `add-database-comptime-init`, `fix-null-db-constcast`, `remove-dead-types-zig`, `DB-001`, `DB-002`
+- Two-pass research available (pass 1/5 and pass 2/5) for all phases
 
 Implementation plans exist (`docs/plans/`):
 - `add-database-comptime-init.md`, `fix-null-db-constcast.md`, `remove-dead-types-zig.md`, `DB-001.md`, `DB-002.md`
@@ -42,8 +49,8 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
-| 0 | DB Abstraction | 95% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families (`ColumnsDb(T)`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`), cross-column write batches & snapshots, `DbFactory` vtable with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`, `OwnedDatabase` ownership model, `DbProvider` registry, benchmarks, 164 tests (12 files, 7,474 LOC) | RocksDB FFI (stubbed at 324 LOC) |
-| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks, 28 tests (6 files, 1,618 LOC) | High-level trie helpers partial |
+| 0 | DB Abstraction | 95% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families (`ColumnsDb(T)`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`), cross-column write batches & snapshots, `DbFactory` vtable with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`, `OwnedDatabase` ownership model, `DbProvider` registry, benchmarks, **165 tests passing** (12 files, 7,474 LOC) | RocksDB FFI (stubbed at 324 LOC) |
+| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, secure trie (keccak256 key pre-hashing), **25/25 ethereum-tests TrieTests vectors passing**, benchmarks, 28 tests (6 files, 1,618 LOC) | Trie key iteration/traversal (`trietestnextprev.json`), high-level trie helpers |
 | 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 60 tests (7 files, 2,217 LOC) | Integration with full execution loop |
 | 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 53 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
 | 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 151 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
@@ -54,9 +61,9 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 | 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards, startup feed sequence helper, 53 tests (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
 | 10 | Runner/CLI | 90% | CLI argument parsing (chain-id, network-id, hardfork, trace), genesis JSON loading (mainnet/sepolia/zhejiang), config defaults (4 files, 651 LOC) | Main block processing loop, service wiring |
 
-**Shared EVM engine:** [Guillotine](https://github.com/evmts/guillotine) — full hardfork support Frontier through Prague, 20+ EIPs, 100% ethereum/tests passing.
+**Shared EVM engine:** [Guillotine](https://github.com/evmts/guillotine) -- full hardfork support Frontier through Prague, 20+ EIPs, 100% ethereum/tests passing.
 
-**Overall: ~77% feature-complete.** Infrastructure layers (DB, state, trie, CLI) are solid. The DB layer is now the most mature subsystem at 95%, with comptime vtable initialization, column family abstraction, and a full factory pattern enabling diagnostic modes and test isolation — all matching Nethermind's architecture. Mid-layers (blockchain, txpool, EVM integration) have comprehensive validation logic and tests. The Engine API type system is complete (all versions V1-V6) though handler logic remains stubbed. Networking has usable RLPx protocol primitives but no peer management. The critical gap is end-to-end wiring: no subsystem can yet execute a full block or sync from the network.
+**Overall: ~77% feature-complete.** Infrastructure layers (DB, state, trie, CLI) are solid. The DB layer is the most mature subsystem at 95%, with comptime vtable initialization, column family abstraction, and a full factory pattern enabling diagnostic modes and test isolation -- all matching Nethermind's architecture. The trie module now has verified correctness against all 25 ethereum-tests TrieTests fixture vectors. Mid-layers (blockchain, txpool, EVM integration) have comprehensive validation logic and tests. The Engine API type system is complete (all versions V1-V6) though handler logic remains stubbed. Networking has usable RLPx protocol primitives but no peer management. The critical gap is end-to-end wiring: no subsystem can yet execute a full block or sync from the network.
 
 ---
 
@@ -67,10 +74,10 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
 | 0 | DB Abstraction | 85% | Full Effect.js service (get/put/delete/batch/iterator/snapshot), factory pattern, column families, null/read-only variants (26 files, 4,646 LOC) | RocksDB backend (stubbed) |
-| 1 | Merkle Patricia Trie | 95% | Secured/unsecured variants, nibble expansion, node compression, RLP codec, `patricialize()`, NodeLoader, NodeStorage, extensive tests + benchmarks (28 files, 5,350 LOC) | — |
-| 2 | World State | 90% | Journaling with snapshot/restore, account model, transaction boundary (rollback/commit), transient storage (EIP-1153), WorldStateReader (19 files, 4,002 LOC) | — |
+| 1 | Merkle Patricia Trie | 95% | Secured/unsecured variants, nibble expansion, node compression, RLP codec, `patricialize()`, NodeLoader, NodeStorage, extensive tests + benchmarks (28 files, 5,350 LOC) | -- |
+| 2 | World State | 90% | Journaling with snapshot/restore, account model, transaction boundary (rollback/commit), transient storage (EIP-1153), WorldStateReader (19 files, 4,002 LOC) | -- |
 | 3 | EVM Integration | 70% | TransactionProcessor (pre/post execution), host adapter, intrinsic gas calculator, access list builder, refund calculator, release spec tracking, TransactionEnvironmentBuilder (19 files, 5,324 LOC) | EvmExecutor is placeholder (bridges to Zig EVM, not wired) |
-| 4 | Blockchain | 90% | Block tree (canonical + orphans), fork-choice state machine, genesis validation, header validation, BLOCKHASH cache/store, gas accounting, read-only overlay (23 files, 5,275 LOC) | — |
+| 4 | Blockchain | 90% | Block tree (canonical + orphans), fork-choice state machine, genesis validation, header validation, BLOCKHASH cache/store, gas accounting, read-only overlay (23 files, 5,275 LOC) | -- |
 | 5 | TxPool | 85% | Mempool service (add/remove/get/iterate), admission validator (gas/balance/nonce/blob), fee-based sorting (EIP-1559 + blob pricing) (6 files, 2,907 LOC) | Persistence integration, eviction policies |
 | 6 | JSON-RPC | 75% | Method dispatcher, request/response parsing, batch support, EIP-1474 + Nethermind error codes, server config (12 files, 1,933 LOC) | Actual eth_*/engine_* method handlers, HTTP server |
 | 7 | Engine API | 30% | Capability exchange (`engine_exchangeCapabilities`), client version, Paris method constants (4 files, 721 LOC) | Payload handling, fork-choice updates |
@@ -80,7 +87,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 **Framework:** Pure Effect.js with dependency injection via `Context.Tag` + `Layer` composition. Every module is a typed service with structured error handling.
 
-**Overall: ~65% feature-complete.** Data layer (trie, state, blockchain, db) is mature with comprehensive tests. EVM integration architecture is solid but awaits Zig EVM wiring. Upper layers (networking, engine, runner) are skeletal. No changes in this development cycle — focus has been on the Zig client.
+**Overall: ~65% feature-complete.** Data layer (trie, state, blockchain, db) is mature with comprehensive tests. EVM integration architecture is solid but awaits Zig EVM wiring. Upper layers (networking, engine, runner) are skeletal. No changes in this development cycle -- focus has been on the Zig client.
 
 ---
 
@@ -105,38 +112,51 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ### Test Status
 
-No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output. Unit test counts are **821 (Zig)** and 65 test files (Effect-TS). The Zig client's DB subsystem alone accounts for 164 of those tests.
+`docs/test-suite-findings.md` now has results for two subsystems:
+
+| Subsystem | Tests | Status | Method |
+|-----------|:-----:|:------:|--------|
+| Phase 0 -- DB | 165 | PASSING | Direct `zig test` (10 modules, no memory leaks) |
+| Phase 1 -- Trie | 25 fixture vectors + 28 test blocks | PASSING | Direct `zig test` (5 fixture files from ethereum-tests) |
+| Phases 2-10 | Not yet run | PENDING | Awaiting IntegrationTest pipeline execution |
+
+**Build system blocker:** All `zig build test-*` commands fail due to Voltaire `wallycore` artifact panic (`voltaire/build.zig:971`). Tests pass when invoked via direct `zig test` with manual module imports. This is tracked as a BLOCKER ticket.
+
+Total unit test count: **821 (Zig)** and 65 test files (Effect-TS).
 
 The Guillotine EVM engine (separate from the client) passes 100% of ethereum/tests spec tests (Frontier through Prague).
 
 ### Key Gaps vs Nethermind
 
 Both clients are missing:
-- **Consensus engine** — No PoW/PoA/PoS implementation (Nethermind has 4 consensus engines)
-- **Persistent storage** — RocksDB backends are stubbed in both
-- **Full networking** — Peer discovery, connection management, and wire protocol are incomplete
-- **Engine API handlers** — Type system is complete in Zig but all payload/forkchoice handlers are stubbed
-- **End-to-end wiring** — No subsystem can execute a full block or sync from the network yet
-- **Monitoring** — No metrics, health checks, or structured logging
-- **Integration testing** — Neither client has run integration tests against ethereum-tests, execution-spec-tests, or hive
+- **Consensus engine** -- No PoW/PoA/PoS implementation (Nethermind has 4 consensus engines)
+- **Persistent storage** -- RocksDB backends are stubbed in both
+- **Full networking** -- Peer discovery, connection management, and wire protocol are incomplete
+- **Engine API handlers** -- Type system is complete in Zig but all payload/forkchoice handlers are stubbed
+- **End-to-end wiring** -- No subsystem can execute a full block or sync from the network yet
+- **Monitoring** -- No metrics, health checks, or structured logging
+- **Integration testing** -- Phase 0 and Phase 1 tested; Phases 2-10 awaiting pipeline runs; neither client has run against execution-spec-tests or hive
 
 ### Where XVI Leads
 
-- **EVM engine** — Guillotine passes 100% of ethereum/tests (Frontier through Prague), which many production clients still work toward
-- **Architecture** — Both clients mirror Nethermind's module boundaries, making the remaining work well-scoped
-- **Primitives** — Voltaire provides production-quality types (Address, Block, Transaction, RLP, Crypto, Precompiles) shared across both clients
-- **Type coverage** — Engine API types are complete through V6 (Osaka) with fork-aware capability negotiation
-- **DB abstraction maturity** — Full factory pattern (`DbFactory` vtable + `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`), column family abstraction (`ColumnsDb(T)`), and comptime DI (`Database.init`) — matching Nethermind's DB architecture end-to-end
-- **Comptime DI** — DB layer demonstrates the comptime vtable initialization pattern (`Database.init`, `DbFactory.init`) to replicate across other subsystems
-- **Workflow automation** — Component-based ticket pipeline (Smithers) with IntegrationTest phase automates codebase review, ticket generation, implementation, and testing
+- **EVM engine** -- Guillotine passes 100% of ethereum/tests (Frontier through Prague), which many production clients still work toward
+- **Architecture** -- Both clients mirror Nethermind's module boundaries, making the remaining work well-scoped
+- **Primitives** -- Voltaire provides production-quality types (Address, Block, Transaction, RLP, Crypto, Precompiles) shared across both clients
+- **Type coverage** -- Engine API types are complete through V6 (Osaka) with fork-aware capability negotiation
+- **DB abstraction maturity** -- Full factory pattern (`DbFactory` vtable + `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`), column family abstraction (`ColumnsDb(T)`), and comptime DI (`Database.init`) -- matching Nethermind's DB architecture end-to-end
+- **Comptime DI** -- DB layer demonstrates the comptime vtable initialization pattern (`Database.init`, `DbFactory.init`) to replicate across other subsystems
+- **Trie correctness** -- All 25 ethereum-tests TrieTests vectors passing (ordered, any-order, secure, hex-encoded)
+- **Workflow automation** -- Component-based ticket pipeline (Smithers) with IntegrationTest phase now producing verified test results for subsystems
+- **Research coverage** -- Two-pass deep research context available for all 11 subsystems in `docs/context/`
 
 ### Current Priorities
 
-1. **Block execution wiring** — Connect EVM processor → state → blockchain for end-to-end block execution (highest impact, unblocks integration testing)
-2. **Engine API handler implementation** — The type system is complete; implementing `newPayload`, `forkchoiceUpdated`, and `getPayload` would unlock CL integration
-3. **RocksDB backend** — Move from in-memory to persistent storage (DB factory pattern is ready to support it)
-4. **Comptime vtable pattern rollout** — Apply `Database.init`-style comptime helpers to TxPool, Engine API, and other vtable-based subsystems
-5. **Integration test execution** — Run Smithers IntegrationTest phase to produce baseline `docs/test-suite-findings.md`
-6. **Trie completion** — Finish high-level trie helpers to support state root computation
-7. **Peer discovery** — Implement discv4/v5 for network participation
-8. **eth/68 protocol** — Wire block/tx propagation over RLPx
+1. **Voltaire build system fix** -- BLOCKER: Fix `wallycore` artifact panic in `voltaire/build.zig:971` to unblock all `zig build` commands. The `addTypeScriptNativeBuild` function needs a null guard (like line 60) or the `libwally-core` dependency must be populated.
+2. **Block execution wiring** -- Connect EVM processor -> state -> blockchain for end-to-end block execution (highest impact, unblocks integration testing)
+3. **Engine API handler implementation** -- The type system is complete; implementing `newPayload`, `forkchoiceUpdated`, and `getPayload` would unlock CL integration
+4. **Integration test pipeline** -- Continue running IntegrationTest phase for Phases 2-10 to establish baseline test coverage across all subsystems
+5. **RocksDB backend** -- Move from in-memory to persistent storage (DB factory pattern is ready to support it)
+6. **Comptime vtable pattern rollout** -- Apply `Database.init`-style comptime helpers to TxPool, Engine API, and other vtable-based subsystems
+7. **Trie iteration** -- Implement key traversal (`next`/`prev`) for `trietestnextprev.json` fixture and snap sync support
+8. **Peer discovery** -- Implement discv4/v5 for network participation
+9. **eth/68 protocol** -- Wire block/tx propagation over RLPx
