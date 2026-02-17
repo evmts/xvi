@@ -1,7 +1,7 @@
 # XVI Progress Report
 
-**Date:** 2026-02-15
-**Timestamp:** 23:16 UTC
+**Date:** 2026-02-17
+**Timestamp:** ~12:00 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,21 +9,47 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-No new subsystem code changes since the previous report (2026-02-15 21:28 UTC). Recent commits have been limited to:
+### DB-001: Column Family Abstraction (completed)
 
-- **Smithers pipeline:** Optimized pipeline to avoid expensive build/test operations during non-implementation steps; fixed undefined `acceptanceCriteria` in slop-factory script; config cleanup
-- **Prior cycle (still most recent code work):** Phase 0 DB Abstraction hardening — `Database.init` comptime helper, MemoryDatabase/NullDb cleanup, dead code removal, `constCast` elimination
+Implemented `ColumnsDb(T)` — a comptime-generic column family abstraction mirroring Nethermind's `IColumnsDb<TKey>`. This adds multi-column database support needed for receipts and blob transaction storage.
 
-No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output.
+- **`ReceiptsColumns` / `BlobTxsColumns`** — Column enum definitions matching Nethermind
+- **`ColumnsDb(T)`** — Generic wrapper using `std.EnumArray(T, Database)` for zero-allocation dense column mapping
+- **`ColumnsWriteBatch(T)`** — Cross-column atomic write batches (per-column `WriteBatch` instances)
+- **`ColumnDbSnapshot(T)`** — Cross-column consistent-read snapshots
+- **`MemColumnsDb(T)`** — Concrete in-memory implementation (wraps N `MemoryDatabase` instances)
+- **`ReadOnlyColumnsDb(T)`** — Read-only column family wrapper
+- **IDbMeta lifecycle**, parameterized `DbName`, benchmarks, error-path tests
+- **New file:** `client/db/columns.zig` (1,311 LOC, 37 tests)
+
+### DB-002: DbFactory Interface (completed)
+
+Implemented `DbFactory` — a vtable-based factory interface decoupling database creation from concrete backends. Mirrors Nethermind's `IDbFactory` for diagnostic modes and test isolation.
+
+- **`DbFactory`** — Vtable interface with `createDb(DbSettings)` and comptime `createColumnsDb` helper
+- **`OwnedDatabase`** — Ownership wrapper pairing `Database` with cleanup callback
+- **`MemDbFactory`** — Creates `MemoryDatabase` / `MemColumnsDb(T)` instances for testing
+- **`NullDbFactory`** — Sentinel factory returning `error.UnsupportedOperation` (no-persistence mode)
+- **`ReadOnlyDbFactory`** — Decorator wrapping any base factory with read-only views
+- **Integration tests** demonstrating factory → provider wiring pattern
+- **Benchmarks** for factory creation overhead
+- **New file:** `client/db/factory.zig` (775 LOC, 17 tests)
+
+### Summary of Changes
+
+- **28 commits** since last report (2026-02-15 23:16 UTC)
+- All commits focused on Phase 0 DB Abstraction (DB-001 and DB-002 tickets)
+- DB module grew from 4,742 LOC / 104 tests → **7,474 LOC / 164 tests** (12 files)
+- No changes to other subsystems or the Effect-TS client
 
 ### Research Context Available
 
 Research context files exist for multiple subsystems (`docs/context/`):
 - Phase 0 (DB), Phase 1 (Trie), Phase 2 (World State), Phase 3 (EVM Integration), Phase 4 (Blockchain)
-- Targeted research for specific tickets: `add-database-comptime-init`, `fix-null-db-constcast`, `remove-dead-types-zig`
+- Targeted research for tickets: `add-database-comptime-init`, `fix-null-db-constcast`, `remove-dead-types-zig`, `DB-001`, `DB-002`
 
-Implementation plans exist for completed tickets (`docs/plans/`):
-- `add-database-comptime-init.md`, `fix-null-db-constcast.md`, `remove-dead-types-zig.md`
+Implementation plans exist (`docs/plans/`):
+- `add-database-comptime-init.md`, `fix-null-db-constcast.md`, `remove-dead-types-zig.md`, `DB-001.md`, `DB-002.md`
 
 ---
 
@@ -35,25 +61,25 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ## Zig Client (`client/`)
 
-**Stats:** ~30,450 lines of source across 75 files (11 subsystems, 14 directories), 775 tests
+**Stats:** ~33,200 lines of source across 76 files (11 subsystems, 14 directories), 821 tests
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
-| 0 | DB Abstraction | 92% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families, provider registry, adapter layer with consolidated types, 104 tests (10 files, 4,742 LOC) | RocksDB FFI (stubbed at 324 LOC) |
-| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks, 31 tests (6 files, 1,618 LOC) | High-level trie helpers partial |
-| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 61 tests (7 files, 2,217 LOC) | Integration with full execution loop |
-| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 54 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
-| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 154 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
-| 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits, 41 tests (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
-| 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 126 tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
-| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 82 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
-| 8 | Networking | 55% | RLPx frame encode/decode, EIP-8 auth/ack handshake decoders, size-prefix decoder, secret derivation (ECDH+KDF), MAC state init, Snappy guards, benchmarks, deduplicated handshake decoding, 53 tests (8 files, 1,399 LOC) | Handshake state machine execution, peer discovery (discv4/v5), eth/68 protocol, peer management, network I/O |
-| 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards, startup feed sequence helper, 54 tests (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
+| 0 | DB Abstraction | 95% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families (`ColumnsDb(T)`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`), cross-column write batches & snapshots, `DbFactory` vtable with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`, `OwnedDatabase` ownership model, `DbProvider` registry, benchmarks, 164 tests (12 files, 7,474 LOC) | RocksDB FFI (stubbed at 324 LOC) |
+| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, benchmarks, 28 tests (6 files, 1,618 LOC) | High-level trie helpers partial |
+| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 60 tests (7 files, 2,217 LOC) | Integration with full execution loop |
+| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 53 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
+| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 151 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
+| 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits, 40 tests (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
+| 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 125 tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
+| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 81 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
+| 8 | Networking | 55% | RLPx frame encode/decode, EIP-8 auth/ack handshake decoders, size-prefix decoder, secret derivation (ECDH+KDF), MAC state init, Snappy guards, benchmarks, deduplicated handshake decoding, 51 tests (8 files, 1,399 LOC) | Handshake state machine execution, peer discovery (discv4/v5), eth/68 protocol, peer management, network I/O |
+| 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards, startup feed sequence helper, 53 tests (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
 | 10 | Runner/CLI | 90% | CLI argument parsing (chain-id, network-id, hardfork, trace), genesis JSON loading (mainnet/sepolia/zhejiang), config defaults (4 files, 651 LOC) | Main block processing loop, service wiring |
 
 **Shared EVM engine:** [Guillotine](https://github.com/evmts/guillotine) — full hardfork support Frontier through Prague, 20+ EIPs, 100% ethereum/tests passing.
 
-**Overall: ~76% feature-complete.** Infrastructure layers (DB, state, trie, CLI) are solid. The DB layer has been significantly hardened with comptime vtable initialization that eliminates manual pointer casts and dead code. Mid-layers (blockchain, txpool, EVM integration) have matured with comprehensive validation logic and tests. The Engine API type system is complete (all versions V1-V6) though handler logic remains stubbed. Networking has usable RLPx protocol primitives but no peer management. The critical gap is end-to-end wiring: no subsystem can yet execute a full block or sync from the network.
+**Overall: ~77% feature-complete.** Infrastructure layers (DB, state, trie, CLI) are solid. The DB layer is now the most mature subsystem at 95%, with comptime vtable initialization, column family abstraction, and a full factory pattern enabling diagnostic modes and test isolation — all matching Nethermind's architecture. Mid-layers (blockchain, txpool, EVM integration) have comprehensive validation logic and tests. The Engine API type system is complete (all versions V1-V6) though handler logic remains stubbed. Networking has usable RLPx protocol primitives but no peer management. The critical gap is end-to-end wiring: no subsystem can yet execute a full block or sync from the network.
 
 ---
 
@@ -85,7 +111,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 | Subsystem | Nethermind | Zig Client | Effect-TS Client |
 |-----------|:----------:|:----------:|:----------------:|
-| DB (persistent storage) | RocksDB | In-memory only | In-memory only |
+| DB (persistent storage) | RocksDB | 95% (in-memory + factory) | 85% (in-memory only) |
 | Merkle Patricia Trie | Full | 80% | 95% |
 | World State + Journal | Full | 85% | 90% |
 | EVM Execution | Full | 80% (via Guillotine) | 70% (placeholder) |
@@ -102,7 +128,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ### Test Status
 
-No integration test results available yet. The Smithers IntegrationTest pipeline phase was added but has not yet been executed to produce `docs/test-suite-findings.md`. Unit test counts remain at 775 (Zig) and 65 test files (Effect-TS).
+No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output. Unit test counts are now **821 (Zig)** and 65 test files (Effect-TS). The Zig client's DB subsystem alone accounts for 164 of those tests.
 
 The Guillotine EVM engine (separate from the client) passes 100% of ethereum/tests spec tests (Frontier through Prague).
 
@@ -123,15 +149,17 @@ Both clients are missing:
 - **Architecture** — Both clients mirror Nethermind's module boundaries, making the remaining work well-scoped
 - **Primitives** — Voltaire provides production-quality types (Address, Block, Transaction, RLP, Crypto, Precompiles) shared across both clients
 - **Type coverage** — Engine API types are complete through V6 (Osaka) with fork-aware capability negotiation
-- **Comptime DI** — DB layer now uses comptime vtable initialization (`Database.init`) eliminating manual pointer casts — a pattern to replicate across other subsystems
+- **DB abstraction maturity** — Full factory pattern (`DbFactory` vtable + `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`), column family abstraction (`ColumnsDb(T)`), and comptime DI (`Database.init`) — matching Nethermind's DB architecture end-to-end
+- **Comptime DI** — DB layer demonstrates the comptime vtable initialization pattern (`Database.init`, `DbFactory.init`) to replicate across other subsystems
 - **Workflow automation** — Component-based ticket pipeline (Smithers) with IntegrationTest phase automates codebase review, ticket generation, implementation, and testing
 
 ### Current Priorities
 
-1. **Block execution wiring** — Connect EVM processor -> state -> blockchain for end-to-end block execution (highest impact, unblocks integration testing)
+1. **Block execution wiring** — Connect EVM processor → state → blockchain for end-to-end block execution (highest impact, unblocks integration testing)
 2. **Engine API handler implementation** — The type system is complete; implementing `newPayload`, `forkchoiceUpdated`, and `getPayload` would unlock CL integration
-3. **RocksDB backend** — Move from in-memory to persistent storage
+3. **RocksDB backend** — Move from in-memory to persistent storage (DB factory pattern is ready to support it)
 4. **Comptime vtable pattern rollout** — Apply `Database.init`-style comptime helpers to TxPool, Engine API, and other vtable-based subsystems
 5. **Integration test execution** — Run Smithers IntegrationTest phase to produce baseline `docs/test-suite-findings.md`
-6. **Peer discovery** — Implement discv4/v5 for network participation
-7. **eth/68 protocol** — Wire block/tx propagation over RLPx
+6. **Trie completion** — Finish high-level trie helpers to support state root computation
+7. **Peer discovery** — Implement discv4/v5 for network participation
+8. **eth/68 protocol** — Wire block/tx propagation over RLPx
