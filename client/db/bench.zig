@@ -640,7 +640,7 @@ fn bench_readonly_factory_overlay(n: usize) !u64 {
     var mem_factory = MemDbFactory.init(std.heap.page_allocator);
     defer mem_factory.deinit();
 
-    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator);
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator, false);
     defer ro_factory.deinit();
 
     const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));

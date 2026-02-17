@@ -174,7 +174,7 @@ test "integration: ReadOnlyDbFactory wraps MemDbFactory" {
     try base_db.db.put("existing", "original");
 
     // Create a read-only factory wrapping the mem factory
-    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), testing.allocator);
+    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), testing.allocator, false);
     defer ro_factory.deinit();
 
     // Create a read-only database
