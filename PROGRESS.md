@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-17
-**Timestamp:** ~22:00 UTC
+**Timestamp:** ~23:30 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,7 +9,13 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-Since the previous progress report (~23:30 UTC earlier today), **no new implementation commits have landed**. The last commit was a DB research gather (`db-001`). All subsystem code, test counts, and LOC remain unchanged.
+Since the previous progress report (~22:00 UTC), the following commits landed:
+
+- **`d5bbad0` ⚡ perf(db): add benchmarks for DB abstraction layer** — Top-level DB benchmarks for adapter, columns, and factory subsystems.
+- **`2496aeb` 🐛 fix(db): ReadOnlyDbFactory strict mode no longer returns OutOfMemory** — Bugfix in the read-only factory decorator's error handling path.
+- **`c2a6230` / `7551271` ♻️ refactor(db): research + plan for DB-001** — Research context and implementation plan for the next DB ticket.
+
+No new subsystem code was added beyond the DB benchmarks and bugfix. All other subsystem code, test counts, and LOC remain unchanged from the previous report.
 
 ### Integration Test Results (from pipeline)
 
@@ -38,20 +44,20 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ## Zig Client (`client/`)
 
-**Stats:** ~33,176 lines of source across 76 files (11 subsystems, 12 directories), 836 test blocks
+**Stats:** ~33,073 lines of source across 76 files (11 subsystems, 14 directories), 827 test blocks
 
 | Phase | Subsystem | Completeness | What's Done | What's Missing |
 |-------|-----------|:------------:|-------------|----------------|
-| 0 | DB Abstraction | 95% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families (`ColumnsDb(T)`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`), cross-column write batches & snapshots, `DbFactory` vtable with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`, `OwnedDatabase` ownership model, `DbProvider` registry, benchmarks, **165 tests passing** (12 files, 7,474 LOC) | RocksDB FFI (stubbed at 324 LOC) |
-| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, secure trie (keccak256 key pre-hashing), **25/25 ethereum-tests TrieTests vectors passing**, benchmarks, 31 tests (6 files, 1,618 LOC) | Trie key iteration/traversal (`trietestnextprev.json`), high-level trie helpers |
-| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 61 tests (7 files, 2,217 LOC) | Integration with full execution loop |
-| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 54 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
-| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 154 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
-| 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits, 41 tests (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
-| 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 126 tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
-| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 82 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
-| 8 | Networking | 55% | RLPx frame encode/decode, EIP-8 auth/ack handshake decoders, size-prefix decoder, secret derivation (ECDH+KDF), MAC state init, Snappy guards, benchmarks, deduplicated handshake decoding, 53 tests (8 files, 1,399 LOC) | Handshake state machine execution, peer discovery (discv4/v5), eth/68 protocol, peer management, network I/O |
-| 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards, startup feed sequence helper, 54 tests (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
+| 0 | DB Abstraction | 95% | Comptime `Database.init` vtable helper, in-memory backend, null backend, read-only overlay, column families (`ColumnsDb(T)`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`), cross-column write batches & snapshots, `DbFactory` vtable with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`, `OwnedDatabase` ownership model, `DbProvider` registry, benchmarks, **165 tests passing** (14 files, ~7,500 LOC) | RocksDB FFI (stubbed at 324 LOC) |
+| 1 | Merkle Patricia Trie | 80% | `patricialize()` algorithm matching Python spec, node types (leaf/extension/branch), <32-byte inlining, keccak256 via Voltaire, secure trie (keccak256 key pre-hashing), **25/25 ethereum-tests TrieTests vectors passing**, benchmarks, 28 tests (6 files, 1,618 LOC) | Trie key iteration/traversal (`trietestnextprev.json`), high-level trie helpers |
+| 2 | World State | 85% | Generic journal with snapshot/restore (740 LOC), account helpers (EIP-161/684/7610 empty predicates), change tracking (create/update/delete/touch), journal ops, 60 tests (7 files, 2,217 LOC) | Integration with full execution loop |
+| 3 | EVM Integration | 80% | Intrinsic gas calculator (all TX types incl. EIP-7702), TX validation, EIP-1559 fee calculation, EIP-7623 calldata floor gas (Prague+), `preprice_transaction` batch validation, host adapter skeleton, 53 tests (5 files, 2,217 LOC) | Full state execution wiring, balance/nonce checks, receipt generation |
+| 4 | Blockchain | 85% | Chain management via Voltaire Blockchain (3,075 LOC), head/canonical/reorg helpers, typed validator framework (863 LOC), strict canonicality, fork boundary detection, BLOCKHASH spec-total helper, common ancestor (nullable + strict), gas_limit_within_delta fix, 151 tests (5 files, 4,355 LOC) | Block insertion/reorg logic, state root computation |
+| 5 | TxPool | 75% | Vtable-based pool interface (12 methods), admission checks (size/gas/blob/nonce), EIP-1559 sorter, broadcast policy, blob-specific lookup, hash-cache duplicate filter, handling options, limits, 40 tests (9 files, 2,979 LOC) | Core pool data structure implementation, eviction, replacement |
+| 6 | JSON-RPC | 75% | Envelope parsing, EIP-1474 error codes, response serializers, batch executor with size cap, single-request dispatch router, `eth_chainId`, `net_version`, `web3_clientVersion`, `web3_sha3`, shared scanner, 125 tests (10 files, 3,899 LOC) | eth_* state/account query methods (eth_getBalance, eth_call, etc.), HTTP/WS server transport |
+| 7 | Engine API | 55% | Full type definitions (V1-V6), vtable interface (20+ handlers), request/response param types, fork-aware capabilities provider (Paris-Osaka), BlobsBundle cardinality constraints, executionRequests validation, 81 tests (3 files, 4,553 LOC) | All handler implementations (newPayload, forkchoiceUpdated, getPayload are type-complete but logic-stubbed) |
+| 8 | Networking | 55% | RLPx frame encode/decode, EIP-8 auth/ack handshake decoders, size-prefix decoder, secret derivation (ECDH+KDF), MAC state init, Snappy guards, benchmarks, deduplicated handshake decoding, 51 tests (8 files, 1,399 LOC) | Handshake state machine execution, peer discovery (discv4/v5), eth/68 protocol, peer management, network I/O |
+| 9 | Sync | 70% | Manager startup planner with feed activation, sync mode flags, full/snap request structures, StorageRangeRequest, BlocksRequest receipt_hashes, status helpers, validation guards, startup feed sequence helper, 53 tests (7 files, 1,814 LOC) | Protocol handlers, actual block/state fetching, feed implementations |
 | 10 | Runner/CLI | 90% | CLI argument parsing (chain-id, network-id, hardfork, trace), genesis JSON loading (mainnet/sepolia/zhejiang), config defaults (4 files, 651 LOC) | Main block processing loop, service wiring |
 
 **Shared EVM engine:** [Guillotine](https://github.com/evmts/guillotine) -- full hardfork support Frontier through Prague, 20+ EIPs, 100% ethereum/tests passing.
@@ -115,7 +121,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 **Build system blocker:** All `zig build test-*` commands fail due to Voltaire `wallycore` artifact panic (`voltaire/build.zig:971`). Tests pass when invoked via direct `zig test` with manual module imports. This is tracked as a BLOCKER ticket.
 
-Total test block count: **836 (Zig)** and 65 test files (Effect-TS).
+Total test block count: **827 (Zig)** and 65 test files (Effect-TS).
 
 The Guillotine EVM engine (separate from the client) passes 100% of ethereum/tests spec tests (Frontier through Prague).
 
