@@ -1,932 +1,710 @@
-/// Benchmarks for the DB abstraction layer (phase-0-db).
+/// Benchmarks for the Database Abstraction Layer (DB-001).
 ///
 /// Measures throughput and latency for:
-///   1. Sequential key-value insertions (simulating trie node writes)
-///   2. Random key lookups (simulating state reads)
-///   3. Mixed read/write workloads (simulating block processing)
-///   4. WriteBatch commit throughput
-///   5. Vtable dispatch overhead vs direct calls
-///   6. Memory/arena allocation patterns
+///   1. MemoryDatabase put/get (sequential and random access)
+///   2. MemoryDatabase mixed read/write workloads (block processing)
+///   3. ReadOnlyDb strict mode reads (vtable overhead, DB-001 fix)
+///   4. ReadOnlyDb overlay writes and reads (snapshot execution pattern)
+///   5. ReadOnlyDb clear_temp_changes cycle (ClearTempChanges pattern)
+///   6. Factory creation overhead (MemDbFactory, NullDbFactory, ReadOnlyDbFactory)
+///   7. WriteBatch accumulate + commit
+///   8. Vtable dispatch overhead (direct vs interface)
+///   9. Memory usage and arena allocation patterns
+///  10. Simulated block state operations
 ///
 /// Run:
-///   zig build bench-db                    # Debug mode
+///   zig build bench-db                         # Debug mode
 ///   zig build bench-db -Doptimize=ReleaseFast  # Release mode (accurate numbers)
 ///
-/// All benchmarks use arena allocator (transaction-scoped) to match production patterns.
+/// Target: Nethermind processes ~700 MGas/s. The DB layer must handle
+/// ~2400+ storage operations per block at negligible overhead compared to EVM.
 const std = @import("std");
+const bench_utils = @import("bench_utils");
+const print_result = bench_utils.print_result;
+const format_ns = bench_utils.format_ns;
+
+// Sibling module imports (resolved via root_source_file relative path).
 const adapter = @import("adapter.zig");
 const memory = @import("memory.zig");
-const columns = @import("columns.zig");
+const read_only = @import("read_only.zig");
+const factory_mod = @import("factory.zig");
+const rocksdb = @import("rocksdb.zig");
+
+const Database = adapter.Database;
+const DbValue = adapter.DbValue;
+const Error = adapter.Error;
 const WriteBatch = adapter.WriteBatch;
 const MemoryDatabase = memory.MemoryDatabase;
-const MemColumnsDb = columns.MemColumnsDb;
-const ColumnsDb = columns.ColumnsDb;
-const ColumnsWriteBatch = columns.ColumnsWriteBatch;
-const ReceiptsColumns = columns.ReceiptsColumns;
-const BlobTxsColumns = columns.BlobTxsColumns;
-const Database = adapter.Database;
-const ReadFlags = adapter.ReadFlags;
+const ReadOnlyDb = read_only.ReadOnlyDb;
+const MemDbFactory = factory_mod.MemDbFactory;
+const NullDbFactory = factory_mod.NullDbFactory;
+const ReadOnlyDbFactory = factory_mod.ReadOnlyDbFactory;
+const DbSettings = rocksdb.DbSettings;
 
-/// Number of iterations for each benchmark tier.
+/// Number of warmup iterations before timing.
+const WARMUP_ITERS: usize = 3;
+/// Number of timed iterations to average.
+const BENCH_ITERS: usize = 10;
+
+/// Tier sizes.
 const SMALL_N: usize = 1_000;
 const MEDIUM_N: usize = 10_000;
 const LARGE_N: usize = 100_000;
-const XLARGE_N: usize = 1_000_000;
 
-/// Simulated key sizes (Ethereum trie node hashes are 32 bytes).
-const KEY_SIZE: usize = 32;
-/// Simulated value sizes (typical trie node ~100-500 bytes, we use 128).
-const VALUE_SIZE: usize = 128;
+// ============================================================================
+// Key/value generation helpers
+// ============================================================================
 
-/// Pre-generate deterministic keys and values for benchmarks.
-/// Uses a simple PRNG seeded from the index to ensure reproducibility.
-fn generate_key(buf: *[KEY_SIZE]u8, index: usize) void {
-    // Use wyhash of the index to fill the key buffer deterministically
-    const h = std.hash.Wyhash.hash(0xDEADBEEF, std.mem.asBytes(&index));
-    const h_bytes = std.mem.asBytes(&h);
-    @memcpy(buf[0..@sizeOf(@TypeOf(h))], h_bytes);
-    // Fill remaining bytes with a second hash
-    const h2 = std.hash.Wyhash.hash(0xCAFEBABE, std.mem.asBytes(&index));
-    const h2_bytes = std.mem.asBytes(&h2);
-    @memcpy(buf[@sizeOf(@TypeOf(h))..][0..@sizeOf(@TypeOf(h2))], h2_bytes);
-    // Fill rest with index-derived pattern
-    for (buf[@sizeOf(@TypeOf(h)) + @sizeOf(@TypeOf(h2)) ..]) |*byte| {
-        byte.* = @truncate(index);
-    }
-}
-
-fn generate_value(buf: *[VALUE_SIZE]u8, index: usize) void {
-    const h = std.hash.Wyhash.hash(0x12345678, std.mem.asBytes(&index));
-    const h_bytes = std.mem.asBytes(&h);
-    for (buf, 0..) |*byte, i| {
-        byte.* = h_bytes[i % @sizeOf(@TypeOf(h))];
-    }
-}
-
-/// Format nanoseconds into a human-readable string.
-fn format_ns(ns: u64) ![32]u8 {
-    var buf: [32]u8 = undefined;
-    if (ns < 1_000) {
-        _ = try std.fmt.bufPrint(&buf, "{d} ns", .{ns});
-    } else if (ns < 1_000_000) {
-        _ = try std.fmt.bufPrint(&buf, "{d:.1} us", .{@as(f64, @floatFromInt(ns)) / 1_000.0});
-    } else if (ns < 1_000_000_000) {
-        _ = try std.fmt.bufPrint(&buf, "{d:.2} ms", .{@as(f64, @floatFromInt(ns)) / 1_000_000.0});
-    } else {
-        _ = try std.fmt.bufPrint(&buf, "{d:.3} s", .{@as(f64, @floatFromInt(ns)) / 1_000_000_000.0});
-    }
+/// Generate a deterministic 32-byte key from an index.
+/// Simulates Ethereum storage keys (32-byte slot hashes).
+fn make_key(buf: *[32]u8, index: usize) []const u8 {
+    const idx: u64 = @intCast(index);
+    @memcpy(buf[0..8], std.mem.asBytes(&idx));
+    @memcpy(buf[8..16], std.mem.asBytes(&(idx *% 0x9E3779B97F4A7C15)));
+    @memcpy(buf[16..24], std.mem.asBytes(&(idx *% 0x517CC1B727220A95)));
+    @memcpy(buf[24..32], std.mem.asBytes(&(idx *% 0x6C62272E07BB0142)));
     return buf;
 }
 
-fn format_ops_per_sec(ops: usize, elapsed_ns: u64) ![32]u8 {
-    var buf: [32]u8 = undefined;
-    if (elapsed_ns == 0) {
-        _ = try std.fmt.bufPrint(&buf, "inf ops/s", .{});
-        return buf;
-    }
-    const ops_per_sec = @as(f64, @floatFromInt(ops)) / (@as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0);
-    if (ops_per_sec >= 1_000_000) {
-        _ = try std.fmt.bufPrint(&buf, "{d:.2} M ops/s", .{ops_per_sec / 1_000_000.0});
-    } else if (ops_per_sec >= 1_000) {
-        _ = try std.fmt.bufPrint(&buf, "{d:.1} K ops/s", .{ops_per_sec / 1_000.0});
-    } else {
-        _ = try std.fmt.bufPrint(&buf, "{d:.0} ops/s", .{ops_per_sec});
-    }
+/// Generate a deterministic 32-byte value from an index.
+fn make_value(buf: *[32]u8, index: usize) []const u8 {
+    const idx: u64 = @intCast(index);
+    const val = idx *% 0xDEADBEEFCAFEBABE;
+    @memcpy(buf[0..8], std.mem.asBytes(&val));
+    @memcpy(buf[8..16], std.mem.asBytes(&(val +% 1)));
+    @memcpy(buf[16..24], std.mem.asBytes(&(val +% 2)));
+    @memcpy(buf[24..32], std.mem.asBytes(&(val +% 3)));
     return buf;
 }
 
-const BenchResult = struct {
-    name: []const u8,
-    ops: usize,
-    elapsed_ns: u64,
-    per_op_ns: u64,
-    ops_per_sec: f64,
-};
-
-fn run_bench(name: []const u8, n: usize, func: anytype) !BenchResult {
-    const elapsed = try func(n);
-    const per_op = if (n > 0) elapsed / n else 0;
-    const ops_sec = if (elapsed > 0) @as(f64, @floatFromInt(n)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0) else 0;
+/// Helper: format a BenchResult from raw values.
+fn result(name: []const u8, ops: usize, elapsed_ns: u64) bench_utils.BenchResult {
     return .{
         .name = name,
-        .ops = n,
-        .elapsed_ns = elapsed,
-        .per_op_ns = per_op,
-        .ops_per_sec = ops_sec,
+        .ops = ops,
+        .elapsed_ns = elapsed_ns,
+        .per_op_ns = if (ops > 0) elapsed_ns / ops else 0,
+        .ops_per_sec = if (elapsed_ns > 0)
+            @as(f64, @floatFromInt(ops)) / (@as(f64, @floatFromInt(elapsed_ns)) / 1e9)
+        else
+            0,
     };
-}
-
-fn print_result(r: BenchResult) !void {
-    const total_str = try format_ns(r.elapsed_ns);
-    const per_op_str = try format_ns(r.per_op_ns);
-    const ops_str = try format_ops_per_sec(r.ops, r.elapsed_ns);
-    std.debug.print("  {s:<45} {d:>8} ops  total={s}  per-op={s}  {s}\n", .{
-        r.name,
-        r.ops,
-        &total_str,
-        &per_op_str,
-        &ops_str,
-    });
 }
 
 // ============================================================================
 // Benchmark implementations
 // ============================================================================
 
-/// Benchmark 1: Sequential put (simulating trie node writes during block processing)
-fn bench_sequential_put(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
+/// Benchmark: Sequential insert — put N 32-byte keys into a fresh MemoryDatabase.
+fn bench_sequential_insert(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
 
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
+    // Warmup
+    for (0..WARMUP_ITERS) |_| {
+        var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+        for (0..n) |i| {
+            db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        db.deinit();
     }
-    return timer.read();
+
+    // Timed
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        total_ns += timer.read();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
 }
 
-/// Benchmark 2: Sequential get (simulating state reads)
-fn bench_sequential_get(n: usize) !u64 {
+/// Benchmark: Random read — get N keys from a pre-populated database.
+fn bench_random_read(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
     var db = MemoryDatabase.init(std.heap.page_allocator, .state);
     defer db.deinit();
-
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
     for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
     }
 
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        _ = db.get(&key_buf);
+    // Warmup
+    for (0..WARMUP_ITERS) |_| {
+        var idx: usize = 0;
+        for (0..n) |_| {
+            idx = (idx *% 6364136223846793005 +% 1442695040888963407) % n;
+            const val = db.get(make_key(&key_buf, idx));
+            if (val) |v| v.release();
+        }
     }
-    return timer.read();
+
+    // Timed
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var idx: usize = 0;
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |_| {
+            idx = (idx *% 6364136223846793005 +% 1442695040888963407) % n;
+            const val = db.get(make_key(&key_buf, idx));
+            if (val) |v| v.release();
+        }
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
 }
 
-/// Benchmark 3: Random get from pre-populated DB (cache-unfriendly access)
-fn bench_random_get(n: usize) !u64 {
+/// Benchmark: Mixed read/write (80% reads, 20% writes).
+fn bench_mixed_rw(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
     var db = MemoryDatabase.init(std.heap.page_allocator, .state);
     defer db.deinit();
-
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    // Random access pattern using a simple LCG
-    var rng_state: u64 = 0x1234567890ABCDEF;
-    var timer = try std.time.Timer.start();
-    for (0..n) |_| {
-        rng_state = rng_state *% 6364136223846793005 +% 1442695040888963407;
-        const idx = rng_state % n;
-        generate_key(&key_buf, idx);
-        _ = db.get(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 4: Contains check (used for warm/cold access tracking)
-fn bench_contains(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate half the keys
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
     for (0..n / 2) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
     }
 
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        _ = db.contains(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 5: Delete operations
-fn bench_delete(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        try db.delete(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 6: Mixed read/write (80% read, 20% write — simulating block processing)
-fn bench_mixed_workload(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate with n/2 entries
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..n / 2) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    var rng_state: u64 = 0xFEDCBA9876543210;
-    var timer = try std.time.Timer.start();
-    for (0..n) |_| {
-        rng_state = rng_state *% 6364136223846793005 +% 1442695040888963407;
-        const idx = rng_state % n;
-        generate_key(&key_buf, idx);
-
-        if (rng_state % 5 == 0) {
-            // 20% writes
-            generate_value(&val_buf, idx);
-            try db.put(&key_buf, &val_buf);
-        } else {
-            // 80% reads
-            _ = db.get(&key_buf);
-        }
-    }
-    return timer.read();
-}
-
-/// Benchmark 7: WriteBatch put+commit (simulating bulk state updates)
-fn bench_write_batch(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    const iface = db.database();
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    // Use a batch size of 100 (typical state changes per block)
-    const batch_size: usize = 100;
-    const num_batches = n / batch_size;
-
-    var timer = try std.time.Timer.start();
-    for (0..num_batches) |batch_idx| {
-        var batch = WriteBatch.init(std.heap.page_allocator, iface);
-        for (0..batch_size) |i| {
-            const idx = batch_idx * batch_size + i;
-            generate_key(&key_buf, idx);
-            generate_value(&val_buf, idx);
-            try batch.put(&key_buf, &val_buf);
-        }
-        try batch.commit();
-        batch.deinit();
-    }
-    return timer.read();
-}
-
-/// Benchmark 8: Vtable dispatch overhead (indirect vs direct calls)
-fn bench_vtable_overhead(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..1000) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    const iface = db.database();
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i % 1000);
-        _ = try iface.get(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 8b: Direct calls (baseline for vtable comparison)
-fn bench_direct_calls(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..1000) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i % 1000);
-        _ = db.get(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 9: Overwrite existing keys (simulating storage slot updates)
-fn bench_overwrite(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate with n entries
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    // Overwrite all entries with new values
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i + n); // Different value
-        try db.put(&key_buf, &val_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 10: Simulated block processing
-/// Simulates processing a block with ~200 transactions, each touching ~10 storage slots.
-/// This measures the realistic workload pattern for the DB layer.
-fn bench_block_processing(n: usize) !u64 {
-    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
-    defer db.deinit();
-
-    // Pre-populate with "world state" — n accounts with some storage
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try db.put(&key_buf, &val_buf);
-    }
-
-    const txs_per_block: usize = 200;
-    const reads_per_tx: usize = 10; // Read account + storage slots
-    const writes_per_tx: usize = 3; // Write storage changes
-
-    var rng_state: u64 = 0xABCDEF0123456789;
-
-    var timer = try std.time.Timer.start();
-    for (0..txs_per_block) |_| {
-        // Reads (account lookups, storage reads)
-        for (0..reads_per_tx) |_| {
-            rng_state = rng_state *% 6364136223846793005 +% 1442695040888963407;
-            generate_key(&key_buf, rng_state % n);
-            _ = db.get(&key_buf);
-        }
-        // Writes (storage updates)
-        for (0..writes_per_tx) |_| {
-            rng_state = rng_state *% 6364136223846793005 +% 1442695040888963407;
-            generate_key(&key_buf, rng_state % n);
-            generate_value(&val_buf, rng_state);
-            try db.put(&key_buf, &val_buf);
-        }
-    }
-    return timer.read();
-}
-
-// ============================================================================
-// Column family benchmarks (DB-001: ColumnsDb, ColumnsWriteBatch, etc.)
-// ============================================================================
-
-/// Benchmark 11: MemColumnsDb init + columnsDb() accessor (measures setup cost)
-fn bench_columns_init_accessor(n: usize) !u64 {
-    var timer = try std.time.Timer.start();
-    for (0..n) |_| {
-        var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
-        _ = mcdb.columnsDb();
-        mcdb.deinit();
-    }
-    return timer.read();
-}
-
-/// Benchmark 12: Column-isolated put/get (write to 3 columns, read back)
-/// Simulates receipt indexing: write to default, transactions, blocks columns.
-fn bench_columns_put_get(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-
-        // Write to all 3 columns (simulating receipt indexing)
-        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
-        try cdb.getColumnDb(.transactions).put(&key_buf, &val_buf);
-        try cdb.getColumnDb(.blocks).put(&key_buf, &val_buf);
-
-        // Read back from each column
-        _ = try cdb.getColumnDb(.default).get(&key_buf);
-        _ = try cdb.getColumnDb(.transactions).get(&key_buf);
-        _ = try cdb.getColumnDb(.blocks).get(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 13: ColumnsWriteBatch cross-column commit
-/// Accumulates writes across all columns, then commits atomically.
-fn bench_columns_write_batch(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-    const batch_size: usize = 100;
-    const num_batches = n / batch_size;
-
-    var timer = try std.time.Timer.start();
-    for (0..num_batches) |batch_idx| {
-        var batch = cdb.startWriteBatch(std.heap.page_allocator);
-        for (0..batch_size) |i| {
-            const idx = batch_idx * batch_size + i;
-            generate_key(&key_buf, idx);
-            generate_value(&val_buf, idx);
-            // Distribute across columns (round-robin)
-            switch (idx % 3) {
-                0 => try batch.getColumnBatch(.default).put(&key_buf, &val_buf),
-                1 => try batch.getColumnBatch(.transactions).put(&key_buf, &val_buf),
-                else => try batch.getColumnBatch(.blocks).put(&key_buf, &val_buf),
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            if (i % 5 == 0) {
+                db.put(make_key(&key_buf, n + i), make_value(&val_buf, i)) catch unreachable;
+            } else {
+                const val = db.get(make_key(&key_buf, i % (n / 2)));
+                if (val) |v| v.release();
             }
         }
-        try batch.commit();
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Vtable dispatch overhead — direct call vs vtable call.
+fn bench_vtable_overhead(n: usize) struct { direct_ns: u64, vtable_ns: u64 } {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..1000) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+    const iface = db.database();
+
+    // Direct
+    var direct_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            const val = db.get(make_key(&key_buf, i % 1000));
+            if (val) |v| v.release();
+        }
+        direct_total += timer.read();
+    }
+
+    // Vtable
+    var vtable_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            const val = iface.get(make_key(&key_buf, i % 1000)) catch unreachable;
+            if (val) |v| v.release();
+        }
+        vtable_total += timer.read();
+    }
+
+    return .{
+        .direct_ns = direct_total / BENCH_ITERS,
+        .vtable_ns = vtable_total / BENCH_ITERS,
+    };
+}
+
+/// Benchmark: ReadOnlyDb strict mode — reads through read-only wrapper (DB-001 fix).
+fn bench_readonly_strict_reads(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..1000) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+
+    var ro = ReadOnlyDb.init(db.database());
+    defer ro.deinit();
+    const iface = ro.database();
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            const val = iface.get(make_key(&key_buf, i % 1000)) catch unreachable;
+            if (val) |v| v.release();
+        }
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: ReadOnlyDb overlay writes + reads (snapshot execution pattern).
+fn bench_readonly_overlay(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..500) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var ro = ReadOnlyDb.init_with_write_store(db.database(), std.heap.page_allocator) catch unreachable;
+        const iface = ro.database();
+
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            iface.put(make_key(&key_buf, 1000 + i), make_value(&val_buf, i)) catch unreachable;
+        }
+        for (0..n) |i| {
+            if (i % 2 == 0) {
+                const val = iface.get(make_key(&key_buf, 1000 + (i % n))) catch unreachable;
+                if (val) |v| v.release();
+            } else {
+                const val = iface.get(make_key(&key_buf, i % 500)) catch unreachable;
+                if (val) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+        ro.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: ReadOnlyDb clear_temp_changes cycle (ClearTempChanges pattern).
+fn bench_overlay_clear_cycle(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..100) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var ro = ReadOnlyDb.init_with_write_store(db.database(), std.heap.page_allocator) catch unreachable;
+        const iface = ro.database();
+
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |cycle| {
+            for (0..10) |i| {
+                iface.put(make_key(&key_buf, 1000 + cycle * 10 + i), make_value(&val_buf, i)) catch unreachable;
+            }
+            for (0..10) |i| {
+                const val = iface.get(make_key(&key_buf, 1000 + cycle * 10 + i)) catch unreachable;
+                if (val) |v| v.release();
+            }
+            ro.clear_temp_changes();
+        }
+        total_ns += timer.read();
+        ro.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Factory creation overhead.
+fn bench_factory_creation(n: usize) struct { mem_ns: u64, null_ns: u64, ro_overlay_ns: u64, ro_strict_ns: u64 } {
+    // MemDbFactory
+    var mem_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+        const f = mem_factory.factory();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |_| {
+            const owned = f.createDb(DbSettings.init(.state, "state")) catch unreachable;
+            owned.deinit();
+        }
+        mem_total += timer.read();
+        mem_factory.deinit();
+    }
+
+    // NullDbFactory
+    var null_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var null_factory = NullDbFactory.init();
+        const f = null_factory.factory();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |_| {
+            _ = f.createDb(DbSettings.init(.state, "state")) catch {};
+        }
+        null_total += timer.read();
+        null_factory.deinit();
+    }
+
+    // ReadOnlyDbFactory (overlay)
+    var ro_overlay_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+        var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator, false);
+        const f = ro_factory.factory();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |_| {
+            const owned = f.createDb(DbSettings.init(.state, "state")) catch unreachable;
+            owned.deinit();
+        }
+        ro_overlay_total += timer.read();
+        ro_factory.deinit();
+        mem_factory.deinit();
+    }
+
+    // ReadOnlyDbFactory (strict — DB-001 fix target)
+    var ro_strict_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var mem_factory = MemDbFactory.init(std.heap.page_allocator);
+        var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator, true);
+        const f = ro_factory.factory();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |_| {
+            const owned = f.createDb(DbSettings.init(.state, "state")) catch unreachable;
+            owned.deinit();
+        }
+        ro_strict_total += timer.read();
+        ro_factory.deinit();
+        mem_factory.deinit();
+    }
+
+    return .{
+        .mem_ns = mem_total / BENCH_ITERS,
+        .null_ns = null_total / BENCH_ITERS,
+        .ro_overlay_ns = ro_overlay_total / BENCH_ITERS,
+        .ro_strict_ns = ro_strict_total / BENCH_ITERS,
+    };
+}
+
+/// Benchmark: WriteBatch accumulate + commit.
+fn bench_write_batch(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var batch = WriteBatch.init(std.heap.page_allocator, iface);
+
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            batch.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        batch.commit() catch unreachable;
+        total_ns += timer.read();
+
         batch.deinit();
+        db.deinit();
     }
-    return timer.read();
+    return total_ns / BENCH_ITERS;
 }
 
-/// Benchmark 14: ColumnDbSnapshot create + read (point-in-time reads)
-fn bench_columns_snapshot(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
+/// Benchmark: Memory usage — peak allocation for N inserts.
+fn bench_memory_usage(n: usize) struct { elapsed_ns: u64, peak_bytes: usize } {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
 
-    // Pre-populate
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
+    defer _ = gpa.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    var db = MemoryDatabase.init(arena.allocator(), .state);
+
+    var timer = std.time.Timer.start() catch unreachable;
     for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
-    }
-
-    var timer = try std.time.Timer.start();
-    // Create snapshot
-    var snap = try cdb.createSnapshot();
-
-    // Read all keys from snapshot
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        _ = try snap.getColumnSnapshot(.default).get(&key_buf, ReadFlags.none);
-    }
-    snap.deinit();
-    return timer.read();
-}
-
-/// Benchmark 15: Column isolation verification (write to one, check absence in others)
-/// Measures the overhead of column family dispatch vs single DB.
-fn bench_columns_isolation_overhead(n: usize) !u64 {
-    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.heap.page_allocator, .receipts);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
-
-    // Single-DB baseline: use just the default column
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        // Write to default only
-        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
-        // Verify isolation: other columns should return null
-        _ = try cdb.getColumnDb(.transactions).get(&key_buf);
-        _ = try cdb.getColumnDb(.blocks).get(&key_buf);
-    }
-    return timer.read();
-}
-
-/// Benchmark 16: BlobTxsColumns (3-column EIP-4844 pattern)
-/// Simulates blob transaction lifecycle: full -> light -> processed
-fn bench_blob_columns_lifecycle(n: usize) !u64 {
-    var mcdb = MemColumnsDb(BlobTxsColumns).init(std.heap.page_allocator, .blob_transactions);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-
-        // Stage 1: Store full blob tx
-        try cdb.getColumnDb(.full_blob_txs).put(&key_buf, &val_buf);
-        // Stage 2: Create light version
-        try cdb.getColumnDb(.light_blob_txs).put(&key_buf, &val_buf);
-        // Stage 3: Mark as processed
-        try cdb.getColumnDb(.processed_txs).put(&key_buf, &val_buf);
-        // Stage 4: Read back processed
-        _ = try cdb.getColumnDb(.processed_txs).get(&key_buf);
-    }
-    return timer.read();
-}
-
-// ============================================================================
-// Factory benchmarks (DB-002: DbFactory, MemDbFactory, ReadOnlyDbFactory)
-// ============================================================================
-
-const factory = @import("factory.zig");
-const MemDbFactory = factory.MemDbFactory;
-const ReadOnlyDbFactory = factory.ReadOnlyDbFactory;
-const NullDbFactory = factory.NullDbFactory;
-const DbFactory = factory.DbFactory;
-const DbSettings = @import("rocksdb.zig").DbSettings;
-const prov = @import("provider.zig");
-const DbProvider = prov.DbProvider;
-
-/// Benchmark 17: MemDbFactory createDb throughput
-/// Measures factory overhead for creating databases (heap alloc + vtable setup).
-fn bench_factory_create_db(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
-
-    const f = mem_factory.factory();
-
-    // Pre-allocate an array to hold owned databases for cleanup
-    var owned_dbs = try std.heap.page_allocator.alloc(adapter.OwnedDatabase, n);
-    defer std.heap.page_allocator.free(owned_dbs);
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        owned_dbs[i] = try f.createDb(DbSettings.init(.state, "state"));
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
     }
     const elapsed = timer.read();
+    const total_allocated = gpa.total_requested_bytes;
+    arena.deinit();
 
-    // Cleanup all created databases
-    for (0..n) |i| {
-        owned_dbs[i].deinit();
-    }
-
-    return elapsed;
+    return .{ .elapsed_ns = elapsed, .peak_bytes = total_allocated };
 }
 
-/// Benchmark 18: Factory-created DB put/get throughput
-/// Measures I/O through a factory-created database vs direct MemoryDatabase.
-fn bench_factory_db_io(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
+/// Benchmark: Arena-scoped DB pattern (create + populate + destroy).
+fn bench_arena_db_cycle(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
 
-    const owned = try mem_factory.factory().createDb(DbSettings.init(.state, "state"));
-    defer owned.deinit();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try owned.db.put(&key_buf, &val_buf);
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        var db = MemoryDatabase.init(arena.allocator(), .state);
+        for (0..n) |i| {
+            db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        for (0..n) |i| {
+            const val = db.get(make_key(&key_buf, i));
+            if (val) |v| v.release();
+        }
+        arena.deinit();
+        total_ns += timer.read();
     }
-    // Read back all
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        const val = try owned.db.get(&key_buf);
-        if (val) |v| v.release();
-    }
-    return timer.read();
+    return total_ns / BENCH_ITERS;
 }
 
-/// Benchmark 19: ReadOnlyDbFactory overlay write+read throughput
-/// Measures overlay-based read/write performance through the factory chain.
-fn bench_readonly_factory_overlay(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
+/// Benchmark: Simulated block state operations.
+/// 200 txs × (2 account reads + 5 storage writes + 5 storage reads) = 2400 ops.
+fn bench_block_state_ops() u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
 
-    var ro_factory = ReadOnlyDbFactory.init(mem_factory.factory(), std.heap.page_allocator, false);
-    defer ro_factory.deinit();
+    const txs_per_block: usize = 200;
+    const storage_writes_per_tx: usize = 5;
+    const storage_reads_per_tx: usize = 5;
+    const account_reads_per_tx: usize = 2;
 
-    const owned = try ro_factory.factory().createDb(DbSettings.init(.state, "state"));
-    defer owned.deinit();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    // Writes go to overlay
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        try owned.db.put(&key_buf, &val_buf);
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..txs_per_block) |tx| {
+            for (0..account_reads_per_tx) |a| {
+                const val = db.get(make_key(&key_buf, tx * 100 + a));
+                if (val) |v| v.release();
+            }
+            for (0..storage_writes_per_tx) |s| {
+                db.put(make_key(&key_buf, tx * 100 + 10 + s), make_value(&val_buf, tx * s)) catch unreachable;
+            }
+            for (0..storage_reads_per_tx) |s| {
+                const val = db.get(make_key(&key_buf, tx * 100 + 10 + s));
+                if (val) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+        db.deinit();
     }
-    // Reads check overlay first
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        const val = try owned.db.get(&key_buf);
-        if (val) |v| v.release();
-    }
-    return timer.read();
-}
-
-/// Benchmark 20: Factory vtable dispatch overhead
-/// Compares factory.createDb (vtable) vs direct MemDbFactory.createDbImpl cost.
-/// This isolates the vtable indirection overhead in the factory layer.
-fn bench_factory_vtable_overhead(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
-
-    const f = mem_factory.factory();
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |_| {
-        const owned = try f.createDb(DbSettings.init(.state, "state"));
-        // Immediately write+read to measure full round-trip through vtable
-        try owned.db.put("bench_key", "bench_value");
-        const val = try owned.db.get("bench_key");
-        if (val) |v| v.release();
-        owned.deinit();
-    }
-    return timer.read();
-}
-
-/// Benchmark 21: Factory + DbProvider wiring throughput
-/// Simulates realistic startup: factory creates DBs, registers in provider,
-/// then performs I/O through the provider abstraction.
-fn bench_factory_provider_wiring(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
-
-    const f = mem_factory.factory();
-
-    // Create DBs and register them in a provider
-    const state_owned = try f.createDb(DbSettings.init(.state, "state"));
-    defer state_owned.deinit();
-    const code_owned = try f.createDb(DbSettings.init(.code, "code"));
-    defer code_owned.deinit();
-    const storage_owned = try f.createDb(DbSettings.init(.storage, "storage"));
-    defer storage_owned.deinit();
-
-    var db_provider = DbProvider.init();
-    db_provider.register(.state, state_owned.db);
-    db_provider.register(.code, code_owned.db);
-    db_provider.register(.storage, storage_owned.db);
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-
-        // Distribute across providers (simulating block processing)
-        const db = switch (i % 3) {
-            0 => try db_provider.get(.state),
-            1 => try db_provider.get(.code),
-            else => try db_provider.get(.storage),
-        };
-        try db.put(&key_buf, &val_buf);
-    }
-    // Read back through provider
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        const db = switch (i % 3) {
-            0 => try db_provider.get(.state),
-            1 => try db_provider.get(.code),
-            else => try db_provider.get(.storage),
-        };
-        const val = try db.get(&key_buf);
-        if (val) |v| v.release();
-    }
-    return timer.read();
-}
-
-/// Benchmark 22: MemDbFactory createColumnsDb throughput
-/// Measures factory column-database creation (comptime dispatch path).
-fn bench_factory_columns_db(n: usize) !u64 {
-    var mem_factory = MemDbFactory.init(std.heap.page_allocator);
-    defer mem_factory.deinit();
-
-    var key_buf: [KEY_SIZE]u8 = undefined;
-    var val_buf: [VALUE_SIZE]u8 = undefined;
-
-    var mcdb = mem_factory.createColumnsDb(ReceiptsColumns, .receipts);
-    defer mcdb.deinit();
-    var cdb = mcdb.columnsDb();
-
-    var timer = try std.time.Timer.start();
-    for (0..n) |i| {
-        generate_key(&key_buf, i);
-        generate_value(&val_buf, i);
-        // Write to all 3 columns via factory-created ColumnsDb
-        try cdb.getColumnDb(.default).put(&key_buf, &val_buf);
-        try cdb.getColumnDb(.transactions).put(&key_buf, &val_buf);
-        try cdb.getColumnDb(.blocks).put(&key_buf, &val_buf);
-    }
-    return timer.read();
+    return total_ns / BENCH_ITERS;
 }
 
 // ============================================================================
 // Main benchmark entry point
 // ============================================================================
 
-/// Entry point for DB abstraction layer benchmarks.
 pub fn main() !void {
+    if (@import("builtin").is_test) return;
     std.debug.print("\n", .{});
     std.debug.print("=" ** 100 ++ "\n", .{});
-    std.debug.print("  Guillotine Phase-0-DB Benchmarks (MemoryDatabase)\n", .{});
-    std.debug.print("  Key size: {d} bytes, Value size: {d} bytes\n", .{ KEY_SIZE, VALUE_SIZE });
+    std.debug.print("  Guillotine DB Abstraction Layer Benchmarks (DB-001)\n", .{});
+    std.debug.print("  Key size: 32 bytes, Value size: 32 bytes (simulating Ethereum storage slots)\n", .{});
+    std.debug.print("  Warmup: {d} iters, Timed: {d} iters (averaged)\n", .{ WARMUP_ITERS, BENCH_ITERS });
     std.debug.print("=" ** 100 ++ "\n\n", .{});
 
-    // -- Core operations --
-    std.debug.print("--- Core Operations ---\n", .{});
-    try print_result(try run_bench("put (sequential, 10K)", MEDIUM_N, bench_sequential_put));
-    try print_result(try run_bench("put (sequential, 100K)", LARGE_N, bench_sequential_put));
-    try print_result(try run_bench("put (sequential, 1M)", XLARGE_N, bench_sequential_put));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("get (sequential, 10K)", MEDIUM_N, bench_sequential_get));
-    try print_result(try run_bench("get (sequential, 100K)", LARGE_N, bench_sequential_get));
-    try print_result(try run_bench("get (sequential, 1M)", XLARGE_N, bench_sequential_get));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("get (random, 10K)", MEDIUM_N, bench_random_get));
-    try print_result(try run_bench("get (random, 100K)", LARGE_N, bench_random_get));
-    try print_result(try run_bench("get (random, 1M)", XLARGE_N, bench_random_get));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("contains (10K, 50% hit)", MEDIUM_N, bench_contains));
-    try print_result(try run_bench("contains (100K, 50% hit)", LARGE_N, bench_contains));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("delete (10K)", MEDIUM_N, bench_delete));
-    try print_result(try run_bench("delete (100K)", LARGE_N, bench_delete));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("overwrite (10K)", MEDIUM_N, bench_overwrite));
-    try print_result(try run_bench("overwrite (100K)", LARGE_N, bench_overwrite));
-    std.debug.print("\n", .{});
-
-    // -- Compound operations --
-    std.debug.print("--- Compound Operations ---\n", .{});
-    try print_result(try run_bench("mixed 80/20 r/w (10K)", MEDIUM_N, bench_mixed_workload));
-    try print_result(try run_bench("mixed 80/20 r/w (100K)", LARGE_N, bench_mixed_workload));
-    try print_result(try run_bench("mixed 80/20 r/w (1M)", XLARGE_N, bench_mixed_workload));
-    std.debug.print("\n", .{});
-
-    try print_result(try run_bench("write-batch (10K, batch=100)", MEDIUM_N, bench_write_batch));
-    try print_result(try run_bench("write-batch (100K, batch=100)", LARGE_N, bench_write_batch));
-    std.debug.print("\n", .{});
-
-    // -- Vtable overhead --
-    std.debug.print("--- Vtable Dispatch Overhead ---\n", .{});
-    const direct = try run_bench("direct get (1M lookups in 1K DB)", XLARGE_N, bench_direct_calls);
-    const vtable = try run_bench("vtable get (1M lookups in 1K DB)", XLARGE_N, bench_vtable_overhead);
-    try print_result(direct);
-    try print_result(vtable);
-    if (direct.per_op_ns > 0) {
-        const overhead_pct = if (vtable.per_op_ns > direct.per_op_ns)
-            @as(f64, @floatFromInt(vtable.per_op_ns - direct.per_op_ns)) / @as(f64, @floatFromInt(direct.per_op_ns)) * 100.0
-        else
-            0.0;
-        std.debug.print("  Vtable overhead: {d:.1}%\n", .{overhead_pct});
+    // -- Sequential Insert --
+    std.debug.print("--- MemoryDatabase: Sequential Insert ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "insert (1K keys, 32B each)" },
+        .{ .n = MEDIUM_N, .name = "insert (10K keys, 32B each)" },
+        .{ .n = LARGE_N, .name = "insert (100K keys, 32B each)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_sequential_insert(s.n)));
     }
     std.debug.print("\n", .{});
 
-    // -- Column family operations (DB-001) --
-    std.debug.print("--- Column Family Operations (DB-001: ColumnsDb) ---\n", .{});
-    try print_result(try run_bench("MemColumnsDb init+accessor (1K cycles)", SMALL_N, bench_columns_init_accessor));
-    try print_result(try run_bench("MemColumnsDb init+accessor (10K cycles)", MEDIUM_N, bench_columns_init_accessor));
+    // -- Random Read --
+    std.debug.print("--- MemoryDatabase: Random Read ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "random read (1K lookups)" },
+        .{ .n = MEDIUM_N, .name = "random read (10K lookups)" },
+        .{ .n = LARGE_N, .name = "random read (100K lookups)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_random_read(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("columns put+get 3-col (1K keys)", SMALL_N, bench_columns_put_get));
-    try print_result(try run_bench("columns put+get 3-col (10K keys)", MEDIUM_N, bench_columns_put_get));
-    try print_result(try run_bench("columns put+get 3-col (100K keys)", LARGE_N, bench_columns_put_get));
+    // -- Mixed Read/Write --
+    std.debug.print("--- MemoryDatabase: Mixed Read/Write (80/20) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "mixed r/w (1K ops)" },
+        .{ .n = MEDIUM_N, .name = "mixed r/w (10K ops)" },
+        .{ .n = LARGE_N, .name = "mixed r/w (100K ops)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_mixed_rw(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("columns write-batch (10K, batch=100)", MEDIUM_N, bench_columns_write_batch));
-    try print_result(try run_bench("columns write-batch (100K, batch=100)", LARGE_N, bench_columns_write_batch));
+    // -- Vtable Dispatch Overhead --
+    std.debug.print("--- Vtable Dispatch Overhead (direct vs interface) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = MEDIUM_N, .name = "vtable overhead (10K reads)" },
+        .{ .n = LARGE_N, .name = "vtable overhead (100K reads)" },
+    }) |s| {
+        const r = bench_vtable_overhead(s.n);
+        const direct_per_op = if (s.n > 0) r.direct_ns / s.n else 0;
+        const vtable_per_op = if (s.n > 0) r.vtable_ns / s.n else 0;
+        const overhead_pct = if (r.direct_ns > 0)
+            (@as(f64, @floatFromInt(r.vtable_ns)) / @as(f64, @floatFromInt(r.direct_ns)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  {s:<55} direct={s}  vtable={s}  overhead={d:.1}%%\n", .{
+            s.name,
+            &format_ns(direct_per_op),
+            &format_ns(vtable_per_op),
+            overhead_pct,
+        });
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("columns snapshot create+read (1K)", SMALL_N, bench_columns_snapshot));
-    try print_result(try run_bench("columns snapshot create+read (10K)", MEDIUM_N, bench_columns_snapshot));
+    // -- ReadOnlyDb Strict Mode (DB-001 fix) --
+    std.debug.print("--- ReadOnlyDb: Strict Mode Reads (DB-001 fix) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = MEDIUM_N, .name = "strict readonly read (10K lookups)" },
+        .{ .n = LARGE_N, .name = "strict readonly read (100K lookups)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_readonly_strict_reads(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("columns isolation check (10K)", MEDIUM_N, bench_columns_isolation_overhead));
-    try print_result(try run_bench("columns isolation check (100K)", LARGE_N, bench_columns_isolation_overhead));
+    // -- ReadOnlyDb Overlay --
+    std.debug.print("--- ReadOnlyDb: Overlay Write+Read ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "overlay w+r (1K ops each)" },
+        .{ .n = MEDIUM_N, .name = "overlay w+r (10K ops each)" },
+    }) |s| {
+        print_result(result(s.name, s.n * 2, bench_readonly_overlay(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("blob-columns lifecycle (1K)", SMALL_N, bench_blob_columns_lifecycle));
-    try print_result(try run_bench("blob-columns lifecycle (10K)", MEDIUM_N, bench_blob_columns_lifecycle));
-    try print_result(try run_bench("blob-columns lifecycle (100K)", LARGE_N, bench_blob_columns_lifecycle));
+    // -- ReadOnlyDb Clear Cycle --
+    std.debug.print("--- ReadOnlyDb: Overlay Clear Cycle (ClearTempChanges) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = 100, .name = "clear cycle (100 cycles)" },
+        .{ .n = SMALL_N, .name = "clear cycle (1K cycles)" },
+        .{ .n = 5_000, .name = "clear cycle (5K cycles)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_overlay_clear_cycle(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    // -- Factory operations (DB-002) --
-    std.debug.print("--- Factory Operations (DB-002: DbFactory) ---\n", .{});
-    try print_result(try run_bench("factory createDb (1K)", SMALL_N, bench_factory_create_db));
-    try print_result(try run_bench("factory createDb (10K)", MEDIUM_N, bench_factory_create_db));
+    // -- Factory Creation (DB-001 focus) --
+    std.debug.print("--- Factory Creation Overhead (DB-001) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = 100, .name = "factory create+deinit (100 DBs)" },
+        .{ .n = SMALL_N, .name = "factory create+deinit (1K DBs)" },
+    }) |s| {
+        const r = bench_factory_creation(s.n);
+        const mem_per = if (s.n > 0) r.mem_ns / s.n else 0;
+        const null_per = if (s.n > 0) r.null_ns / s.n else 0;
+        const ro_ov_per = if (s.n > 0) r.ro_overlay_ns / s.n else 0;
+        const ro_st_per = if (s.n > 0) r.ro_strict_ns / s.n else 0;
+        std.debug.print("  {s}\n", .{s.name});
+        std.debug.print("    MemDbFactory:           {s}/op\n", .{&format_ns(mem_per)});
+        std.debug.print("    NullDbFactory:          {s}/op\n", .{&format_ns(null_per)});
+        std.debug.print("    ReadOnlyFactory(over):  {s}/op\n", .{&format_ns(ro_ov_per)});
+        std.debug.print("    ReadOnlyFactory(strict):{s}/op  <-- DB-001 fix\n", .{&format_ns(ro_st_per)});
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("factory DB put+get (10K)", MEDIUM_N, bench_factory_db_io));
-    try print_result(try run_bench("factory DB put+get (100K)", LARGE_N, bench_factory_db_io));
+    // -- WriteBatch --
+    std.debug.print("--- WriteBatch: Accumulate + Commit ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "batch commit (1K ops)" },
+        .{ .n = MEDIUM_N, .name = "batch commit (10K ops)" },
+    }) |s| {
+        print_result(result(s.name, s.n, bench_write_batch(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("ReadOnly overlay put+get (10K)", MEDIUM_N, bench_readonly_factory_overlay));
-    try print_result(try run_bench("ReadOnly overlay put+get (100K)", LARGE_N, bench_readonly_factory_overlay));
+    // -- Arena DB Cycle --
+    std.debug.print("--- Arena DB Pattern (tx-scoped create+populate+destroy) ---\n", .{});
+    for ([_]struct { n: usize, name: []const u8 }{
+        .{ .n = SMALL_N, .name = "arena cycle (1K insert+read+free)" },
+        .{ .n = MEDIUM_N, .name = "arena cycle (10K insert+read+free)" },
+    }) |s| {
+        print_result(result(s.name, s.n * 2, bench_arena_db_cycle(s.n)));
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("factory vtable create+io (1K)", SMALL_N, bench_factory_vtable_overhead));
-    try print_result(try run_bench("factory vtable create+io (10K)", MEDIUM_N, bench_factory_vtable_overhead));
+    // -- Memory Usage --
+    std.debug.print("--- Memory Usage (arena-backed MemoryDatabase) ---\n", .{});
+    for ([_]usize{ 100, 1_000, 10_000, 100_000 }) |n| {
+        const r = bench_memory_usage(n);
+        const bytes_per_entry = if (n > 0) r.peak_bytes / n else 0;
+        const theoretical_min: usize = 80 * n; // 32 key + 32 value + ~16 hashmap overhead
+        const overhead_pct = if (theoretical_min > 0)
+            (@as(f64, @floatFromInt(r.peak_bytes)) / @as(f64, @floatFromInt(theoretical_min)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  {d:>8} entries: {d:>10} bytes ({d} bytes/entry, {d:.1}%% overhead vs ~80B theoretical)\n", .{
+            n, r.peak_bytes, bytes_per_entry, overhead_pct,
+        });
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("factory+provider wiring (10K)", MEDIUM_N, bench_factory_provider_wiring));
-    try print_result(try run_bench("factory+provider wiring (100K)", LARGE_N, bench_factory_provider_wiring));
+    // -- Block Processing Simulation --
+    std.debug.print("--- Block State Operations Simulation ---\n", .{});
+    std.debug.print("  (200 txs/block, 2 account reads + 5 storage writes + 5 storage reads per tx)\n", .{});
+    {
+        const elapsed = bench_block_state_ops();
+        const elapsed_str = format_ns(elapsed);
+        const blocks_per_sec = if (elapsed > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(elapsed))
+        else
+            0.0;
+        const ops_per_block: usize = 200 * (2 + 5 + 5);
+        const ops_per_sec = blocks_per_sec * @as(f64, @floatFromInt(ops_per_block));
+
+        std.debug.print("  Block DB time:              {s}\n", .{&elapsed_str});
+        std.debug.print("  Block throughput (DB):       {d:.0} blocks/s\n", .{blocks_per_sec});
+        std.debug.print("  DB ops/block:                ~{d}\n", .{ops_per_block});
+        std.debug.print("  DB ops/sec:                  {d:.0} ({d:.2} M ops/s)\n", .{ ops_per_sec, ops_per_sec / 1e6 });
+    }
     std.debug.print("\n", .{});
 
-    try print_result(try run_bench("factory createColumnsDb put (10K)", MEDIUM_N, bench_factory_columns_db));
-    try print_result(try run_bench("factory createColumnsDb put (100K)", LARGE_N, bench_factory_columns_db));
-    std.debug.print("\n", .{});
+    // -- Throughput Analysis --
+    std.debug.print("--- Throughput Analysis vs Nethermind Target ---\n", .{});
+    {
+        const block_elapsed = bench_block_state_ops();
+        const blocks_per_sec = if (block_elapsed > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(block_elapsed))
+        else
+            0.0;
+        const effective_mgas = blocks_per_sec * 30.0; // 30M gas/block post-merge
 
-    // -- Block processing simulation --
-    std.debug.print("--- Block Processing Simulation ---\n", .{});
-    std.debug.print("  (200 txs/block, 10 reads + 3 writes per tx)\n", .{});
-    const small_state = try run_bench("block (1K state entries)", SMALL_N, bench_block_processing);
-    const medium_state = try run_bench("block (10K state entries)", MEDIUM_N, bench_block_processing);
-    const large_state = try run_bench("block (100K state entries)", LARGE_N, bench_block_processing);
-    try print_result(small_state);
-    try print_result(medium_state);
-    try print_result(large_state);
-    std.debug.print("\n", .{});
+        std.debug.print("  Block DB time:                {s}\n", .{&format_ns(block_elapsed)});
+        std.debug.print("  Block throughput (DB):         {d:.0} blocks/s\n", .{blocks_per_sec});
+        std.debug.print("  Effective MGas/s (DB only):    {d:.0} MGas/s\n", .{effective_mgas});
+        std.debug.print("  Nethermind target:             700 MGas/s (full client)\n", .{});
+        std.debug.print("  Required blocks/s for target:  ~23 blocks/s (30M gas/block)\n", .{});
 
-    // -- Throughput analysis vs Nethermind target --
-    std.debug.print("--- Throughput Analysis ---\n", .{});
-    // Nethermind processes ~700 MGas/s.
-    // A typical Ethereum block is ~15M gas, so ~46 blocks/s at 700 MGas/s.
-    // Each block has ~200 txs * ~13 DB ops = ~2600 DB ops per block.
-    // So Nethermind needs ~120K DB ops/s at minimum.
-    const block_ops: usize = 200 * 13; // ops per simulated block
-    const block_ns = medium_state.elapsed_ns;
-    const blocks_per_sec = if (block_ns > 0)
-        1_000_000_000.0 / @as(f64, @floatFromInt(block_ns))
-    else
-        0.0;
-    const db_ops_per_sec = blocks_per_sec * @as(f64, @floatFromInt(block_ops));
-    const effective_mgas_per_sec = blocks_per_sec * 15.0; // 15M gas per block
+        const comfortable = blocks_per_sec >= 2300.0;
+        const meets_target = blocks_per_sec >= 23.0;
 
-    std.debug.print("  Block throughput:      {d:.0} blocks/s\n", .{blocks_per_sec});
-    std.debug.print("  DB ops throughput:     {d:.0} ops/s ({d:.2} M ops/s)\n", .{ db_ops_per_sec, db_ops_per_sec / 1_000_000.0 });
-    std.debug.print("  Effective MGas/s:      {d:.0} MGas/s (in-memory DB layer only)\n", .{effective_mgas_per_sec});
-    std.debug.print("  Nethermind target:     700 MGas/s (full client with RocksDB)\n", .{});
-
-    const meets_target = effective_mgas_per_sec >= 700.0;
-    if (meets_target) {
-        std.debug.print("  Status:                PASS - in-memory DB layer exceeds target\n", .{});
-    } else {
-        std.debug.print("  Status:                WARN - below target (expected for in-memory, bottleneck will be disk I/O)\n", .{});
+        if (comfortable) {
+            std.debug.print("  Status: PASS - negligible DB overhead (<1%% of budget)\n", .{});
+        } else if (meets_target) {
+            std.debug.print("  Status: PASS - meets target but DB overhead notable\n", .{});
+        } else {
+            std.debug.print("  Status: FAIL - DB layer alone cannot keep up!\n", .{});
+        }
     }
 
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
     std.debug.print("  Notes:\n", .{});
-    std.debug.print("  - In-memory DB should be MUCH faster than 700 MGas/s target\n", .{});
-    std.debug.print("  - Real bottleneck will be RocksDB I/O (not implemented yet)\n", .{});
-    std.debug.print("  - Arena allocator ensures no per-op heap allocs in hot paths\n", .{});
-    std.debug.print("  - Vtable dispatch should add <5%% overhead vs direct calls\n", .{});
+    std.debug.print("  - MemoryDatabase uses ArenaAllocator (all freed at tx end)\n", .{});
+    std.debug.print("  - No heap allocations in hot read path (get returns borrowed slice)\n", .{});
+    std.debug.print("  - ReadOnlyDb strict mode: zero extra allocation (no overlay) — DB-001 fix\n", .{});
+    std.debug.print("  - ReadOnlyDb overlay mode: writes buffered in separate MemoryDatabase\n", .{});
+    std.debug.print("  - For accurate numbers: zig build bench-db -Doptimize=ReleaseFast\n", .{});
     std.debug.print("=" ** 100 ++ "\n\n", .{});
+}
+
+test "bench main entrypoint" {
+    try main();
 }

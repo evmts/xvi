@@ -502,6 +502,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "primitives", .module = primitives_mod },
+            .{ .name = "bench_utils", .module = bench_utils_mod },
         },
     });
 
