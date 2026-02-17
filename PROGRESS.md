@@ -1,7 +1,7 @@
 # XVI Progress Report
 
 **Date:** 2026-02-17
-**Timestamp:** ~12:00 UTC
+**Timestamp:** ~21:00 UTC
 
 This report compares the XVI Zig client (`client/`) and Effect-TS client (`client-ts/`) against [Nethermind](https://github.com/NethermindEth/nethermind), a production Ethereum execution client in C#. Both XVI implementations mirror Nethermind's architecture across 11 subsystems (Phases 0-10). Testing and polish phases have not started for either client.
 
@@ -9,38 +9,15 @@ This report compares the XVI Zig client (`client/`) and Effect-TS client (`clien
 
 ## Recent Work (since last report)
 
-### DB-001: Column Family Abstraction (completed)
+No code changes since the previous progress report (~12:00 UTC today). The most recent development cycle completed the Phase 0 DB Abstraction tickets (DB-001 and DB-002). All subsystem stats remain unchanged.
 
-Implemented `ColumnsDb(T)` — a comptime-generic column family abstraction mirroring Nethermind's `IColumnsDb<TKey>`. This adds multi-column database support needed for receipts and blob transaction storage.
+### Previously Completed (DB-001 + DB-002)
 
-- **`ReceiptsColumns` / `BlobTxsColumns`** — Column enum definitions matching Nethermind
-- **`ColumnsDb(T)`** — Generic wrapper using `std.EnumArray(T, Database)` for zero-allocation dense column mapping
-- **`ColumnsWriteBatch(T)`** — Cross-column atomic write batches (per-column `WriteBatch` instances)
-- **`ColumnDbSnapshot(T)`** — Cross-column consistent-read snapshots
-- **`MemColumnsDb(T)`** — Concrete in-memory implementation (wraps N `MemoryDatabase` instances)
-- **`ReadOnlyColumnsDb(T)`** — Read-only column family wrapper
-- **IDbMeta lifecycle**, parameterized `DbName`, benchmarks, error-path tests
-- **New file:** `client/db/columns.zig` (1,311 LOC, 37 tests)
-
-### DB-002: DbFactory Interface (completed)
-
-Implemented `DbFactory` — a vtable-based factory interface decoupling database creation from concrete backends. Mirrors Nethermind's `IDbFactory` for diagnostic modes and test isolation.
-
-- **`DbFactory`** — Vtable interface with `createDb(DbSettings)` and comptime `createColumnsDb` helper
+- **`ColumnsDb(T)`** — Comptime-generic column family abstraction mirroring Nethermind's `IColumnsDb<TKey>`
+- **`DbFactory`** — Vtable-based factory interface with `MemDbFactory`/`NullDbFactory`/`ReadOnlyDbFactory`
 - **`OwnedDatabase`** — Ownership wrapper pairing `Database` with cleanup callback
-- **`MemDbFactory`** — Creates `MemoryDatabase` / `MemColumnsDb(T)` instances for testing
-- **`NullDbFactory`** — Sentinel factory returning `error.UnsupportedOperation` (no-persistence mode)
-- **`ReadOnlyDbFactory`** — Decorator wrapping any base factory with read-only views
-- **Integration tests** demonstrating factory → provider wiring pattern
-- **Benchmarks** for factory creation overhead
-- **New file:** `client/db/factory.zig` (775 LOC, 17 tests)
-
-### Summary of Changes
-
-- **28 commits** since last report (2026-02-15 23:16 UTC)
-- All commits focused on Phase 0 DB Abstraction (DB-001 and DB-002 tickets)
-- DB module grew from 4,742 LOC / 104 tests → **7,474 LOC / 164 tests** (12 files)
-- No changes to other subsystems or the Effect-TS client
+- **Column families** — `ReceiptsColumns`, `BlobTxsColumns`, `MemColumnsDb(T)`, `ReadOnlyColumnsDb(T)`, cross-column write batches & snapshots
+- DB module: **7,474 LOC / 164 tests** (12 files)
 
 ### Research Context Available
 
@@ -128,7 +105,7 @@ Nethermind ships 48+ modules covering: DB (RocksDB), Merkle Patricia Trie, World
 
 ### Test Status
 
-No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output. Unit test counts are now **821 (Zig)** and 65 test files (Effect-TS). The Zig client's DB subsystem alone accounts for 164 of those tests.
+No `docs/test-suite-findings.md` has been generated yet — the IntegrationTest pipeline phase exists but has not produced output. Unit test counts are **821 (Zig)** and 65 test files (Effect-TS). The Zig client's DB subsystem alone accounts for 164 of those tests.
 
 The Guillotine EVM engine (separate from the client) passes 100% of ethereum/tests spec tests (Frontier through Prague).
 
