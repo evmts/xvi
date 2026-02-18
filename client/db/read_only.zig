@@ -412,8 +412,32 @@ pub const ReadOnlyDb = struct {
 
     fn iterator_impl(self: *ReadOnlyDb, ordered: bool) Error!DbIterator {
         if (self.overlay) |ov| {
-            if (ordered) return error.UnsupportedOperation;
             const allocator = self.overlay_allocator orelse return error.OutOfMemory;
+            if (ordered) {
+                // Merge-sort: get ordered iterators from both sources, then
+                // merge them in lexicographic key order with overlay precedence.
+                // Mirrors Nethermind's `_memDb.GetAll().Union(wrappedDb.GetAll())`
+                // but preserves key order via merge-sort instead of LINQ Union.
+                var overlay_iter = try ov.database().iterator(true);
+                errdefer overlay_iter.deinit();
+                var wrapped_iter = try self.wrapped.iterator(true);
+                errdefer wrapped_iter.deinit();
+
+                // Pre-fetch first entry from each (lookahead for merge-sort).
+                const overlay_first = try overlay_iter.next();
+                const wrapped_first = try wrapped_iter.next();
+
+                const ms_iter = allocator.create(MergeSortIterator) catch return error.OutOfMemory;
+                ms_iter.* = .{
+                    .overlay_iter = overlay_iter,
+                    .wrapped_iter = wrapped_iter,
+                    .overlay_current = overlay_first,
+                    .wrapped_current = wrapped_first,
+                    .allocator = allocator,
+                };
+                return DbIterator.init(MergeSortIterator, ms_iter, MergeSortIterator.next, MergeSortIterator.deinit);
+            }
+            // Unordered: existing ReadOnlyIterator (two-phase overlay-then-wrapped).
             var overlay_iter = try ov.database().iterator(false);
             errdefer overlay_iter.deinit();
             var wrapped_iter = try self.wrapped.iterator(false);
