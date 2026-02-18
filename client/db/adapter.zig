@@ -427,6 +427,15 @@ pub const Database = struct {
         /// only valid for the duration of the call; implementations must
         /// consume/copy synchronously and must not retain references.
         write_batch: ?*const fn (ptr: *anyopaque, ops: []const WriteBatchOp) Error!void = null,
+
+        /// Apply a merge operation (RocksDB native merge operator).
+        ///
+        /// Backends that support native merge operators (e.g., RocksDB) should
+        /// implement this for efficient read-modify-write without read-before-write.
+        /// If `null`, merge operations will return `error.UnsupportedOperation`.
+        ///
+        /// Mirrors Nethermind's `IMergeableKeyValueStore.Merge(key, value, flags)`.
+        merge: ?*const fn (ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void = null,
     };
 
     /// Return the database name (column family).
@@ -513,6 +522,31 @@ pub const Database = struct {
         return WriteBatch.init(allocator, self);
     }
 
+    /// Returns true if the backend supports the `merge` operation.
+    ///
+    /// Backends that support native merge operators (e.g., RocksDB) set the
+    /// `merge` vtable entry. In-memory and null backends leave it as `null`.
+    pub fn supports_merge(self: Database) bool {
+        return self.vtable.merge != null;
+    }
+
+    /// Apply a merge operation with default write flags.
+    ///
+    /// Returns `error.UnsupportedOperation` if the backend does not support merge.
+    /// Mirrors Nethermind's `IMergeableKeyValueStore.Merge(key, value)`.
+    pub fn merge(self: Database, key: []const u8, value: []const u8) Error!void {
+        return self.merge_with_flags(key, value, WriteFlags.none);
+    }
+
+    /// Apply a merge operation with explicit write flags.
+    ///
+    /// Returns `error.UnsupportedOperation` if the backend does not support merge.
+    /// Mirrors Nethermind's `IMergeableKeyValueStore.Merge(key, value, flags)`.
+    pub fn merge_with_flags(self: Database, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+        const merge_fn = self.vtable.merge orelse return error.UnsupportedOperation;
+        return merge_fn(self.ptr, key, value, flags);
+    }
+
     /// Construct a `Database` from a concrete backend pointer and typed function pointers.
     ///
     /// Generates type-safe vtable wrapper functions at comptime, eliminating
@@ -551,6 +585,7 @@ pub const Database = struct {
         compact: *const fn (self: *T) Error!void,
         gather_metric: *const fn (self: *T) Error!DbMetric,
         write_batch: ?*const fn (self: *T, ops: []const WriteBatchOp) Error!void = null,
+        merge: ?*const fn (self: *T, key: []const u8, value: []const u8, flags: WriteFlags) Error!void = null,
     }) Database {
         const Wrapper = struct {
             fn name_impl(raw: *anyopaque) DbName {
@@ -614,6 +649,12 @@ pub const Database = struct {
                 return wb_fn(typed, ops);
             }
 
+            fn merge_impl(raw: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const merge_fn = fns.merge orelse unreachable;
+                return merge_fn(typed, key, value, flags);
+            }
+
             const vtable = VTable{
                 .name = name_impl,
                 .get = get_impl,
@@ -627,6 +668,7 @@ pub const Database = struct {
                 .compact = compact_impl,
                 .gather_metric = gather_metric_impl,
                 .write_batch = if (fns.write_batch == null) null else write_batch_impl,
+                .merge = if (fns.merge == null) null else merge_impl,
             };
         };
 
@@ -691,6 +733,20 @@ pub const WriteBatchOp = union(enum) {
     del: struct {
         /// The key to remove. Owned by the `WriteBatch` arena.
         key: []const u8,
+    },
+    /// Apply a merge operation (RocksDB native merge operator).
+    ///
+    /// Merge operations enable efficient read-modify-write patterns without
+    /// requiring a read-before-write round-trip. The merge operator (configured
+    /// at the backend level) defines how the value is combined with any
+    /// existing value for the key.
+    ///
+    /// Mirrors Nethermind's `IMergeableKeyValueStore.Merge(key, value, flags)`.
+    merge: struct {
+        /// The key to merge into. Owned by the `WriteBatch` arena.
+        key: []const u8,
+        /// The merge operand value. Owned by the `WriteBatch` arena.
+        value: []const u8,
     },
 };
 
@@ -761,6 +817,19 @@ pub const WriteBatch = struct {
         self.ops.append(self.ops_allocator, .{ .del = .{ .key = owned_key } }) catch return error.OutOfMemory;
     }
 
+    /// Queue a merge operation. Both key and value are copied into the batch arena.
+    ///
+    /// The merge will be applied when `commit()` is called. If the target database
+    /// does not support merge, `commit()` will return `error.UnsupportedOperation`
+    /// when it reaches this operation (via the sequential fallback path) or the
+    /// backend must handle `.merge` variants in its `write_batch` implementation.
+    pub fn merge(self: *WriteBatch, key: []const u8, value: []const u8) Error!void {
+        const alloc = self.arena.allocator();
+        const owned_key = alloc.dupe(u8, key) catch return error.OutOfMemory;
+        const owned_val = alloc.dupe(u8, value) catch return error.OutOfMemory;
+        self.ops.append(self.ops_allocator, .{ .merge = .{ .key = owned_key, .value = owned_val } }) catch return error.OutOfMemory;
+    }
+
     /// Apply all pending operations to the target database.
     ///
     /// If the backend provides `write_batch`, all operations are applied
@@ -787,6 +856,7 @@ pub const WriteBatch = struct {
                 switch (op) {
                     .put => |p| try self.target.put(p.key, p.value),
                     .del => |d| try self.target.delete(d.key),
+                    .merge => |m| try self.target.merge_with_flags(m.key, m.value, WriteFlags.none),
                 }
             }
         }
@@ -1651,4 +1721,395 @@ test "OwnedDatabase: deinit passes context to cleanup function" {
     owned.deinit();
     try std.testing.expect(tracker.received_ctx != null);
     try std.testing.expectEqual(@intFromPtr(&sentinel), @intFromPtr(tracker.received_ctx.?));
+}
+
+// -- Merge operation tests --------------------------------------------------
+
+test "Database supports_merge reports false when absent" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expect(!db.supports_merge());
+}
+
+test "Database supports_merge reports true when present" {
+    const MergeDb = struct {
+        const Self = @This();
+
+        fn merge_impl(_: *anyopaque, _: []const u8, _: []const u8, _: WriteFlags) Error!void {}
+
+        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+
+        const vtable = Database.VTable{
+            .name = name_default,
+            .get = get_null,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_false,
+            .iterator = iterator_unsupported,
+            .snapshot = snapshot_unsupported,
+            .flush = flush_noop,
+            .clear = clear_noop,
+            .compact = compact_noop,
+            .gather_metric = gather_metric_zero,
+            .merge = merge_impl,
+        };
+
+        fn database(self: *Self) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var db_impl = MergeDb{};
+    const db = db_impl.database();
+
+    try std.testing.expect(db.supports_merge());
+}
+
+test "Database merge returns UnsupportedOperation when absent" {
+    var mock = MockDb{};
+    const db = mock.database();
+
+    try std.testing.expectError(error.UnsupportedOperation, db.merge("key", "value"));
+}
+
+test "Database merge_with_flags returns UnsupportedOperation when absent" {
+    var mock = MockDb{};
+    const db = mock.database();
+
+    try std.testing.expectError(error.UnsupportedOperation, db.merge_with_flags("key", "value", WriteFlags.disable_wal));
+}
+
+test "Database merge delegates to vtable" {
+    const TrackingMergeDb = struct {
+        last_key: ?[]const u8 = null,
+        last_value: ?[]const u8 = null,
+        last_flags: ?WriteFlags = null,
+        merge_count: usize = 0,
+
+        fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.last_key = key;
+            self.last_value = value;
+            self.last_flags = flags;
+            self.merge_count += 1;
+        }
+
+        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+
+        const vtable = Database.VTable{
+            .name = name_default,
+            .get = get_null,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_false,
+            .iterator = iterator_unsupported,
+            .snapshot = snapshot_unsupported,
+            .flush = flush_noop,
+            .clear = clear_noop,
+            .compact = compact_noop,
+            .gather_metric = gather_metric_zero,
+            .merge = merge_impl,
+        };
+
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var tracker = TrackingMergeDb{};
+    const db = tracker.database();
+
+    try db.merge("mykey", "myvalue");
+
+    try std.testing.expectEqual(@as(usize, 1), tracker.merge_count);
+    try std.testing.expectEqualStrings("mykey", tracker.last_key.?);
+    try std.testing.expectEqualStrings("myvalue", tracker.last_value.?);
+    try std.testing.expectEqual(WriteFlags.none, tracker.last_flags.?);
+}
+
+test "Database merge_with_flags forwards flags" {
+    const TrackingMergeDb2 = struct {
+        last_flags: ?WriteFlags = null,
+
+        fn merge_impl(ptr: *anyopaque, _: []const u8, _: []const u8, flags: WriteFlags) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.last_flags = flags;
+        }
+
+        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+
+        const vtable = Database.VTable{
+            .name = name_default,
+            .get = get_null,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_false,
+            .iterator = iterator_unsupported,
+            .snapshot = snapshot_unsupported,
+            .flush = flush_noop,
+            .clear = clear_noop,
+            .compact = compact_noop,
+            .gather_metric = gather_metric_zero,
+            .merge = merge_impl,
+        };
+
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var tracker = TrackingMergeDb2{};
+    const db = tracker.database();
+
+    try db.merge_with_flags("k", "v", WriteFlags.disable_wal);
+    try std.testing.expectEqual(WriteFlags.disable_wal, tracker.last_flags.?);
+
+    try db.merge_with_flags("k", "v", WriteFlags.low_priority_and_no_wal);
+    try std.testing.expectEqual(WriteFlags.low_priority_and_no_wal, tracker.last_flags.?);
+}
+
+test "WriteBatchOp merge variant holds key and value" {
+    const op = WriteBatchOp{ .merge = .{ .key = "hello", .value = "world" } };
+    switch (op) {
+        .merge => |m| {
+            try std.testing.expectEqualStrings("hello", m.key);
+            try std.testing.expectEqualStrings("world", m.value);
+        },
+        else => return error.UnsupportedOperation,
+    }
+}
+
+test "WriteBatch merge accumulates operations" {
+    var mock = MockDb{};
+    var batch = WriteBatch.init(std.testing.allocator, mock.database());
+    defer batch.deinit();
+
+    try batch.merge("key1", "val1");
+    try std.testing.expectEqual(@as(usize, 1), batch.pending());
+
+    try batch.merge("key2", "val2");
+    try std.testing.expectEqual(@as(usize, 2), batch.pending());
+
+    // Verify ops are merge type
+    try std.testing.expectEqualStrings("key1", batch.ops.items[0].merge.key);
+    try std.testing.expectEqualStrings("val1", batch.ops.items[0].merge.value);
+    try std.testing.expectEqualStrings("key2", batch.ops.items[1].merge.key);
+    try std.testing.expectEqualStrings("val2", batch.ops.items[1].merge.value);
+}
+
+test "WriteBatch commit applies merge ops via fallback path" {
+    // Create a database that supports merge for the fallback path.
+    // Note: the merge_impl must copy keys/values because after commit()
+    // succeeds, WriteBatch.clear() frees the arena that owns them.
+    const MergeFallbackDb = struct {
+        merge_count: usize = 0,
+        alloc: std.mem.Allocator,
+        owned_keys: [8]?[]u8 = .{null} ** 8,
+        owned_values: [8]?[]u8 = .{null} ** 8,
+
+        fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, _: WriteFlags) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (self.merge_count < 8) {
+                self.owned_keys[self.merge_count] = self.alloc.dupe(u8, key) catch return error.OutOfMemory;
+                self.owned_values[self.merge_count] = self.alloc.dupe(u8, value) catch return error.OutOfMemory;
+            }
+            self.merge_count += 1;
+        }
+
+        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+
+        const vtable = Database.VTable{
+            .name = name_default,
+            .get = get_null,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_false,
+            .iterator = iterator_unsupported,
+            .snapshot = snapshot_unsupported,
+            .flush = flush_noop,
+            .clear = clear_noop,
+            .compact = compact_noop,
+            .gather_metric = gather_metric_zero,
+            // No write_batch — forces fallback path
+            .merge = merge_impl,
+        };
+
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+
+        fn deinit(self: *@This()) void {
+            for (&self.owned_keys) |*k| {
+                if (k.*) |key| self.alloc.free(key);
+                k.* = null;
+            }
+            for (&self.owned_values) |*v| {
+                if (v.*) |val| self.alloc.free(val);
+                v.* = null;
+            }
+        }
+    };
+
+    var merge_db = MergeFallbackDb{ .alloc = std.testing.allocator };
+    defer merge_db.deinit();
+
+    var batch = WriteBatch.init(std.testing.allocator, merge_db.database());
+    defer batch.deinit();
+
+    try batch.merge("mk1", "mv1");
+    try batch.merge("mk2", "mv2");
+    try batch.commit();
+
+    try std.testing.expectEqual(@as(usize, 2), merge_db.merge_count);
+    try std.testing.expectEqualStrings("mk1", merge_db.owned_keys[0].?);
+    try std.testing.expectEqualStrings("mv1", merge_db.owned_values[0].?);
+    try std.testing.expectEqualStrings("mk2", merge_db.owned_keys[1].?);
+    try std.testing.expectEqualStrings("mv2", merge_db.owned_values[1].?);
+    try std.testing.expectEqual(@as(usize, 0), batch.pending());
+}
+
+test "WriteBatch commit with merge ops via atomic path" {
+    // AtomicDb already has write_batch — verify merge ops are included in the ops slice
+    var atomic = AtomicDb{};
+
+    var batch = WriteBatch.init(std.testing.allocator, atomic.database());
+    defer batch.deinit();
+
+    try batch.put("k1", "v1");
+    try batch.merge("mk1", "mv1");
+    try batch.delete("dk1");
+
+    try batch.commit();
+
+    // All 3 ops committed atomically via write_batch
+    try std.testing.expectEqual(@as(usize, 3), atomic.committed_count);
+    try std.testing.expectEqual(@as(usize, 0), batch.pending());
+}
+
+test "WriteBatch merge propagates OutOfMemory" {
+    var batch = WriteBatch.init(std.testing.failing_allocator, Database{
+        .ptr = undefined,
+        .vtable = &MockDb.vtable,
+    });
+    defer batch.deinit();
+
+    try std.testing.expectError(error.OutOfMemory, batch.merge("key", "value"));
+}
+
+test "Database.init with merge generates correct dispatch" {
+    const MergeBackend = struct {
+        merge_count: usize = 0,
+        last_key: ?[]const u8 = null,
+        last_value: ?[]const u8 = null,
+        last_flags: ?WriteFlags = null,
+
+        fn name_impl(_: *@This()) DbName {
+            return .state;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+        fn merge_impl(self: *@This(), key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+            self.merge_count += 1;
+            self.last_key = key;
+            self.last_value = value;
+            self.last_flags = flags;
+        }
+    };
+
+    var backend = MergeBackend{};
+    const db = Database.init(MergeBackend, &backend, .{
+        .name = MergeBackend.name_impl,
+        .get = MergeBackend.get_impl,
+        .put = MergeBackend.put_impl,
+        .delete = MergeBackend.delete_impl,
+        .contains = MergeBackend.contains_impl,
+        .iterator = MergeBackend.iterator_impl,
+        .snapshot = MergeBackend.snapshot_impl,
+        .flush = MergeBackend.flush_impl,
+        .clear = MergeBackend.clear_impl,
+        .compact = MergeBackend.compact_impl,
+        .gather_metric = MergeBackend.gather_metric_impl,
+        .merge = MergeBackend.merge_impl,
+    });
+
+    try std.testing.expect(db.supports_merge());
+
+    try db.merge("testkey", "testval");
+    try std.testing.expectEqual(@as(usize, 1), backend.merge_count);
+    try std.testing.expectEqualStrings("testkey", backend.last_key.?);
+    try std.testing.expectEqualStrings("testval", backend.last_value.?);
+    try std.testing.expectEqual(WriteFlags.none, backend.last_flags.?);
+
+    try db.merge_with_flags("k2", "v2", WriteFlags.low_priority);
+    try std.testing.expectEqual(@as(usize, 2), backend.merge_count);
+    try std.testing.expectEqual(WriteFlags.low_priority, backend.last_flags.?);
+}
+
+test "Database.init without merge defaults to null" {
+    const MinimalBackend2 = struct {
+        fn name_impl(_: *@This()) DbName {
+            return .metadata;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+    };
+
+    var backend = MinimalBackend2{};
+    const db = Database.init(MinimalBackend2, &backend, .{
+        .name = MinimalBackend2.name_impl,
+        .get = MinimalBackend2.get_impl,
+        .put = MinimalBackend2.put_impl,
+        .delete = MinimalBackend2.delete_impl,
+        .contains = MinimalBackend2.contains_impl,
+        .iterator = MinimalBackend2.iterator_impl,
+        .snapshot = MinimalBackend2.snapshot_impl,
+        .flush = MinimalBackend2.flush_impl,
+        .clear = MinimalBackend2.clear_impl,
+        .compact = MinimalBackend2.compact_impl,
+        .gather_metric = MinimalBackend2.gather_metric_impl,
+        // merge deliberately omitted — should default to null
+    });
+
+    try std.testing.expect(!db.supports_merge());
+    try std.testing.expectError(error.UnsupportedOperation, db.merge("k", "v"));
 }
