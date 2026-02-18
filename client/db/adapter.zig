@@ -555,6 +555,25 @@ pub const Database = struct {
         ///
         /// Mirrors Nethermind's `IDb.this[byte[][] keys]` indexer.
         multi_get: ?*const fn (ptr: *anyopaque, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void = null,
+
+        /// Return the lexicographically smallest key, or null if empty.
+        ///
+        /// Mirrors Nethermind's `ISortedKeyValueStore.FirstKey` property.
+        /// If `null`, `Database.first_key()` returns `error.UnsupportedOperation`.
+        first_key: ?*const fn (ptr: *anyopaque) Error!?DbValue = null,
+
+        /// Return the lexicographically largest key, or null if empty.
+        ///
+        /// Mirrors Nethermind's `ISortedKeyValueStore.LastKey` property.
+        /// If `null`, `Database.last_key()` returns `error.UnsupportedOperation`.
+        last_key: ?*const fn (ptr: *anyopaque) Error!?DbValue = null,
+
+        /// Create a sorted view over `[first_key_inclusive, last_key_exclusive)`.
+        /// Returns a `SortedView` that iterates entries in lexicographic key order.
+        ///
+        /// Mirrors Nethermind's `ISortedKeyValueStore.GetViewBetween(firstKeyInclusive, lastKeyExclusive)`.
+        /// If `null`, `Database.get_view_between()` returns `error.UnsupportedOperation`.
+        get_view_between: ?*const fn (ptr: *anyopaque, first_key_inclusive: []const u8, last_key_exclusive: []const u8) Error!SortedView = null,
     };
 
     /// Return the database name (column family).
@@ -697,6 +716,47 @@ pub const Database = struct {
         }
     }
 
+    /// Returns true if the backend supports sorted view operations
+    /// (`first_key`, `last_key`, `get_view_between`).
+    ///
+    /// Mirrors checking whether a database implements Nethermind's
+    /// `ISortedKeyValueStore` interface.
+    pub fn supports_sorted_view(self: Database) bool {
+        return self.vtable.first_key != null and
+            self.vtable.last_key != null and
+            self.vtable.get_view_between != null;
+    }
+
+    /// Return the lexicographically smallest key, or null if empty.
+    ///
+    /// Returns `error.UnsupportedOperation` if the backend does not support sorted view.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.FirstKey`.
+    pub fn first_key(self: Database) Error!?DbValue {
+        const fk_fn = self.vtable.first_key orelse return error.UnsupportedOperation;
+        return fk_fn(self.ptr);
+    }
+
+    /// Return the lexicographically largest key, or null if empty.
+    ///
+    /// Returns `error.UnsupportedOperation` if the backend does not support sorted view.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.LastKey`.
+    pub fn last_key(self: Database) Error!?DbValue {
+        const lk_fn = self.vtable.last_key orelse return error.UnsupportedOperation;
+        return lk_fn(self.ptr);
+    }
+
+    /// Create a sorted view over `[first_inclusive, last_exclusive)`.
+    ///
+    /// Returns a `SortedView` that iterates entries in lexicographic key order
+    /// within the specified range. Caller must call `SortedView.deinit()` when done.
+    ///
+    /// Returns `error.UnsupportedOperation` if the backend does not support sorted view.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.GetViewBetween()`.
+    pub fn get_view_between(self: Database, first_inclusive: []const u8, last_exclusive: []const u8) Error!SortedView {
+        const gvb_fn = self.vtable.get_view_between orelse return error.UnsupportedOperation;
+        return gvb_fn(self.ptr, first_inclusive, last_exclusive);
+    }
+
     /// Construct a `Database` from a concrete backend pointer and typed function pointers.
     ///
     /// Generates type-safe vtable wrapper functions at comptime, eliminating
@@ -737,6 +797,9 @@ pub const Database = struct {
         write_batch: ?*const fn (self: *T, ops: []const WriteBatchOp) Error!void = null,
         merge: ?*const fn (self: *T, key: []const u8, value: []const u8, flags: WriteFlags) Error!void = null,
         multi_get: ?*const fn (self: *T, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void = null,
+        first_key: ?*const fn (self: *T) Error!?DbValue = null,
+        last_key: ?*const fn (self: *T) Error!?DbValue = null,
+        get_view_between: ?*const fn (self: *T, first_key_inclusive: []const u8, last_key_exclusive: []const u8) Error!SortedView = null,
     }) Database {
         const Wrapper = struct {
             fn name_impl(raw: *anyopaque) DbName {
@@ -812,6 +875,24 @@ pub const Database = struct {
                 return mg_fn(typed, keys, results, flags);
             }
 
+            fn first_key_impl(raw: *anyopaque) Error!?DbValue {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const fk_fn = fns.first_key orelse unreachable;
+                return fk_fn(typed);
+            }
+
+            fn last_key_impl(raw: *anyopaque) Error!?DbValue {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const lk_fn = fns.last_key orelse unreachable;
+                return lk_fn(typed);
+            }
+
+            fn get_view_between_impl(raw: *anyopaque, first_key_inclusive: []const u8, last_key_exclusive: []const u8) Error!SortedView {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const gvb_fn = fns.get_view_between orelse unreachable;
+                return gvb_fn(typed, first_key_inclusive, last_key_exclusive);
+            }
+
             const vtable = VTable{
                 .name = name_impl,
                 .get = get_impl,
@@ -827,6 +908,9 @@ pub const Database = struct {
                 .write_batch = if (fns.write_batch == null) null else write_batch_impl,
                 .merge = if (fns.merge == null) null else merge_impl,
                 .multi_get = if (fns.multi_get == null) null else multi_get_impl,
+                .first_key = if (fns.first_key == null) null else first_key_impl,
+                .last_key = if (fns.last_key == null) null else last_key_impl,
+                .get_view_between = if (fns.get_view_between == null) null else get_view_between_impl,
             };
         };
 
@@ -1105,6 +1189,9 @@ fn test_vtable(overrides: struct {
     write_batch: ?*const fn (*anyopaque, []const WriteBatchOp) Error!void = null,
     merge: ?*const fn (*anyopaque, []const u8, []const u8, WriteFlags) Error!void = null,
     multi_get: ?*const fn (*anyopaque, []const []const u8, []?DbValue, ReadFlags) Error!void = null,
+    first_key: ?*const fn (*anyopaque) Error!?DbValue = null,
+    last_key: ?*const fn (*anyopaque) Error!?DbValue = null,
+    get_view_between: ?*const fn (*anyopaque, []const u8, []const u8) Error!SortedView = null,
 }) Database.VTable {
     return .{
         .name = overrides.name,
@@ -1121,6 +1208,9 @@ fn test_vtable(overrides: struct {
         .write_batch = overrides.write_batch,
         .merge = overrides.merge,
         .multi_get = overrides.multi_get,
+        .first_key = overrides.first_key,
+        .last_key = overrides.last_key,
+        .get_view_between = overrides.get_view_between,
     };
 }
 
@@ -2485,4 +2575,28 @@ test "SortedView.init creates valid vtable dispatch with mock" {
     // Test deinit dispatches correctly
     view.deinit();
     try std.testing.expect(mock.deinited);
+}
+
+test "Database.supports_sorted_view returns false when fields are null" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expect(!db.supports_sorted_view());
+}
+
+test "Database.first_key returns UnsupportedOperation when null" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expectError(error.UnsupportedOperation, db.first_key());
+}
+
+test "Database.last_key returns UnsupportedOperation when null" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expectError(error.UnsupportedOperation, db.last_key());
+}
+
+test "Database.get_view_between returns UnsupportedOperation when null" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expectError(error.UnsupportedOperation, db.get_view_between(&[_]u8{0}, &[_]u8{9}));
 }
