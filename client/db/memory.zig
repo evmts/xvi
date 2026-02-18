@@ -177,7 +177,7 @@ pub const MemoryDatabase = struct {
     /// Mirrors Nethermind's `MemDb.this[byte[][] keys]` which does
     /// `keys.Select(k => new KeyValuePair(k, _db.GetValueOrDefault(k))).ToArray()`.
     /// Increments `reads_count` by `keys.len`.
-    pub fn multi_get(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) void {
+    pub fn multi_get(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
         for (keys, 0..) |key, i| {
             results[i] = self.get_with_flags(key, flags);
         }
@@ -374,7 +374,7 @@ pub const MemoryDatabase = struct {
     }
 
     fn multi_get_impl(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
-        self.multi_get(keys, results, flags);
+        return self.multi_get(keys, results, flags);
     }
 };
 
@@ -800,7 +800,7 @@ test "MemoryDatabase: multi_get returns found and missing keys" {
 
     const keys = &[_][]const u8{ "a", "b", "c" };
     var results: [3]?DbValue = undefined;
-    db.multi_get(keys, &results, ReadFlags.none);
+    try db.multi_get(keys, &results, ReadFlags.none);
 
     try std.testing.expect(results[0] != null);
     try std.testing.expectEqualStrings("val_a", results[0].?.bytes);
@@ -815,7 +815,7 @@ test "MemoryDatabase: multi_get with empty keys slice" {
 
     const keys: []const []const u8 = &.{};
     var results: [0]?DbValue = .{};
-    db.multi_get(keys, &results, ReadFlags.none);
+    try db.multi_get(keys, &results, ReadFlags.none);
     // No crash, no errors — empty is a valid no-op.
 }
 
@@ -829,7 +829,7 @@ test "MemoryDatabase: multi_get increments reads_count" {
 
     const keys = &[_][]const u8{ "x", "y", "z" };
     var results: [3]?DbValue = undefined;
-    db.multi_get(keys, &results, ReadFlags.none);
+    try db.multi_get(keys, &results, ReadFlags.none);
 
     // Each key lookup increments reads_count via get_with_flags.
     try std.testing.expectEqual(@as(u64, 3), db.reads_count);
