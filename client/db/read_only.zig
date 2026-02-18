@@ -136,10 +136,19 @@ pub const ReadOnlyDb = struct {
 
     /// Return a `Database` vtable interface backed by this ReadOnlyDb.
     pub fn database(self: *ReadOnlyDb) Database {
-        return .{
-            .ptr = @ptrCast(self),
-            .vtable = &vtable,
-        };
+        return Database.init(ReadOnlyDb, self, .{
+            .name = name_impl,
+            .get = get_impl,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_impl,
+            .iterator = iterator_impl,
+            .snapshot = snapshot_impl,
+            .flush = flush_impl,
+            .clear = clear_impl,
+            .compact = compact_impl,
+            .gather_metric = gather_metric_impl,
+        });
     }
 
     // -- Direct (non-vtable) methods ------------------------------------------
@@ -294,32 +303,15 @@ pub const ReadOnlyDb = struct {
 
     // -- VTable implementation ------------------------------------------------
 
-    const vtable = Database.VTable{
-        .name = name_impl,
-        .get = get_impl,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_impl,
-        .iterator = iterator_impl,
-        .snapshot = snapshot_impl,
-        .flush = flush_impl,
-        .clear = clear_impl,
-        .compact = compact_impl,
-        .gather_metric = gather_metric_impl,
-    };
-
-    fn name_impl(ptr: *anyopaque) adapter.DbName {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn name_impl(self: *ReadOnlyDb) adapter.DbName {
         return self.wrapped.name();
     }
 
-    fn get_impl(ptr: *anyopaque, key: []const u8, flags: ReadFlags) Error!?DbValue {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn get_impl(self: *ReadOnlyDb, key: []const u8, flags: ReadFlags) Error!?DbValue {
         return self.get_with_flags(key, flags);
     }
 
-    fn put_impl(ptr: *anyopaque, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn put_impl(self: *ReadOnlyDb, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
         if (self.overlay) |ov| {
             // Write to overlay only — never touches the wrapped database.
             // Mirrors Nethermind's `_memDb.Set(key, value, flags)`.
@@ -329,8 +321,7 @@ pub const ReadOnlyDb = struct {
         return error.StorageError;
     }
 
-    fn delete_impl(ptr: *anyopaque, key: []const u8, flags: WriteFlags) Error!void {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn delete_impl(self: *ReadOnlyDb, key: []const u8, flags: WriteFlags) Error!void {
         if (self.overlay) |ov| {
             // Delete from overlay only.
             return ov.delete_with_flags(key, flags);
@@ -339,13 +330,11 @@ pub const ReadOnlyDb = struct {
         return error.StorageError;
     }
 
-    fn contains_impl(ptr: *anyopaque, key: []const u8) Error!bool {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn contains_impl(self: *ReadOnlyDb, key: []const u8) Error!bool {
         return self.contains(key);
     }
 
-    fn iterator_impl(ptr: *anyopaque, ordered: bool) Error!DbIterator {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn iterator_impl(self: *ReadOnlyDb, ordered: bool) Error!DbIterator {
         if (self.overlay) |ov| {
             if (ordered) return error.UnsupportedOperation;
             const allocator = self.overlay_allocator orelse return error.OutOfMemory;
@@ -365,8 +354,7 @@ pub const ReadOnlyDb = struct {
         return self.wrapped.iterator(ordered);
     }
 
-    fn snapshot_impl(ptr: *anyopaque) Error!DbSnapshot {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn snapshot_impl(self: *ReadOnlyDb) Error!DbSnapshot {
         var wrapped_snapshot = try self.wrapped.snapshot();
         if (self.overlay) |ov| {
             errdefer wrapped_snapshot.deinit();
@@ -379,18 +367,17 @@ pub const ReadOnlyDb = struct {
         return wrapped_snapshot;
     }
 
-    fn flush_impl(_: *anyopaque, _: bool) Error!void {}
+    fn flush_impl(_: *ReadOnlyDb, _: bool) Error!void {}
 
-    fn clear_impl(_: *anyopaque) Error!void {
+    fn clear_impl(_: *ReadOnlyDb) Error!void {
         return error.UnsupportedOperation;
     }
 
-    fn compact_impl(_: *anyopaque) Error!void {
+    fn compact_impl(_: *ReadOnlyDb) Error!void {
         return error.UnsupportedOperation;
     }
 
-    fn gather_metric_impl(ptr: *anyopaque) Error!DbMetric {
-        const self: *ReadOnlyDb = @ptrCast(@alignCast(ptr));
+    fn gather_metric_impl(self: *ReadOnlyDb) Error!DbMetric {
         return self.wrapped.gather_metric();
     }
 };
