@@ -3,7 +3,7 @@
 /// Follows the Null Object pattern from Nethermind's `NullDb`
 /// (`Nethermind.Db/NullDb.cs`):
 ///   - All read operations return `null` / `false` (no data stored).
-///   - All write operations return `error.StorageError` (not supported).
+///   - All write operations silently discard data (null object pattern).
 ///   - `deinit()` is a no-op (no resources to release).
 ///
 /// Use this backend when a `Database` interface is required but no
@@ -77,13 +77,11 @@ pub const NullDb = struct {
     }
 
     fn put_impl(_: *NullDb, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
-        // Null database: writes are not supported.
-        return error.StorageError;
+        // Null database: writes silently discarded (null object pattern).
     }
 
     fn delete_impl(_: *NullDb, _: []const u8, _: WriteFlags) Error!void {
-        // Null database: deletes are not supported.
-        return error.StorageError;
+        // Null database: deletes silently discarded (null object pattern).
     }
 
     fn contains_impl(_: *NullDb, _: []const u8) Error!bool {
@@ -180,28 +178,30 @@ test "NullDb: contains always returns false" {
     try std.testing.expect(!result);
 }
 
-test "NullDb: put returns StorageError" {
+test "NullDb: put silently discards" {
     var ndb = NullDb.init(.state);
     defer ndb.deinit();
 
     const iface = ndb.database();
-    try std.testing.expectError(error.StorageError, iface.put("key", "value"));
+    try iface.put("key", "value");
+    // Verify data was discarded — get still returns null.
+    try std.testing.expect((try iface.get("key")) == null);
 }
 
-test "NullDb: put with null returns StorageError" {
+test "NullDb: put with null silently discards" {
     var ndb = NullDb.init(.state);
     defer ndb.deinit();
 
     const iface = ndb.database();
-    try std.testing.expectError(error.StorageError, iface.put("key", null));
+    try iface.put("key", null);
 }
 
-test "NullDb: delete returns StorageError" {
+test "NullDb: delete silently discards" {
     var ndb = NullDb.init(.state);
     defer ndb.deinit();
 
     const iface = ndb.database();
-    try std.testing.expectError(error.StorageError, iface.delete("key"));
+    try iface.delete("key");
 }
 
 test "NullDb: multiple instances are independent" {

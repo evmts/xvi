@@ -75,7 +75,7 @@ pub const DbIterator = adapter.DbIterator;
 pub const DbSnapshot = adapter.DbSnapshot;
 /// In-memory backend (for tests and ephemeral state).
 pub const MemoryDatabase = memory.MemoryDatabase;
-/// Null object backend (reads return null, writes error).
+/// Null object backend (reads return null, writes silently discard).
 pub const NullDb = null_db.NullDb;
 /// RocksDB backend stub (not yet implemented).
 pub const RocksDatabase = rocksdb.RocksDatabase;
