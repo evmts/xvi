@@ -857,7 +857,7 @@ pub fn main() !void {
     std.debug.print("  - Partial consume: deinit releases buffered pre-fetched entries safely\n", .{});
     std.debug.print("  - ReadOnlyIterator (unordered): uses HashSet for dedup, O(n+m) with set overhead\n", .{});
     std.debug.print("  - No-overlay path: zero extra allocation, direct delegation to wrapped.iterator()\n", .{});
-    std.debug.print("  - Arena allocator for DB; overlay_allocator for iterator struct allocation\n", .{});
+    std.debug.print("  - Arena allocator for DB; write_store.allocator for iterator struct allocation\n", .{});
     std.debug.print("  - For accurate numbers: zig build bench-db007 -Doptimize=ReleaseFast\n", .{});
     std.debug.print("=" ** 100 ++ "\n\n", .{});
 }
