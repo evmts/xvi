@@ -1155,6 +1155,40 @@ test "MemorySortedView: start_before with all keys greater returns false" {
     try std.testing.expect(!found);
 }
 
+test "MemorySortedView: start_before(false) then move_next falls back to first entry (Nethermind parity)" {
+    // Reproduces Nethermind behavior: when StartBefore returns false (_started stays false),
+    // MoveNext falls back to SeekToFirst. This means start_before(false) + move_next should
+    // return the first entry, not skip it.
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 3);
+
+    entries[0] = .{ .key = DbValue.borrowed("ddd"), .value = DbValue.borrowed("1") };
+    entries[1] = .{ .key = DbValue.borrowed("eee"), .value = DbValue.borrowed("2") };
+    entries[2] = .{ .key = DbValue.borrowed("fff"), .value = DbValue.borrowed("3") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    // start_before("aaa") — all keys > "aaa", so returns false
+    const found = try view.start_before("aaa");
+    try std.testing.expect(!found);
+
+    // move_next should fall back to SeekToFirst — return "ddd"
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ddd", first.key.bytes);
+
+    // Continue iterating
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("eee", second.key.bytes);
+
+    const third = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("fff", third.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
 test "MemorySortedView: move_next after exhaustion returns null" {
     const alloc = std.testing.allocator;
     const entries = try alloc.alloc(DbEntry, 1);
