@@ -124,6 +124,7 @@ pub const RocksDatabase = struct {
             .clear = clear_impl,
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
+            .multi_get = multi_get_impl,
         });
     }
 
@@ -174,6 +175,11 @@ pub const RocksDatabase = struct {
     }
 
     fn gather_metric_impl(_: *RocksDatabase) Error!DbMetric {
+        return error.StorageError;
+    }
+
+    fn multi_get_impl(_: *RocksDatabase, _: []const []const u8, _: []?adapter.DbValue, _: adapter.ReadFlags) Error!void {
+        // Stub: RocksDB backend not implemented yet.
         return error.StorageError;
     }
 };
@@ -315,4 +321,17 @@ test "DbSettings: clone_with overrides name/path but keeps flags" {
         @intFromPtr(settings.columns_merge_operators.?),
         @intFromPtr(cloned.columns_merge_operators.?),
     );
+}
+
+test "RocksDatabase: multi_get returns StorageError (unimplemented stub)" {
+    const settings = DbSettings.init(.state, "/tmp/guillotine-state");
+    var db = RocksDatabase.init(settings);
+    defer db.deinit();
+
+    const iface = db.database();
+    try std.testing.expect(iface.supports_multi_get());
+
+    const keys = &[_][]const u8{ "a", "b" };
+    var results: [2]?adapter.DbValue = undefined;
+    try std.testing.expectError(error.StorageError, iface.multi_get(keys, &results));
 }
