@@ -261,8 +261,6 @@ pub const MemoryDatabase = struct {
         /// calls `iterator.SeekForPrev(value)`.
         fn start_before(self: *MemorySortedView, value: []const u8) Error!bool {
             if (self.started) return error.StorageError; // Already started
-            self.started = true;
-            self.started_before = true;
 
             if (self.entries.len == 0) return false;
 
@@ -282,9 +280,16 @@ pub const MemoryDatabase = struct {
             // The largest key ≤ value is at `low - 1`.
             if (low == 0) {
                 // All keys are > value — no position before value.
-                self.index = 0;
+                // Nethermind: `_started = _iterator.Valid()` — stays false when
+                // SeekForPrev finds nothing, so MoveNext falls back to SeekToFirst.
+                // We mirror this by NOT setting `started` — next move_next will
+                // start from entries[0].
                 return false;
             }
+            // Valid position found — mark as started.
+            // Mirrors Nethermind: `return _started = _iterator.Valid()` → true.
+            self.started = true;
+            self.started_before = true;
             self.index = low - 1;
             return true;
         }
