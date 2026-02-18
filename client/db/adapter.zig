@@ -436,6 +436,19 @@ pub const Database = struct {
         ///
         /// Mirrors Nethermind's `IMergeableKeyValueStore.Merge(key, value, flags)`.
         merge: ?*const fn (ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void = null,
+
+        /// Retrieve multiple values in a single batch operation.
+        ///
+        /// Backends that support native multi-key reads (e.g., RocksDB MultiGet)
+        /// should implement this for batched I/O efficiency.
+        /// If `null`, `Database.multi_get()` falls back to sequential `get()` calls.
+        ///
+        /// `keys` and `results` must have the same length. The backend fills
+        /// `results[i]` with the value for `keys[i]` (null if not found).
+        /// Caller owns both slices and must release each non-null DbValue.
+        ///
+        /// Mirrors Nethermind's `IDb.this[byte[][] keys]` indexer.
+        multi_get: ?*const fn (ptr: *anyopaque, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void = null,
     };
 
     /// Return the database name (column family).
@@ -547,6 +560,35 @@ pub const Database = struct {
         return merge_fn(self.ptr, key, value, flags);
     }
 
+    /// Returns true if the backend provides a native `multi_get` implementation.
+    pub fn supports_multi_get(self: Database) bool {
+        return self.vtable.multi_get != null;
+    }
+
+    /// Retrieve multiple values in a single batch with default read flags.
+    ///
+    /// If the backend supports native multi-get, dispatches directly.
+    /// Otherwise, falls back to sequential `get()` calls.
+    ///
+    /// `keys.len` must equal `results.len`. On return, `results[i]` is
+    /// the value for `keys[i]` (null if not found). Caller must release
+    /// each non-null DbValue.
+    pub fn multi_get(self: Database, keys: []const []const u8, results: []?DbValue) Error!void {
+        return self.multi_get_with_flags(keys, results, ReadFlags.none);
+    }
+
+    /// Retrieve multiple values in a single batch with explicit read flags.
+    pub fn multi_get_with_flags(self: Database, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
+        std.debug.assert(keys.len == results.len);
+        if (self.vtable.multi_get) |mg_fn| {
+            return mg_fn(self.ptr, keys, results, flags);
+        }
+        // Sequential fallback — same pattern as WriteBatch sequential fallback.
+        for (keys, 0..) |key, i| {
+            results[i] = try self.get_with_flags(key, flags);
+        }
+    }
+
     /// Construct a `Database` from a concrete backend pointer and typed function pointers.
     ///
     /// Generates type-safe vtable wrapper functions at comptime, eliminating
@@ -586,6 +628,7 @@ pub const Database = struct {
         gather_metric: *const fn (self: *T) Error!DbMetric,
         write_batch: ?*const fn (self: *T, ops: []const WriteBatchOp) Error!void = null,
         merge: ?*const fn (self: *T, key: []const u8, value: []const u8, flags: WriteFlags) Error!void = null,
+        multi_get: ?*const fn (self: *T, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void = null,
     }) Database {
         const Wrapper = struct {
             fn name_impl(raw: *anyopaque) DbName {
@@ -655,6 +698,12 @@ pub const Database = struct {
                 return merge_fn(typed, key, value, flags);
             }
 
+            fn multi_get_impl(raw: *anyopaque, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                const mg_fn = fns.multi_get orelse unreachable;
+                return mg_fn(typed, keys, results, flags);
+            }
+
             const vtable = VTable{
                 .name = name_impl,
                 .get = get_impl,
@@ -669,6 +718,7 @@ pub const Database = struct {
                 .gather_metric = gather_metric_impl,
                 .write_batch = if (fns.write_batch == null) null else write_batch_impl,
                 .merge = if (fns.merge == null) null else merge_impl,
+                .multi_get = if (fns.multi_get == null) null else multi_get_impl,
             };
         };
 
@@ -946,6 +996,7 @@ fn test_vtable(overrides: struct {
     gather_metric: *const fn (*anyopaque) Error!DbMetric = test_stubs.gather_metric_zero,
     write_batch: ?*const fn (*anyopaque, []const WriteBatchOp) Error!void = null,
     merge: ?*const fn (*anyopaque, []const u8, []const u8, WriteFlags) Error!void = null,
+    multi_get: ?*const fn (*anyopaque, []const []const u8, []?DbValue, ReadFlags) Error!void = null,
 }) Database.VTable {
     return .{
         .name = overrides.name,
@@ -961,6 +1012,7 @@ fn test_vtable(overrides: struct {
         .gather_metric = overrides.gather_metric,
         .write_batch = overrides.write_batch,
         .merge = overrides.merge,
+        .multi_get = overrides.multi_get,
     };
 }
 
@@ -2041,4 +2093,229 @@ test "Database.init without merge defaults to null" {
 
     try std.testing.expect(!db.supports_merge());
     try std.testing.expectError(error.UnsupportedOperation, db.merge("k", "v"));
+}
+
+// -- multi_get tests ---------------------------------------------------------
+
+test "Database supports_multi_get reports false when absent" {
+    var mock = MockDb{};
+    const db = mock.database();
+    try std.testing.expect(!db.supports_multi_get());
+}
+
+test "Database supports_multi_get reports true when present" {
+    const MultiGetDb = struct {
+        fn multi_get_impl(_: *anyopaque, _: []const []const u8, results: []?DbValue, _: ReadFlags) Error!void {
+            for (results) |*r| r.* = null;
+        }
+        const vtable = test_vtable(.{ .multi_get = multi_get_impl });
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var db_impl = MultiGetDb{};
+    const db = db_impl.database();
+    try std.testing.expect(db.supports_multi_get());
+}
+
+test "Database multi_get sequential fallback returns correct results" {
+    // Use a mock that returns known values for specific keys.
+    const LookupDb = struct {
+        fn get_impl(_: *anyopaque, key: []const u8, _: ReadFlags) Error!?DbValue {
+            if (std.mem.eql(u8, key, "a")) return DbValue.borrowed("val_a");
+            if (std.mem.eql(u8, key, "c")) return DbValue.borrowed("val_c");
+            return null;
+        }
+        const vtable = test_vtable(.{ .get = get_impl });
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var lookup = LookupDb{};
+    const db = lookup.database();
+
+    const keys = &[_][]const u8{ "a", "b", "c" };
+    var results: [3]?DbValue = undefined;
+    try db.multi_get(keys, &results);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("val_a", results[0].?.bytes);
+    try std.testing.expect(results[1] == null);
+    try std.testing.expect(results[2] != null);
+    try std.testing.expectEqualStrings("val_c", results[2].?.bytes);
+}
+
+test "Database multi_get_with_flags sequential fallback works" {
+    // Verify flags are forwarded to get_with_flags.
+    const FlagsDb = struct {
+        received_flags: ?ReadFlags = null,
+
+        fn get_impl(ptr: *anyopaque, _: []const u8, flags: ReadFlags) Error!?DbValue {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.received_flags = flags;
+            return null;
+        }
+        const vtable = test_vtable(.{ .get = get_impl });
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var fdb = FlagsDb{};
+    const db = fdb.database();
+
+    const keys = &[_][]const u8{"key1"};
+    var results: [1]?DbValue = undefined;
+    try db.multi_get_with_flags(keys, &results, ReadFlags.hint_cache_miss);
+
+    try std.testing.expectEqual(ReadFlags.hint_cache_miss, fdb.received_flags.?);
+}
+
+test "Database multi_get dispatches to vtable when present" {
+    const DispatchDb = struct {
+        dispatched: bool = false,
+
+        fn multi_get_impl(ptr: *anyopaque, _: []const []const u8, results: []?DbValue, _: ReadFlags) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.dispatched = true;
+            for (results) |*r| r.* = DbValue.borrowed("from_vtable");
+        }
+        const vtable = test_vtable(.{ .multi_get = multi_get_impl });
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var ddb = DispatchDb{};
+    const db = ddb.database();
+
+    const keys = &[_][]const u8{"key"};
+    var results: [1]?DbValue = undefined;
+    try db.multi_get(keys, &results);
+
+    try std.testing.expect(ddb.dispatched);
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("from_vtable", results[0].?.bytes);
+}
+
+test "Database multi_get with empty keys slice is no-op" {
+    var mock = MockDb{};
+    const db = mock.database();
+
+    const keys: []const []const u8 = &.{};
+    var results: [0]?DbValue = .{};
+    try db.multi_get(keys, &results);
+
+    // No calls made, no errors.
+    try std.testing.expectEqual(@as(usize, 0), mock.call_count);
+}
+
+test "Database.init with multi_get generates correct dispatch" {
+    const MultiGetBackend = struct {
+        call_count: usize = 0,
+
+        fn name_impl(_: *@This()) DbName {
+            return .state;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+        fn multi_get_impl(self: *@This(), _: []const []const u8, results: []?DbValue, _: ReadFlags) Error!void {
+            self.call_count += 1;
+            for (results) |*r| r.* = DbValue.borrowed("comptime_dispatch");
+        }
+    };
+
+    var backend = MultiGetBackend{};
+    const db = Database.init(MultiGetBackend, &backend, .{
+        .name = MultiGetBackend.name_impl,
+        .get = MultiGetBackend.get_impl,
+        .put = MultiGetBackend.put_impl,
+        .delete = MultiGetBackend.delete_impl,
+        .contains = MultiGetBackend.contains_impl,
+        .iterator = MultiGetBackend.iterator_impl,
+        .snapshot = MultiGetBackend.snapshot_impl,
+        .flush = MultiGetBackend.flush_impl,
+        .clear = MultiGetBackend.clear_impl,
+        .compact = MultiGetBackend.compact_impl,
+        .gather_metric = MultiGetBackend.gather_metric_impl,
+        .multi_get = MultiGetBackend.multi_get_impl,
+    });
+
+    try std.testing.expect(db.supports_multi_get());
+
+    const keys = &[_][]const u8{ "k1", "k2" };
+    var results: [2]?DbValue = undefined;
+    try db.multi_get(keys, &results);
+
+    try std.testing.expectEqual(@as(usize, 1), backend.call_count);
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("comptime_dispatch", results[0].?.bytes);
+    try std.testing.expect(results[1] != null);
+    try std.testing.expectEqualStrings("comptime_dispatch", results[1].?.bytes);
+}
+
+test "Database.init without multi_get defaults to null" {
+    const MinimalBackend3 = struct {
+        fn name_impl(_: *@This()) DbName {
+            return .metadata;
+        }
+        fn get_impl(_: *@This(), _: []const u8, _: ReadFlags) Error!?DbValue {
+            return null;
+        }
+        fn put_impl(_: *@This(), _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *@This(), _: []const u8, _: WriteFlags) Error!void {}
+        fn contains_impl(_: *@This(), _: []const u8) Error!bool {
+            return false;
+        }
+        fn iterator_impl(_: *@This(), _: bool) Error!DbIterator {
+            return error.UnsupportedOperation;
+        }
+        fn snapshot_impl(_: *@This()) Error!DbSnapshot {
+            return error.UnsupportedOperation;
+        }
+        fn flush_impl(_: *@This(), _: bool) Error!void {}
+        fn clear_impl(_: *@This()) Error!void {}
+        fn compact_impl(_: *@This()) Error!void {}
+        fn gather_metric_impl(_: *@This()) Error!DbMetric {
+            return .{};
+        }
+    };
+
+    var backend = MinimalBackend3{};
+    const db = Database.init(MinimalBackend3, &backend, .{
+        .name = MinimalBackend3.name_impl,
+        .get = MinimalBackend3.get_impl,
+        .put = MinimalBackend3.put_impl,
+        .delete = MinimalBackend3.delete_impl,
+        .contains = MinimalBackend3.contains_impl,
+        .iterator = MinimalBackend3.iterator_impl,
+        .snapshot = MinimalBackend3.snapshot_impl,
+        .flush = MinimalBackend3.flush_impl,
+        .clear = MinimalBackend3.clear_impl,
+        .compact = MinimalBackend3.compact_impl,
+        .gather_metric = MinimalBackend3.gather_metric_impl,
+        // multi_get deliberately omitted — should default to null
+    });
+
+    try std.testing.expect(!db.supports_multi_get());
 }
