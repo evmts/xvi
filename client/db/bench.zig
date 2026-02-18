@@ -344,7 +344,10 @@ fn bench_factory_creation(n: usize) struct { mem_ns: u64, null_ns: u64, ro_overl
         const f = null_factory.factory();
         var timer = std.time.Timer.start() catch unreachable;
         for (0..n) |_| {
-            _ = f.createDb(DbSettings.init(.state, "state")) catch {};
+            _ = f.createDb(DbSettings.init(.state, "state")) catch |err| switch (err) {
+                error.UnsupportedOperation => {}, // NullDbFactory always returns this
+                else => unreachable,
+            };
         }
         null_total += timer.read();
         null_factory.deinit();

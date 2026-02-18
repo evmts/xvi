@@ -319,7 +319,7 @@ test "DbFactory: init generates correct wrappers" {
         .deinit = TestFactory.deinit_impl,
     });
 
-    _ = factory.createDb(DbSettings.init(.state, "/tmp")) catch {};
+    try std.testing.expectError(error.UnsupportedOperation, factory.createDb(DbSettings.init(.state, "/tmp")));
     try std.testing.expectEqual(@as(u64, 1), backend.value);
 
     factory.deinit();
