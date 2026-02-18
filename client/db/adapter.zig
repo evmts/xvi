@@ -579,7 +579,9 @@ pub const Database = struct {
 
     /// Retrieve multiple values in a single batch with explicit read flags.
     pub fn multi_get_with_flags(self: Database, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
-        std.debug.assert(keys.len == results.len);
+        // Runtime-safe length check: debug.assert is stripped in release builds
+        // and a mismatch would cause out-of-bounds writes.
+        if (keys.len != results.len) return error.StorageError;
         if (self.vtable.multi_get) |mg_fn| {
             return mg_fn(self.ptr, keys, results, flags);
         }
