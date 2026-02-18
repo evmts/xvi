@@ -118,6 +118,9 @@ pub const MemoryDatabase = struct {
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
             .multi_get = multi_get_impl,
+            .first_key = first_key_impl,
+            .last_key = last_key_impl,
+            .get_view_between = get_view_between_impl,
         });
     }
 
@@ -471,6 +474,105 @@ pub const MemoryDatabase = struct {
 
     fn multi_get_impl(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
         return self.multi_get(keys, results, flags);
+    }
+
+    /// Return the lexicographically smallest key, or null if empty.
+    ///
+    /// Collects all keys, finds the minimum via `Bytes.compare`.
+    /// O(n) scan — acceptable for in-memory test/dev backend.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.FirstKey`.
+    fn first_key_impl(self: *MemoryDatabase) Error!?DbValue {
+        if (self.map.count() == 0) return null;
+
+        var it = self.map.iterator();
+        var min_key: []const u8 = undefined;
+        var first = true;
+        while (it.next()) |entry| {
+            if (first or Bytes.compare(entry.key_ptr.*, min_key) < 0) {
+                min_key = entry.key_ptr.*;
+                first = false;
+            }
+        }
+        return DbValue.borrowed(min_key);
+    }
+
+    /// Return the lexicographically largest key, or null if empty.
+    ///
+    /// Collects all keys, finds the maximum via `Bytes.compare`.
+    /// O(n) scan — acceptable for in-memory test/dev backend.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.LastKey`.
+    fn last_key_impl(self: *MemoryDatabase) Error!?DbValue {
+        if (self.map.count() == 0) return null;
+
+        var it = self.map.iterator();
+        var max_key: []const u8 = undefined;
+        var first = true;
+        while (it.next()) |entry| {
+            if (first or Bytes.compare(entry.key_ptr.*, max_key) > 0) {
+                max_key = entry.key_ptr.*;
+                first = false;
+            }
+        }
+        return DbValue.borrowed(max_key);
+    }
+
+    /// Create a sorted view over `[first_inclusive, last_exclusive)`.
+    ///
+    /// Collects all entries, sorts by key, filters to the specified range,
+    /// and returns a `MemorySortedView` as a type-erased `SortedView`.
+    ///
+    /// O(n log n) sort — acceptable for in-memory test/dev backend.
+    /// Mirrors Nethermind's `ISortedKeyValueStore.GetViewBetween()`.
+    fn get_view_between_impl(
+        self: *MemoryDatabase,
+        first_inclusive: []const u8,
+        last_exclusive: []const u8,
+    ) Error!SortedView {
+        const allocator = self.backing_allocator;
+
+        // Collect all entries in the range [first_inclusive, last_exclusive).
+        var list: std.ArrayListUnmanaged(DbEntry) = .{};
+        errdefer list.deinit(allocator);
+
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            const key = entry.key_ptr.*;
+            // Include if key >= first_inclusive AND key < last_exclusive
+            if (Bytes.compare(key, first_inclusive) >= 0 and
+                Bytes.compare(key, last_exclusive) < 0)
+            {
+                list.append(allocator, .{
+                    .key = DbValue.borrowed(key),
+                    .value = DbValue.borrowed(entry.value_ptr.*),
+                }) catch return error.OutOfMemory;
+            }
+        }
+
+        // Sort by key in lexicographic order.
+        const entries = list.toOwnedSlice(allocator) catch return error.OutOfMemory;
+        const less_than = struct {
+            fn lt(_: void, a: DbEntry, b: DbEntry) bool {
+                return Bytes.compare(a.key.bytes, b.key.bytes) < 0;
+            }
+        }.lt;
+        std.sort.heap(DbEntry, entries, {}, less_than);
+
+        // Allocate the MemorySortedView on the heap.
+        const view_ptr = allocator.create(MemorySortedView) catch return error.OutOfMemory;
+        errdefer allocator.destroy(view_ptr);
+
+        view_ptr.* = .{
+            .entries = entries,
+            .allocator = allocator,
+        };
+
+        return SortedView.init(
+            MemorySortedView,
+            view_ptr,
+            MemorySortedView.start_before,
+            MemorySortedView.move_next,
+            MemorySortedView.deinit_impl,
+        );
     }
 };
 
@@ -1061,4 +1163,154 @@ test "MemorySortedView: move_next after exhaustion returns null" {
     _ = try view.move_next(); // First entry
     try std.testing.expect((try view.move_next()) == null); // Exhausted
     try std.testing.expect((try view.move_next()) == null); // Still exhausted
+}
+
+// -- MemoryDatabase sorted view VTable tests ----------------------------------
+
+test "MemoryDatabase: supports_sorted_view returns true" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const iface = db.database();
+    try std.testing.expect(iface.supports_sorted_view());
+}
+
+test "MemoryDatabase: first_key on empty DB returns null" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const iface = db.database();
+    const result = try iface.first_key();
+    try std.testing.expect(result == null);
+}
+
+test "MemoryDatabase: first_key returns lexicographic minimum" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("ccc", "3");
+    try db.put("aaa", "1");
+    try db.put("bbb", "2");
+
+    const iface = db.database();
+    const result = (try iface.first_key()).?;
+    try std.testing.expectEqualStrings("aaa", result.bytes);
+}
+
+test "MemoryDatabase: last_key on empty DB returns null" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const iface = db.database();
+    const result = try iface.last_key();
+    try std.testing.expect(result == null);
+}
+
+test "MemoryDatabase: last_key returns lexicographic maximum" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("aaa", "1");
+    try db.put("ccc", "3");
+    try db.put("bbb", "2");
+
+    const iface = db.database();
+    const result = (try iface.last_key()).?;
+    try std.testing.expectEqualStrings("ccc", result.bytes);
+}
+
+test "MemoryDatabase: get_view_between full range returns all entries in order" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("bbb", "2");
+    try db.put("aaa", "1");
+    try db.put("ccc", "3");
+
+    const iface = db.database();
+    // Range ["\x00", "\xff"] should include all entries
+    var view = try iface.get_view_between(&[_]u8{0x00}, &[_]u8{0xFF});
+    defer view.deinit();
+
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", first.key.bytes);
+    try std.testing.expectEqualStrings("1", first.value.bytes);
+
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", second.key.bytes);
+    try std.testing.expectEqualStrings("2", second.value.bytes);
+
+    const third = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", third.key.bytes);
+    try std.testing.expectEqualStrings("3", third.value.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemoryDatabase: get_view_between partial range returns correct subset" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("aaa", "1");
+    try db.put("bbb", "2");
+    try db.put("ccc", "3");
+    try db.put("ddd", "4");
+
+    const iface = db.database();
+    // Range ["bbb", "ddd") should include bbb and ccc only
+    var view = try iface.get_view_between("bbb", "ddd");
+    defer view.deinit();
+
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", first.key.bytes);
+
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", second.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemoryDatabase: get_view_between empty range returns no entries" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("aaa", "1");
+    try db.put("bbb", "2");
+
+    const iface = db.database();
+    // Range ["xxx", "yyy") includes nothing
+    var view = try iface.get_view_between("xxx", "yyy");
+    defer view.deinit();
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemoryDatabase: get_view_between single-entry range" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("aaa", "1");
+    try db.put("bbb", "2");
+    try db.put("ccc", "3");
+
+    const iface = db.database();
+    // Range ["bbb", "ccc") should include only bbb
+    var view = try iface.get_view_between("bbb", "ccc");
+    defer view.deinit();
+
+    const entry = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", entry.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemoryDatabase: get_view_between on empty database" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const iface = db.database();
+    var view = try iface.get_view_between(&[_]u8{0}, &[_]u8{0xFF});
+    defer view.deinit();
+
+    try std.testing.expect((try view.move_next()) == null);
 }
