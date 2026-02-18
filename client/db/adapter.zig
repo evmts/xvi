@@ -213,6 +213,18 @@ pub const DbIterator = struct {
         self.vtable.deinit(self.ptr);
     }
 
+    /// Create a type-erased `DbIterator` from a typed pointer and vtable functions.
+    ///
+    /// Accepts `*const T` so callers may pass pointers to immutable sentinels
+    /// (e.g., `NullDb.empty_iterator`). The pointer is stored internally as
+    /// `*anyopaque` via `@constCast`.
+    ///
+    /// ## Safety
+    ///
+    /// If `ptr` refers to truly immutable (comptime-const or read-only) memory,
+    /// `next_fn` and `deinit_fn` **must not** mutate through their `*T` parameter.
+    /// Violating this invariant is undefined behavior. All current callers
+    /// (NullDb, MemoryDatabase) satisfy this contract.
     pub fn init(
         comptime T: type,
         ptr: *const T,
@@ -274,6 +286,19 @@ pub const DbSnapshot = struct {
         self.vtable.deinit(self.ptr);
     }
 
+    /// Create a type-erased `DbSnapshot` from a typed pointer and vtable functions.
+    ///
+    /// Accepts `*const T` so callers may pass pointers to immutable sentinels
+    /// (e.g., `NullDb.null_snapshot`). The pointer is stored internally as
+    /// `*anyopaque` via `@constCast`.
+    ///
+    /// ## Safety
+    ///
+    /// If `ptr` refers to truly immutable (comptime-const or read-only) memory,
+    /// the vtable functions (`get_fn`, `contains_fn`, `iterator_fn`, `deinit_fn`)
+    /// **must not** mutate through their `*T` parameter. Violating this invariant
+    /// is undefined behavior. All current callers (NullDb, MemoryDatabase)
+    /// satisfy this contract.
     pub fn init(
         comptime T: type,
         ptr: *const T,
