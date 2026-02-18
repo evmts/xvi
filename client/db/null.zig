@@ -1,14 +1,17 @@
 /// Null database backend implementing the `Database` interface.
 ///
-/// Follows the Null Object pattern from Nethermind's `NullDb`
-/// (`Nethermind.Db/NullDb.cs`):
-///   - All read operations return `null` / `false` (no data stored).
-///   - All write operations silently discard data (null object pattern).
+/// Inspired by Nethermind's `NullDb` (`Nethermind.Db/NullDb.cs`) but with
+/// a key behavioral difference on writes:
+///   - All read operations return `null` / `false` (no data stored) — same as Nethermind.
+///   - All write operations **silently discard** data (true null object pattern).
+///     Nethermind's `NullDb` throws `NotSupportedException` on writes instead.
 ///   - `deinit()` is a no-op (no resources to release).
 ///
-/// Use this backend when a `Database` interface is required but no
-/// persistence is needed (e.g., tests that only exercise in-memory state,
-/// or components that must satisfy a database dependency without storage).
+/// The silent-discard behavior was chosen (DB-001) so that NullDb can serve as
+/// a drop-in stub in any context without callers needing write-error handling,
+/// matching the classic Null Object pattern. Use `MemoryDatabase` if you need
+/// actual in-memory storage, or implement a throwing variant if write rejection
+/// is required.
 ///
 /// For actual in-memory storage, use `MemoryDatabase` instead.
 const std = @import("std");
@@ -24,9 +27,9 @@ const WriteFlags = adapter.WriteFlags;
 
 /// Null database — satisfies the `Database` interface without storing data.
 ///
-/// Mirrors Nethermind's `NullDb` singleton pattern. In Zig we use a simple
-/// zero-sized struct instead of a singleton since there is no shared mutable
-/// state.
+/// Inspired by Nethermind's `NullDb` singleton. In Zig we use a stack-allocated
+/// struct instead of a singleton (no shared mutable state). Unlike Nethermind,
+/// writes silently discard rather than throwing (see module-level docs).
 ///
 /// ## Usage
 ///
