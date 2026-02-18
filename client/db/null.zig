@@ -60,6 +60,7 @@ pub const NullDb = struct {
             .clear = clear_impl,
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
+            .multi_get = multi_get_impl,
         });
     }
 
@@ -149,6 +150,13 @@ pub const NullDb = struct {
 
     fn gather_metric_impl(_: *NullDb) Error!DbMetric {
         return .{};
+    }
+
+    fn multi_get_impl(_: *NullDb, _: []const []const u8, results: []?DbValue, _: ReadFlags) Error!void {
+        // Null database: no data stored, all results are null.
+        for (results) |*r| {
+            r.* = null;
+        }
     }
 
     const empty_iterator = EmptyIterator{};
@@ -250,4 +258,32 @@ test "NullDb: snapshot returns null and empty iterator" {
     var it = try snap.iterator(false);
     defer it.deinit();
     try std.testing.expect((try it.next()) == null);
+}
+
+test "NullDb: multi_get returns all nulls" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+    try std.testing.expect(iface.supports_multi_get());
+
+    const keys = &[_][]const u8{ "a", "b", "c" };
+    var results: [3]?adapter.DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    try std.testing.expect(results[0] == null);
+    try std.testing.expect(results[1] == null);
+    try std.testing.expect(results[2] == null);
+}
+
+test "NullDb: multi_get with empty keys slice" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+
+    const keys: []const []const u8 = &.{};
+    var results: [0]?adapter.DbValue = .{};
+    try iface.multi_get(keys, &results);
+    // No crash, no errors — empty is a valid no-op.
 }
