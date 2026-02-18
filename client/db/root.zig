@@ -73,6 +73,8 @@ pub const DbEntry = adapter.DbEntry;
 pub const DbIterator = adapter.DbIterator;
 /// Type-erased DB snapshot.
 pub const DbSnapshot = adapter.DbSnapshot;
+/// Type-erased sorted view for range iteration (mirrors Nethermind ISortedView).
+pub const SortedView = adapter.SortedView;
 /// In-memory backend (for tests and ephemeral state).
 pub const MemoryDatabase = memory.MemoryDatabase;
 /// Null object backend (reads return null, writes silently discard).
