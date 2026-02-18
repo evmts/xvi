@@ -344,6 +344,112 @@ pub const DbSnapshot = struct {
     }
 };
 
+/// Type-erased sorted view for range iteration over a database.
+///
+/// Mirrors Nethermind's `ISortedView` interface (`IKeyValueStore.cs:173–179`).
+/// Provides cursor-style iteration over entries in lexicographic key order
+/// within a range `[firstKeyInclusive, lastKeyExclusive)`.
+///
+/// ## Lifecycle
+///
+/// A `SortedView` borrows data from the underlying database. It must be
+/// deinited before the database is mutated or destroyed.
+///
+/// ## Usage
+///
+/// ```zig
+/// var view = try db.get_view_between(&[_]u8{0}, &[_]u8{9});
+/// defer view.deinit();
+///
+/// while (try view.move_next()) |entry| {
+///     // process entry.key.bytes, entry.value.bytes
+/// }
+/// ```
+pub const SortedView = struct {
+    /// Type-erased pointer to the concrete sorted view implementation.
+    ptr: *anyopaque,
+    /// Pointer to the static vtable for the concrete implementation.
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        /// Seek to the position just before `value` in sorted order.
+        /// Returns true if a valid position was found.
+        /// Can only be called once, before iteration starts.
+        ///
+        /// Mirrors Nethermind's `ISortedView.StartBefore(ReadOnlySpan<byte>)`.
+        start_before: *const fn (ptr: *anyopaque, value: []const u8) Error!bool,
+
+        /// Advance to the next entry. On first call (without `start_before`),
+        /// seeks to the first entry in the range. Returns null when exhausted.
+        ///
+        /// Mirrors Nethermind's `ISortedView.MoveNext()` + `CurrentKey`/`CurrentValue`.
+        move_next: *const fn (ptr: *anyopaque) Error!?DbEntry,
+
+        /// Release all resources held by this view.
+        ///
+        /// Mirrors Nethermind's `ISortedView.Dispose()`.
+        deinit: *const fn (ptr: *anyopaque) void,
+    };
+
+    /// Seek to the position just before `value` in sorted order.
+    /// Returns true if a valid position was found.
+    /// Can only be called once, before iteration starts.
+    pub fn start_before(self: *SortedView, value: []const u8) Error!bool {
+        return self.vtable.start_before(self.ptr, value);
+    }
+
+    /// Advance to the next entry. Returns null when exhausted.
+    /// On first call (without `start_before`), seeks to first entry.
+    pub fn move_next(self: *SortedView) Error!?DbEntry {
+        return self.vtable.move_next(self.ptr);
+    }
+
+    /// Release all resources held by this view.
+    pub fn deinit(self: *SortedView) void {
+        self.vtable.deinit(self.ptr);
+    }
+
+    /// Comptime type-erased constructor (same pattern as `DbIterator.init`).
+    ///
+    /// Generates vtable wrapper functions at comptime that cast the type-erased
+    /// `*anyopaque` back to `*T` before dispatching to the typed functions.
+    pub fn init(
+        comptime T: type,
+        ptr: *T,
+        comptime start_before_fn: *const fn (self: *T, value: []const u8) Error!bool,
+        comptime move_next_fn: *const fn (self: *T) Error!?DbEntry,
+        comptime deinit_fn: *const fn (self: *T) void,
+    ) SortedView {
+        const Wrapper = struct {
+            fn start_before_impl(raw: *anyopaque, value: []const u8) Error!bool {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return start_before_fn(typed, value);
+            }
+
+            fn move_next_impl(raw: *anyopaque) Error!?DbEntry {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                return move_next_fn(typed);
+            }
+
+            fn deinit_impl(raw: *anyopaque) void {
+                const typed: *T = @ptrCast(@alignCast(raw));
+                deinit_fn(typed);
+            }
+
+            const vtable = VTable{
+                .start_before = start_before_impl,
+                .move_next = move_next_impl,
+                .deinit = deinit_impl,
+            };
+        };
+
+        return .{
+            .ptr = @ptrCast(ptr),
+            .vtable = &Wrapper.vtable,
+        };
+    }
+};
+
 /// Generic key-value database interface using type-erased vtable dispatch.
 ///
 /// This is the fundamental storage abstraction for the Guillotine execution
@@ -2320,4 +2426,63 @@ test "Database.init without multi_get defaults to null" {
     });
 
     try std.testing.expect(!db.supports_multi_get());
+}
+
+// -- SortedView tests --------------------------------------------------------
+
+test "SortedView.init creates valid vtable dispatch with mock" {
+    // Trivial mock that returns fixed data to verify vtable dispatch.
+    const MockView = struct {
+        entries: [2]DbEntry,
+        index: usize = 0,
+        started: bool = false,
+        deinited: bool = false,
+
+        fn start_before(self: *@This(), _: []const u8) Error!bool {
+            self.started = true;
+            return true;
+        }
+
+        fn move_next(self: *@This()) Error!?DbEntry {
+            if (self.index >= self.entries.len) return null;
+            const entry = self.entries[self.index];
+            self.index += 1;
+            return entry;
+        }
+
+        fn deinit_impl(self: *@This()) void {
+            self.deinited = true;
+        }
+    };
+
+    var mock = MockView{
+        .entries = .{
+            .{ .key = DbValue.borrowed("aaa"), .value = DbValue.borrowed("111") },
+            .{ .key = DbValue.borrowed("bbb"), .value = DbValue.borrowed("222") },
+        },
+    };
+
+    var view = SortedView.init(MockView, &mock, MockView.start_before, MockView.move_next, MockView.deinit_impl);
+
+    // Test start_before dispatches correctly
+    const found = try view.start_before("aab");
+    try std.testing.expect(found);
+    try std.testing.expect(mock.started);
+
+    // Test move_next dispatches correctly
+    const first = try view.move_next();
+    try std.testing.expect(first != null);
+    try std.testing.expectEqualStrings("aaa", first.?.key.bytes);
+    try std.testing.expectEqualStrings("111", first.?.value.bytes);
+
+    const second = try view.move_next();
+    try std.testing.expect(second != null);
+    try std.testing.expectEqualStrings("bbb", second.?.key.bytes);
+
+    const third = try view.move_next();
+    try std.testing.expect(third == null);
+
+    // Test deinit dispatches correctly
+    view.deinit();
+    try std.testing.expect(mock.deinited);
 }
