@@ -515,6 +515,25 @@ pub fn build(b: *std.Build) void {
     const bench_db_step = b.step("bench-db", "Run database abstraction layer benchmarks");
     bench_db_step.dependOn(&run_client_db_bench.step);
 
+    // Client DB-006 sorted view benchmark executable
+    const client_db006_bench_mod = b.addModule("client_db006_bench", .{
+        .root_source_file = b.path("client/db/bench_db006.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "primitives", .module = primitives_mod },
+        },
+    });
+
+    const client_db006_bench = b.addExecutable(.{
+        .name = "bench_db006",
+        .root_module = client_db006_bench_mod,
+    });
+
+    const run_client_db006_bench = b.addRunArtifact(client_db006_bench);
+    const bench_db006_step = b.step("bench-db006", "Run DB-006 sorted view / range query benchmarks");
+    bench_db006_step.dependOn(&run_client_db006_bench.step);
+
     // Client Trie benchmark executable
     const client_trie_bench_mod = b.addModule("client_trie_bench", .{
         .root_source_file = b.path("client/trie/bench.zig"),
