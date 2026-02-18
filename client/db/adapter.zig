@@ -1584,22 +1584,21 @@ test "Database.init without write_batch defaults to null" {
 // -- OwnedDatabase tests ---------------------------------------------------
 
 test "OwnedDatabase: deinit calls cleanup function" {
-    const Tracker = struct {
-        var called: bool = false;
-        fn cleanup(_: ?*anyopaque) void {
-            called = true;
-        }
-    };
-    Tracker.called = false;
+    var called: bool = false;
 
     const owned = OwnedDatabase{
         .db = Database{ .ptr = undefined, .vtable = &MockDb.vtable },
-        .deinit_ctx = null,
-        .deinit_fn = Tracker.cleanup,
+        .deinit_ctx = @ptrCast(&called),
+        .deinit_fn = struct {
+            fn cleanup(ctx: ?*anyopaque) void {
+                const flag: *bool = @ptrCast(@alignCast(ctx.?));
+                flag.* = true;
+            }
+        }.cleanup,
     };
 
     owned.deinit();
-    try std.testing.expect(Tracker.called);
+    try std.testing.expect(called);
 }
 
 test "OwnedDatabase: deinit is safe with null deinit_fn" {
@@ -1630,22 +1629,26 @@ test "OwnedDatabase: unmanaged wraps without cleanup" {
 }
 
 test "OwnedDatabase: deinit passes context to cleanup function" {
-    const Tracker = struct {
-        var received_ctx: ?*anyopaque = null;
-        fn cleanup(ctx: ?*anyopaque) void {
-            received_ctx = ctx;
-        }
+    const CtxTracker = struct {
+        received_ctx: ?*anyopaque = null,
+        sentinel_ptr: *u8,
     };
-    Tracker.received_ctx = null;
 
     var sentinel: u8 = 42;
+    var tracker = CtxTracker{ .sentinel_ptr = &sentinel };
+
     const owned = OwnedDatabase{
         .db = Database{ .ptr = undefined, .vtable = &MockDb.vtable },
-        .deinit_ctx = @ptrCast(&sentinel),
-        .deinit_fn = Tracker.cleanup,
+        .deinit_ctx = @ptrCast(&tracker),
+        .deinit_fn = struct {
+            fn cleanup(ctx: ?*anyopaque) void {
+                const t: *CtxTracker = @ptrCast(@alignCast(ctx.?));
+                t.received_ctx = @ptrCast(t.sentinel_ptr);
+            }
+        }.cleanup,
     };
 
     owned.deinit();
-    try std.testing.expect(Tracker.received_ctx != null);
-    try std.testing.expectEqual(@intFromPtr(&sentinel), @intFromPtr(Tracker.received_ctx.?));
+    try std.testing.expect(tracker.received_ctx != null);
+    try std.testing.expectEqual(@intFromPtr(&sentinel), @intFromPtr(tracker.received_ctx.?));
 }
