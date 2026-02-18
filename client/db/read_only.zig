@@ -107,17 +107,22 @@ const Bytes = primitives.Bytes;
 /// - Writes: buffer in overlay if `create_in_mem_write_store` was set, else error.
 /// - `clear_temp_changes()`: wipe overlay without touching wrapped database.
 ///
-/// When `overlay` is null, the struct is zero-allocation (strict read-only mode).
-/// When `overlay` is non-null, it owns the MemoryDatabase and frees it on `deinit`.
+/// When `write_store` is null, the struct is zero-allocation (strict read-only mode).
+/// When `write_store` is non-null, it owns the MemoryDatabase and frees it on `deinit`.
 pub const ReadOnlyDb = struct {
     /// The underlying database to delegate reads to.
     wrapped: Database,
     /// Optional in-memory write overlay for temporary changes.
-    /// When non-null, writes go here and reads check here first.
+    /// Bundles the overlay database and its allocator together to prevent
+    /// impossible states (overlay without allocator or vice versa).
     /// Mirrors Nethermind's `_memDb` field in `ReadOnlyDb.cs`.
-    overlay: ?*MemoryDatabase,
-    /// Allocator used to free the overlay on deinit (only set when overlay is owned).
-    overlay_allocator: ?std.mem.Allocator,
+    write_store: ?WriteStore,
+
+    /// Owned overlay: an in-memory database and the allocator used to create it.
+    const WriteStore = struct {
+        db: *MemoryDatabase,
+        allocator: std.mem.Allocator,
+    };
 
     /// Create a strict read-only view over the given database (no write overlay).
     ///
@@ -126,8 +131,7 @@ pub const ReadOnlyDb = struct {
     pub fn init(wrapped: Database) ReadOnlyDb {
         return .{
             .wrapped = wrapped,
-            .overlay = null,
-            .overlay_allocator = null,
+            .write_store = null,
         };
     }
 
@@ -139,23 +143,20 @@ pub const ReadOnlyDb = struct {
     ///
     /// Equivalent to Nethermind's `ReadOnlyDb(wrappedDb, createInMemWriteStore: true)`.
     pub fn init_with_write_store(wrapped: Database, allocator: std.mem.Allocator) Error!ReadOnlyDb {
-        const overlay = allocator.create(MemoryDatabase) catch return error.OutOfMemory;
-        overlay.* = MemoryDatabase.init(allocator, wrapped.name());
+        const db = allocator.create(MemoryDatabase) catch return error.OutOfMemory;
+        db.* = MemoryDatabase.init(allocator, wrapped.name());
         return .{
             .wrapped = wrapped,
-            .overlay = overlay,
-            .overlay_allocator = allocator,
+            .write_store = .{ .db = db, .allocator = allocator },
         };
     }
 
     /// Release owned resources. If an overlay was created, frees it.
     pub fn deinit(self: *ReadOnlyDb) void {
-        if (self.overlay) |ov| {
-            ov.deinit();
-            if (self.overlay_allocator) |alloc| {
-                alloc.destroy(ov);
-            }
-            self.overlay = null;
+        if (self.write_store) |ws| {
+            ws.db.deinit();
+            ws.allocator.destroy(ws.db);
+            self.write_store = null;
         }
     }
 
@@ -198,8 +199,8 @@ pub const ReadOnlyDb = struct {
 
     /// Retrieve the value for `key` with explicit read flags.
     pub fn get_with_flags(self: *ReadOnlyDb, key: []const u8, flags: ReadFlags) Error!?DbValue {
-        if (self.overlay) |ov| {
-            if (ov.get_with_flags(key, flags)) |val| {
+        if (self.write_store) |ws| {
+            if (ws.db.get_with_flags(key, flags)) |val| {
                 return val;
             }
         }
@@ -210,8 +211,8 @@ pub const ReadOnlyDb = struct {
     ///
     /// Mirrors Nethermind's `_memDb.KeyExists(key) || wrappedDb.KeyExists(key)`.
     pub fn contains(self: *ReadOnlyDb, key: []const u8) Error!bool {
-        if (self.overlay) |ov| {
-            if (ov.contains(key)) {
+        if (self.write_store) |ws| {
+            if (ws.db.contains(key)) {
                 return true;
             }
         }
@@ -224,14 +225,14 @@ pub const ReadOnlyDb = struct {
     /// No-op if no write overlay was created.
     /// Mirrors Nethermind's `ClearTempChanges()` which calls `_memDb.Clear()`.
     pub fn clear_temp_changes(self: *ReadOnlyDb) void {
-        if (self.overlay) |ov| {
-            ov.clear();
+        if (self.write_store) |ws| {
+            ws.db.clear();
         }
     }
 
     /// Return whether this ReadOnlyDb has a write overlay enabled.
-    fn has_write_overlay(self: *const ReadOnlyDb) bool {
-        return self.overlay != null;
+    pub fn has_write_overlay(self: *const ReadOnlyDb) bool {
+        return self.write_store != null;
     }
 
     // -- Iterators and snapshots ----------------------------------------------
@@ -412,19 +413,19 @@ pub const ReadOnlyDb = struct {
     }
 
     fn put_impl(self: *ReadOnlyDb, key: []const u8, value: ?[]const u8, flags: WriteFlags) Error!void {
-        if (self.overlay) |ov| {
+        if (self.write_store) |ws| {
             // Write to overlay only — never touches the wrapped database.
             // Mirrors Nethermind's `_memDb.Set(key, value, flags)`.
-            return ov.put_with_flags(key, value, flags);
+            return ws.db.put_with_flags(key, value, flags);
         }
         // No overlay — strict read-only mode, writes are not permitted.
         return error.StorageError;
     }
 
     fn delete_impl(self: *ReadOnlyDb, key: []const u8, flags: WriteFlags) Error!void {
-        if (self.overlay) |ov| {
+        if (self.write_store) |ws| {
             // Delete from overlay only.
-            return ov.delete_with_flags(key, flags);
+            return ws.db.delete_with_flags(key, flags);
         }
         // No overlay — strict read-only mode, deletes are not permitted.
         return error.StorageError;
@@ -435,14 +436,13 @@ pub const ReadOnlyDb = struct {
     }
 
     fn iterator_impl(self: *ReadOnlyDb, ordered: bool) Error!DbIterator {
-        if (self.overlay) |ov| {
-            const allocator = self.overlay_allocator orelse return error.OutOfMemory;
+        if (self.write_store) |ws| {
             if (ordered) {
                 // Merge-sort: get ordered iterators from both sources, then
                 // merge them in lexicographic key order with overlay precedence.
                 // Mirrors Nethermind's `_memDb.GetAll().Union(wrappedDb.GetAll())`
                 // but preserves key order via merge-sort instead of LINQ Union.
-                var overlay_iter = try ov.database().iterator(true);
+                var overlay_iter = try ws.db.database().iterator(true);
                 errdefer overlay_iter.deinit();
                 var wrapped_iter = try self.wrapped.iterator(true);
                 errdefer wrapped_iter.deinit();
@@ -451,27 +451,27 @@ pub const ReadOnlyDb = struct {
                 const overlay_first = try overlay_iter.next();
                 const wrapped_first = try wrapped_iter.next();
 
-                const ms_iter = allocator.create(MergeSortIterator) catch return error.OutOfMemory;
+                const ms_iter = ws.allocator.create(MergeSortIterator) catch return error.OutOfMemory;
                 ms_iter.* = .{
                     .overlay_iter = overlay_iter,
                     .wrapped_iter = wrapped_iter,
                     .overlay_current = overlay_first,
                     .wrapped_current = wrapped_first,
-                    .allocator = allocator,
+                    .allocator = ws.allocator,
                 };
                 return DbIterator.init(MergeSortIterator, ms_iter, MergeSortIterator.next, MergeSortIterator.deinit);
             }
             // Unordered: existing ReadOnlyIterator (two-phase overlay-then-wrapped).
-            var overlay_iter = try ov.database().iterator(false);
+            var overlay_iter = try ws.db.database().iterator(false);
             errdefer overlay_iter.deinit();
             var wrapped_iter = try self.wrapped.iterator(false);
             errdefer wrapped_iter.deinit();
 
-            const ro_iter = allocator.create(ReadOnlyIterator) catch return error.OutOfMemory;
+            const ro_iter = ws.allocator.create(ReadOnlyIterator) catch return error.OutOfMemory;
             ro_iter.* = .{
                 .overlay_iter = overlay_iter,
                 .wrapped_iter = wrapped_iter,
-                .allocator = allocator,
+                .allocator = ws.allocator,
             };
             return DbIterator.init(ReadOnlyIterator, ro_iter, ReadOnlyIterator.next, ReadOnlyIterator.deinit);
         }
@@ -480,12 +480,11 @@ pub const ReadOnlyDb = struct {
 
     fn snapshot_impl(self: *ReadOnlyDb) Error!DbSnapshot {
         var wrapped_snapshot = try self.wrapped.snapshot();
-        if (self.overlay) |ov| {
+        if (self.write_store) |ws| {
             errdefer wrapped_snapshot.deinit();
-            var overlay_snapshot = try ov.database().snapshot();
+            var overlay_snapshot = try ws.db.database().snapshot();
             errdefer overlay_snapshot.deinit();
-            const allocator = self.overlay_allocator orelse return error.OutOfMemory;
-            const ro_snapshot = try ReadOnlySnapshot.init(wrapped_snapshot, overlay_snapshot, allocator);
+            const ro_snapshot = try ReadOnlySnapshot.init(wrapped_snapshot, overlay_snapshot, ws.allocator);
             return ro_snapshot.snapshot();
         }
         return wrapped_snapshot;
@@ -533,7 +532,7 @@ pub const ReadOnlyDb = struct {
     const multi_get_stack_limit = 64;
 
     fn multi_get_impl(self: *ReadOnlyDb, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
-        if (self.overlay) |ov| {
+        if (self.write_store) |ws| {
             // Overlay merge pattern: check overlay first, collect misses,
             // then batch-fetch remaining keys from the wrapped database.
             // This preserves native MultiGet benefits (e.g., RocksDB batched I/O)
@@ -553,40 +552,29 @@ pub const ReadOnlyDb = struct {
                 miss_indices = stack_indices[0..keys.len];
                 miss_keys = stack_keys[0..keys.len];
                 miss_results = stack_results[0..keys.len];
-            } else if (self.overlay_allocator) |alloc| {
-                miss_indices = alloc.alloc(usize, keys.len) catch return error.OutOfMemory;
-                miss_keys = alloc.alloc([]const u8, keys.len) catch {
-                    alloc.free(miss_indices);
+            } else {
+                miss_indices = ws.allocator.alloc(usize, keys.len) catch return error.OutOfMemory;
+                miss_keys = ws.allocator.alloc([]const u8, keys.len) catch {
+                    ws.allocator.free(miss_indices);
                     return error.OutOfMemory;
                 };
-                miss_results = alloc.alloc(?DbValue, keys.len) catch {
-                    alloc.free(miss_keys);
-                    alloc.free(miss_indices);
+                miss_results = ws.allocator.alloc(?DbValue, keys.len) catch {
+                    ws.allocator.free(miss_keys);
+                    ws.allocator.free(miss_indices);
                     return error.OutOfMemory;
                 };
                 heap_allocated = true;
-            } else {
-                // No allocator and too many keys for stack — sequential fallback.
-                for (keys, 0..) |key, i| {
-                    if (ov.get_with_flags(key, flags)) |val| {
-                        results[i] = val;
-                    } else {
-                        results[i] = try self.wrapped.get_with_flags(key, flags);
-                    }
-                }
-                return;
             }
             defer if (heap_allocated) {
-                const alloc = self.overlay_allocator.?;
-                alloc.free(miss_results);
-                alloc.free(miss_keys);
-                alloc.free(miss_indices);
+                ws.allocator.free(miss_results);
+                ws.allocator.free(miss_keys);
+                ws.allocator.free(miss_indices);
             };
 
             // Pass 1: check overlay, collect miss indices.
             var miss_count: usize = 0;
             for (keys, 0..) |key, i| {
-                if (ov.get_with_flags(key, flags)) |val| {
+                if (ws.db.get_with_flags(key, flags)) |val| {
                     results[i] = val;
                 } else {
                     miss_indices[miss_count] = i;
