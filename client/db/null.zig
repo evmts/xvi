@@ -287,3 +287,37 @@ test "NullDb: multi_get with empty keys slice" {
     try iface.multi_get(keys, &results);
     // No crash, no errors — empty is a valid no-op.
 }
+
+// -- Sorted view tests (NullDb does NOT support sorted view) ------------------
+
+test "NullDb: supports_sorted_view returns false" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+    try std.testing.expect(!iface.supports_sorted_view());
+}
+
+test "NullDb: first_key returns UnsupportedOperation" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+    try std.testing.expectError(error.UnsupportedOperation, iface.first_key());
+}
+
+test "NullDb: last_key returns UnsupportedOperation" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+    try std.testing.expectError(error.UnsupportedOperation, iface.last_key());
+}
+
+test "NullDb: get_view_between returns UnsupportedOperation" {
+    var ndb = NullDb.init(.state);
+    defer ndb.deinit();
+
+    const iface = ndb.database();
+    try std.testing.expectError(error.UnsupportedOperation, iface.get_view_between(&[_]u8{0}, &[_]u8{9}));
+}
