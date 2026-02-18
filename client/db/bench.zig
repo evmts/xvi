@@ -1,4 +1,4 @@
-/// Benchmarks for the Database Abstraction Layer (DB-001).
+/// Benchmarks for the Database Abstraction Layer (DB-001, DB-004).
 ///
 /// Measures throughput and latency for:
 ///   1. MemoryDatabase put/get (sequential and random access)
@@ -11,6 +11,10 @@
 ///   8. Vtable dispatch overhead (direct vs interface)
 ///   9. Memory usage and arena allocation patterns
 ///  10. Simulated block state operations
+///  11. Merge operation throughput (DB-004: IMergeableKeyValueStore parity)
+///  12. WriteBatch merge accumulate + commit
+///  13. Merge vs put comparison (vtable dispatch parity)
+///  14. Mixed merge workload (Ethereum state update simulation)
 ///
 /// Run:
 ///   zig build bench-db                         # Debug mode
@@ -497,6 +501,309 @@ fn bench_block_state_ops() u64 {
 }
 
 // ============================================================================
+// Merge operation benchmarks (DB-004)
+// ============================================================================
+
+/// A Database backend that supports merge (simulates RocksDB merge operator).
+///
+/// This uses a MemoryDatabase under the hood, with the merge operation
+/// implemented as a read-modify-write (append value to existing).
+/// Real RocksDB avoids the read, but this measures the vtable dispatch
+/// overhead and WriteBatch integration faithfully.
+const MergeableDatabase = struct {
+    inner: MemoryDatabase,
+
+    fn init(allocator: std.mem.Allocator, db_name: adapter.DbName) MergeableDatabase {
+        return .{ .inner = MemoryDatabase.init(allocator, db_name) };
+    }
+
+    fn deinit(self: *MergeableDatabase) void {
+        self.inner.deinit();
+    }
+
+    fn name_impl(self: *MergeableDatabase) adapter.DbName {
+        return self.inner.name;
+    }
+
+    fn get_impl(self: *MergeableDatabase, key: []const u8, _: adapter.ReadFlags) Error!?DbValue {
+        return self.inner.get(key);
+    }
+
+    fn put_impl(self: *MergeableDatabase, key: []const u8, value: ?[]const u8, _: adapter.WriteFlags) Error!void {
+        if (value) |v| {
+            return self.inner.put(key, v);
+        } else {
+            return self.inner.delete(key);
+        }
+    }
+
+    fn delete_impl(self: *MergeableDatabase, key: []const u8, _: adapter.WriteFlags) Error!void {
+        return self.inner.delete(key);
+    }
+
+    fn contains_impl(self: *MergeableDatabase, key: []const u8) Error!bool {
+        return self.inner.contains(key);
+    }
+
+    fn iterator_impl(_: *MergeableDatabase, _: bool) Error!adapter.DbIterator {
+        return error.UnsupportedOperation;
+    }
+
+    fn snapshot_impl(_: *MergeableDatabase) Error!adapter.DbSnapshot {
+        return error.UnsupportedOperation;
+    }
+
+    fn flush_impl(_: *MergeableDatabase, _: bool) Error!void {}
+    fn clear_impl(_: *MergeableDatabase) Error!void {}
+    fn compact_impl(_: *MergeableDatabase) Error!void {}
+
+    fn gather_metric_impl(_: *MergeableDatabase) Error!adapter.DbMetric {
+        return .{};
+    }
+
+    /// Merge implementation: simulates RocksDB merge by overwriting.
+    /// In a real RocksDB backend, this would be a single `rocksdb_merge()` call
+    /// without reading first. Here we just write (overwrite semantics) to measure
+    /// pure vtable dispatch + arena copy overhead.
+    fn merge_impl(self: *MergeableDatabase, key: []const u8, value: []const u8, _: adapter.WriteFlags) Error!void {
+        return self.inner.put(key, value);
+    }
+
+    /// write_batch implementation for atomic path testing.
+    fn write_batch_impl(self: *MergeableDatabase, ops: []const adapter.WriteBatchOp) Error!void {
+        for (ops) |op| {
+            switch (op) {
+                .put => |p| try self.inner.put(p.key, p.value),
+                .del => |d| try self.inner.delete(d.key),
+                .merge => |m| try self.inner.put(m.key, m.value),
+            }
+        }
+    }
+
+    fn database(self: *MergeableDatabase) Database {
+        return Database.init(MergeableDatabase, self, .{
+            .name = name_impl,
+            .get = get_impl,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_impl,
+            .iterator = iterator_impl,
+            .snapshot = snapshot_impl,
+            .flush = flush_impl,
+            .clear = clear_impl,
+            .compact = compact_impl,
+            .gather_metric = gather_metric_impl,
+            .write_batch = write_batch_impl,
+            .merge = merge_impl,
+        });
+    }
+};
+
+/// Benchmark: Direct merge — call merge N times on a mergeable database.
+/// Measures vtable dispatch + arena overhead for the merge path.
+fn bench_merge_direct(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    // Warmup
+    for (0..WARMUP_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        for (0..n) |i| {
+            iface.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        db.deinit();
+    }
+
+    // Timed
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            iface.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        total_ns += timer.read();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Merge vs put comparison.
+/// Measures identical workloads to verify merge has no extra overhead
+/// beyond the nullable vtable function pointer check.
+fn bench_merge_vs_put(n: usize) struct { put_ns: u64, merge_ns: u64 } {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    // Put path
+    var put_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            iface.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        put_total += timer.read();
+        db.deinit();
+    }
+
+    // Merge path
+    var merge_total: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            iface.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        merge_total += timer.read();
+        db.deinit();
+    }
+
+    return .{
+        .put_ns = put_total / BENCH_ITERS,
+        .merge_ns = merge_total / BENCH_ITERS,
+    };
+}
+
+/// Benchmark: WriteBatch with merge operations.
+/// Measures arena copy overhead for merge ops in WriteBatch + atomic commit.
+fn bench_write_batch_merge(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var batch = WriteBatch.init(std.heap.page_allocator, iface);
+
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            batch.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+        }
+        batch.commit() catch unreachable;
+        total_ns += timer.read();
+
+        batch.deinit();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: WriteBatch mixed put+merge+delete.
+/// Simulates a real Ethereum state update pattern: some values are put
+/// directly, some use merge (append-style), some are deleted.
+/// Ratio: 50% put, 30% merge, 20% delete.
+fn bench_write_batch_mixed(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var batch = WriteBatch.init(std.heap.page_allocator, iface);
+
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..n) |i| {
+            const pct = i % 10;
+            if (pct < 5) {
+                // 50% puts
+                batch.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+            } else if (pct < 8) {
+                // 30% merges
+                batch.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+            } else {
+                // 20% deletes
+                batch.delete(make_key(&key_buf, i)) catch unreachable;
+            }
+        }
+        batch.commit() catch unreachable;
+        total_ns += timer.read();
+
+        batch.deinit();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Merge arena allocation overhead.
+/// Measures peak memory for N merge operations accumulated in a WriteBatch.
+fn bench_merge_memory(n: usize) struct { elapsed_ns: u64, peak_bytes: usize } {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
+    defer _ = gpa.deinit();
+
+    // Use a separate arena for the MergeableDatabase backend so we only measure
+    // the WriteBatch arena allocation.
+    var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+
+    const iface = db.database();
+    var batch = WriteBatch.init(gpa.allocator(), iface);
+    defer batch.deinit();
+
+    var timer = std.time.Timer.start() catch unreachable;
+    for (0..n) |i| {
+        batch.merge(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+    const elapsed = timer.read();
+    const total_allocated = gpa.total_requested_bytes;
+
+    return .{ .elapsed_ns = elapsed, .peak_bytes = total_allocated };
+}
+
+/// Benchmark: Simulated block state with merge ops.
+/// 200 txs × (2 account reads + 3 storage puts + 2 merge updates + 5 storage reads)
+/// = 2400 ops, with ~17% being merge operations (mirrors real-world state diffs).
+fn bench_block_state_with_merge() u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    const txs_per_block: usize = 200;
+    const storage_puts_per_tx: usize = 3;
+    const merge_updates_per_tx: usize = 2;
+    const storage_reads_per_tx: usize = 5;
+    const account_reads_per_tx: usize = 2;
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..txs_per_block) |tx| {
+            // Account reads
+            for (0..account_reads_per_tx) |a| {
+                const val = iface.get(make_key(&key_buf, tx * 100 + a)) catch unreachable;
+                if (val) |v| v.release();
+            }
+            // Storage puts
+            for (0..storage_puts_per_tx) |s| {
+                iface.put(make_key(&key_buf, tx * 100 + 10 + s), make_value(&val_buf, tx * s)) catch unreachable;
+            }
+            // Merge updates (state diffs)
+            for (0..merge_updates_per_tx) |m| {
+                iface.merge(make_key(&key_buf, tx * 100 + 20 + m), make_value(&val_buf, tx * m)) catch unreachable;
+            }
+            // Storage reads
+            for (0..storage_reads_per_tx) |s| {
+                const val = iface.get(make_key(&key_buf, tx * 100 + 10 + s)) catch unreachable;
+                if (val) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+// ============================================================================
 // Main benchmark entry point
 // ============================================================================
 
@@ -697,6 +1004,141 @@ pub fn main() !void {
             std.debug.print("  Status: FAIL - DB layer alone cannot keep up!\n", .{});
         }
     }
+    std.debug.print("\n", .{});
+
+    // ================================================================
+    // DB-004: Merge Operation Benchmarks
+    // ================================================================
+    std.debug.print("=" ** 100 ++ "\n", .{});
+    std.debug.print("  DB-004: Merge Operation Benchmarks (IMergeableKeyValueStore parity)\n", .{});
+    std.debug.print("=" ** 100 ++ "\n\n", .{});
+
+    // -- Direct Merge --
+    std.debug.print("--- Merge: Direct Vtable Dispatch ---\n", .{});
+    for ([_]struct { n: usize, label: []const u8 }{
+        .{ .n = SMALL_N, .label = "merge direct (1K keys, 32B each)" },
+        .{ .n = MEDIUM_N, .label = "merge direct (10K keys, 32B each)" },
+        .{ .n = LARGE_N, .label = "merge direct (100K keys, 32B each)" },
+    }) |s| {
+        print_result(result(s.label, s.n, bench_merge_direct(s.n)));
+    }
+    std.debug.print("\n", .{});
+
+    // -- Merge vs Put Comparison --
+    std.debug.print("--- Merge vs Put: Vtable Dispatch Parity ---\n", .{});
+    for ([_]struct { n: usize, label: []const u8 }{
+        .{ .n = MEDIUM_N, .label = "merge vs put (10K ops)" },
+        .{ .n = LARGE_N, .label = "merge vs put (100K ops)" },
+    }) |s| {
+        const r = bench_merge_vs_put(s.n);
+        const put_per_op = if (s.n > 0) r.put_ns / s.n else 0;
+        const merge_per_op = if (s.n > 0) r.merge_ns / s.n else 0;
+        const overhead_pct = if (r.put_ns > 0)
+            (@as(f64, @floatFromInt(r.merge_ns)) / @as(f64, @floatFromInt(r.put_ns)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  {s:<55} put={s}  merge={s}  overhead={d:.1}%%\n", .{
+            s.label,
+            &format_ns(put_per_op),
+            &format_ns(merge_per_op),
+            overhead_pct,
+        });
+    }
+    std.debug.print("\n", .{});
+
+    // -- WriteBatch Merge --
+    std.debug.print("--- WriteBatch: Merge Accumulate + Atomic Commit ---\n", .{});
+    for ([_]struct { n: usize, label: []const u8 }{
+        .{ .n = SMALL_N, .label = "batch merge commit (1K ops)" },
+        .{ .n = MEDIUM_N, .label = "batch merge commit (10K ops)" },
+    }) |s| {
+        print_result(result(s.label, s.n, bench_write_batch_merge(s.n)));
+    }
+    std.debug.print("\n", .{});
+
+    // -- WriteBatch Mixed --
+    std.debug.print("--- WriteBatch: Mixed put/merge/delete (50/30/20) ---\n", .{});
+    for ([_]struct { n: usize, label: []const u8 }{
+        .{ .n = SMALL_N, .label = "batch mixed commit (1K ops)" },
+        .{ .n = MEDIUM_N, .label = "batch mixed commit (10K ops)" },
+    }) |s| {
+        print_result(result(s.label, s.n, bench_write_batch_mixed(s.n)));
+    }
+    std.debug.print("\n", .{});
+
+    // -- Merge Memory Usage --
+    std.debug.print("--- Merge: WriteBatch Arena Allocation ---\n", .{});
+    for ([_]usize{ 100, 1_000, 10_000, 100_000 }) |n| {
+        const r = bench_merge_memory(n);
+        const bytes_per_entry = if (n > 0) r.peak_bytes / n else 0;
+        // Each merge op in WriteBatch: 32 key + 32 value + ~24 (tagged union + 2 slice headers)
+        // Plus ops ArrayList overhead (~8 bytes/entry for pointer to tagged union)
+        const theoretical_min: usize = 96 * n;
+        const overhead_pct = if (theoretical_min > 0)
+            (@as(f64, @floatFromInt(r.peak_bytes)) / @as(f64, @floatFromInt(theoretical_min)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  {d:>8} merge ops: {d:>10} bytes ({d} bytes/op, {d:.1}%% overhead vs ~96B theoretical)\n", .{
+            n, r.peak_bytes, bytes_per_entry, overhead_pct,
+        });
+    }
+    std.debug.print("\n", .{});
+
+    // -- Block Processing with Merge --
+    std.debug.print("--- Block State Operations with Merge (DB-004) ---\n", .{});
+    std.debug.print("  (200 txs/block, 2 acct reads + 3 storage puts + 2 merges + 5 storage reads per tx)\n", .{});
+    {
+        const elapsed = bench_block_state_with_merge();
+        const elapsed_str = format_ns(elapsed);
+        const blocks_per_sec = if (elapsed > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(elapsed))
+        else
+            0.0;
+        const ops_per_block: usize = 200 * (2 + 3 + 2 + 5);
+        const ops_per_sec = blocks_per_sec * @as(f64, @floatFromInt(ops_per_block));
+
+        std.debug.print("  Block DB time (w/ merge):     {s}\n", .{&elapsed_str});
+        std.debug.print("  Block throughput:              {d:.0} blocks/s\n", .{blocks_per_sec});
+        std.debug.print("  DB ops/block:                  ~{d} ({d} merge)\n", .{ ops_per_block, 200 * 2 });
+        std.debug.print("  DB ops/sec:                    {d:.0} ({d:.2} M ops/s)\n", .{ ops_per_sec, ops_per_sec / 1e6 });
+    }
+    std.debug.print("\n", .{});
+
+    // -- Merge Throughput Analysis --
+    std.debug.print("--- Merge Throughput Analysis vs Nethermind Target ---\n", .{});
+    {
+        const block_elapsed = bench_block_state_with_merge();
+        const blocks_per_sec = if (block_elapsed > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(block_elapsed))
+        else
+            0.0;
+        const effective_mgas = blocks_per_sec * 30.0;
+
+        std.debug.print("  Block DB time (w/ merge):      {s}\n", .{&format_ns(block_elapsed)});
+        std.debug.print("  Block throughput:               {d:.0} blocks/s\n", .{blocks_per_sec});
+        std.debug.print("  Effective MGas/s (DB only):     {d:.0} MGas/s\n", .{effective_mgas});
+        std.debug.print("  Nethermind target:              700 MGas/s\n", .{});
+        std.debug.print("  Required blocks/s for target:   ~23 blocks/s (30M gas/block)\n", .{});
+
+        const comfortable = blocks_per_sec >= 2300.0;
+        const meets_target = blocks_per_sec >= 23.0;
+
+        if (comfortable) {
+            std.debug.print("  Status: PASS - merge adds negligible overhead (<1%% of budget)\n", .{});
+        } else if (meets_target) {
+            std.debug.print("  Status: PASS - meets target but merge overhead notable\n", .{});
+        } else {
+            std.debug.print("  Status: FAIL - merge overhead exceeds budget!\n", .{});
+        }
+
+        // Compare with baseline (no merge)
+        const baseline_elapsed = bench_block_state_ops();
+        const merge_overhead_pct = if (baseline_elapsed > 0)
+            (@as(f64, @floatFromInt(block_elapsed)) / @as(f64, @floatFromInt(baseline_elapsed)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  Merge overhead vs baseline:    {d:.1}%%\n", .{merge_overhead_pct});
+    }
 
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
     std.debug.print("  Notes:\n", .{});
@@ -704,6 +1146,8 @@ pub fn main() !void {
     std.debug.print("  - No heap allocations in hot read path (get returns borrowed slice)\n", .{});
     std.debug.print("  - ReadOnlyDb strict mode: zero extra allocation (no overlay) — DB-001 fix\n", .{});
     std.debug.print("  - ReadOnlyDb overlay mode: writes buffered in separate MemoryDatabase\n", .{});
+    std.debug.print("  - Merge vtable dispatch: nullable fn ptr check + same path as put (DB-004)\n", .{});
+    std.debug.print("  - WriteBatch merge: arena-copies key+value, same allocation pattern as put\n", .{});
     std.debug.print("  - For accurate numbers: zig build bench-db -Doptimize=ReleaseFast\n", .{});
     std.debug.print("=" ** 100 ++ "\n\n", .{});
 }
