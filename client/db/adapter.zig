@@ -747,6 +747,8 @@ pub const WriteBatchOp = union(enum) {
         key: []const u8,
         /// The merge operand value. Owned by the `WriteBatch` arena.
         value: []const u8,
+        /// Write flags for this merge operation (e.g., low_priority, disable_wal).
+        flags: WriteFlags = WriteFlags.none,
     },
 };
 
@@ -817,17 +819,27 @@ pub const WriteBatch = struct {
         self.ops.append(self.ops_allocator, .{ .del = .{ .key = owned_key } }) catch return error.OutOfMemory;
     }
 
-    /// Queue a merge operation. Both key and value are copied into the batch arena.
+    /// Queue a merge operation with default write flags.
+    /// Both key and value are copied into the batch arena.
     ///
     /// The merge will be applied when `commit()` is called. If the target database
     /// does not support merge, `commit()` will return `error.UnsupportedOperation`
     /// when it reaches this operation (via the sequential fallback path) or the
     /// backend must handle `.merge` variants in its `write_batch` implementation.
     pub fn merge(self: *WriteBatch, key: []const u8, value: []const u8) Error!void {
+        return self.merge_with_flags(key, value, WriteFlags.none);
+    }
+
+    /// Queue a merge operation with explicit write flags.
+    /// Both key and value are copied into the batch arena.
+    ///
+    /// Mirrors Nethermind's `IWriteBatch` inheriting `IMergeableKeyValueStore`'s
+    /// full `Merge(key, value, flags)` signature.
+    pub fn merge_with_flags(self: *WriteBatch, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
         const alloc = self.arena.allocator();
         const owned_key = alloc.dupe(u8, key) catch return error.OutOfMemory;
         const owned_val = alloc.dupe(u8, value) catch return error.OutOfMemory;
-        self.ops.append(self.ops_allocator, .{ .merge = .{ .key = owned_key, .value = owned_val } }) catch return error.OutOfMemory;
+        self.ops.append(self.ops_allocator, .{ .merge = .{ .key = owned_key, .value = owned_val, .flags = flags } }) catch return error.OutOfMemory;
     }
 
     /// Apply all pending operations to the target database.
@@ -856,7 +868,7 @@ pub const WriteBatch = struct {
                 switch (op) {
                     .put => |p| try self.target.put(p.key, p.value),
                     .del => |d| try self.target.delete(d.key),
-                    .merge => |m| try self.target.merge_with_flags(m.key, m.value, WriteFlags.none),
+                    .merge => |m| try self.target.merge_with_flags(m.key, m.value, m.flags),
                 }
             }
         }
@@ -1871,15 +1883,20 @@ test "Database merge_with_flags forwards flags" {
     try std.testing.expectEqual(WriteFlags.low_priority_and_no_wal, tracker.last_flags.?);
 }
 
-test "WriteBatchOp merge variant holds key and value" {
+test "WriteBatchOp merge variant holds key, value, and flags" {
     const op = WriteBatchOp{ .merge = .{ .key = "hello", .value = "world" } };
     switch (op) {
         .merge => |m| {
             try std.testing.expectEqualStrings("hello", m.key);
             try std.testing.expectEqualStrings("world", m.value);
+            try std.testing.expectEqual(WriteFlags.none, m.flags);
         },
         else => return error.UnsupportedOperation,
     }
+
+    // With explicit flags
+    const op2 = WriteBatchOp{ .merge = .{ .key = "k", .value = "v", .flags = WriteFlags.disable_wal } };
+    try std.testing.expectEqual(WriteFlags.disable_wal, op2.merge.flags);
 }
 
 test "WriteBatch merge accumulates operations" {
@@ -1988,6 +2005,50 @@ test "WriteBatch commit with merge ops via atomic path" {
     // All 3 ops committed atomically via write_batch
     try std.testing.expectEqual(@as(usize, 3), atomic.committed_count);
     try std.testing.expectEqual(@as(usize, 0), batch.pending());
+}
+
+test "WriteBatch merge_with_flags forwards flags via fallback path" {
+    const MergeFlagsDb = struct {
+        last_flags: ?WriteFlags = null,
+
+        fn merge_impl(ptr: *anyopaque, _: []const u8, _: []const u8, flags: WriteFlags) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.last_flags = flags;
+        }
+
+        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+
+        const vtable = Database.VTable{
+            .name = name_default,
+            .get = get_null,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_false,
+            .iterator = iterator_unsupported,
+            .snapshot = snapshot_unsupported,
+            .flush = flush_noop,
+            .clear = clear_noop,
+            .compact = compact_noop,
+            .gather_metric = gather_metric_zero,
+            // No write_batch — forces fallback path
+            .merge = merge_impl,
+        };
+
+        fn database(self: *@This()) Database {
+            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+        }
+    };
+
+    var merge_db = MergeFlagsDb{};
+
+    var batch = WriteBatch.init(std.testing.allocator, merge_db.database());
+    defer batch.deinit();
+
+    try batch.merge_with_flags("k", "v", WriteFlags.low_priority_and_no_wal);
+    try batch.commit();
+
+    try std.testing.expectEqual(WriteFlags.low_priority_and_no_wal, merge_db.last_flags.?);
 }
 
 test "WriteBatch merge propagates OutOfMemory" {
