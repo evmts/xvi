@@ -1035,6 +1035,123 @@ test "ReadOnlyDb: iterator ordered merges overlay and wrapped in key order" {
     try std.testing.expect((try it.next()) == null);
 }
 
+test "ReadOnlyDb: iterator ordered with empty overlay yields wrapped entries in order" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+    try mem.put("b", "2");
+    try mem.put("a", "1");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+    // Overlay is empty — all entries come from wrapped
+
+    var it = try ro.database().iterator(true);
+    defer it.deinit();
+
+    const e1 = (try it.next()).?;
+    defer e1.release();
+    try std.testing.expectEqualStrings("a", e1.key.bytes);
+
+    const e2 = (try it.next()).?;
+    defer e2.release();
+    try std.testing.expectEqualStrings("b", e2.key.bytes);
+
+    try std.testing.expect((try it.next()) == null);
+}
+
+test "ReadOnlyDb: iterator ordered with empty wrapped yields overlay entries in order" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+    // Wrapped is empty
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+    const iface = ro.database();
+    try iface.put("z", "26");
+    try iface.put("a", "1");
+
+    var it = try iface.iterator(true);
+    defer it.deinit();
+
+    const e1 = (try it.next()).?;
+    defer e1.release();
+    try std.testing.expectEqualStrings("a", e1.key.bytes);
+
+    const e2 = (try it.next()).?;
+    defer e2.release();
+    try std.testing.expectEqualStrings("z", e2.key.bytes);
+
+    try std.testing.expect((try it.next()) == null);
+}
+
+test "ReadOnlyDb: iterator ordered with both empty returns null immediately" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+
+    var it = try ro.database().iterator(true);
+    defer it.deinit();
+
+    try std.testing.expect((try it.next()) == null);
+}
+
+test "ReadOnlyDb: iterator ordered all duplicate keys yields overlay values" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+    try mem.put("x", "wrapped_x");
+    try mem.put("y", "wrapped_y");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+    const iface = ro.database();
+    try iface.put("x", "overlay_x");
+    try iface.put("y", "overlay_y");
+
+    var it = try iface.iterator(true);
+    defer it.deinit();
+
+    const e1 = (try it.next()).?;
+    defer e1.release();
+    try std.testing.expectEqualStrings("x", e1.key.bytes);
+    try std.testing.expectEqualStrings("overlay_x", e1.value.bytes);
+
+    const e2 = (try it.next()).?;
+    defer e2.release();
+    try std.testing.expectEqualStrings("y", e2.key.bytes);
+    try std.testing.expectEqualStrings("overlay_y", e2.value.bytes);
+
+    try std.testing.expect((try it.next()) == null);
+}
+
+test "ReadOnlyDb: iterator ordered deinit frees all resources (leak check)" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+    try mem.put("a", "val_a_with_some_length");
+    try mem.put("b", "val_b_with_some_length");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+    const iface = ro.database();
+    try iface.put("b", "overlay_b_with_some_length");
+    try iface.put("c", "overlay_c_with_some_length");
+
+    // Create and immediately deinit without consuming — must not leak
+    {
+        var it = try iface.iterator(true);
+        it.deinit();
+    }
+
+    // Create, partially consume, then deinit — must not leak
+    {
+        var it2 = try iface.iterator(true);
+        const e1 = try it2.next();
+        if (e1) |e| e.release();
+        it2.deinit();
+    }
+}
+
 test "ReadOnlyDb: snapshot captures overlay and wrapped state" {
     var mem = MemoryDatabase.init(std.testing.allocator, .state);
     defer mem.deinit();
