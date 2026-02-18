@@ -258,6 +258,72 @@ pub const ReadOnlyDb = struct {
         }
     };
 
+    /// Merge-sort iterator that yields entries from both overlay and wrapped DB
+    /// in lexicographic key order, deduplicating with overlay precedence.
+    ///
+    /// Both sub-iterators produce entries in sorted order. This performs an O(n+m)
+    /// merge: it pre-fetches one entry from each sub-iterator and on each `next()`
+    /// call yields the smaller key, advancing that sub-iterator. When keys are
+    /// equal, the overlay entry wins (consistent with `get()` semantics and
+    /// Nethermind's `.Union()` precedence) and the wrapped entry is released.
+    ///
+    /// Mirrors Nethermind's `ReadOnlyDb.GetAll()` which uses
+    /// `_memDb.GetAll().Union(wrappedDb.GetAll())` — LINQ `Union` deduplicates
+    /// with first-source precedence (memDb).
+    const MergeSortIterator = struct {
+        overlay_iter: DbIterator,
+        wrapped_iter: DbIterator,
+        overlay_current: ?DbEntry,
+        wrapped_current: ?DbEntry,
+        allocator: std.mem.Allocator,
+
+        fn next(self: *MergeSortIterator) Error!?DbEntry {
+            const ov = self.overlay_current;
+            const wr = self.wrapped_current;
+
+            if (ov) |ov_entry| {
+                if (wr) |wr_entry| {
+                    // Both have entries — compare keys.
+                    const cmp = Bytes.compare(ov_entry.key.bytes, wr_entry.key.bytes);
+                    if (cmp < 0) {
+                        // Overlay key is smaller — yield overlay, advance overlay.
+                        self.overlay_current = try self.overlay_iter.next();
+                        return ov_entry;
+                    } else if (cmp > 0) {
+                        // Wrapped key is smaller — yield wrapped, advance wrapped.
+                        self.wrapped_current = try self.wrapped_iter.next();
+                        return wr_entry;
+                    } else {
+                        // Equal keys — overlay wins (precedence), release wrapped.
+                        wr_entry.release();
+                        self.overlay_current = try self.overlay_iter.next();
+                        self.wrapped_current = try self.wrapped_iter.next();
+                        return ov_entry;
+                    }
+                } else {
+                    // Only overlay has an entry.
+                    self.overlay_current = try self.overlay_iter.next();
+                    return ov_entry;
+                }
+            } else if (wr) |wr_entry| {
+                // Only wrapped has an entry.
+                self.wrapped_current = try self.wrapped_iter.next();
+                return wr_entry;
+            }
+            // Both exhausted.
+            return null;
+        }
+
+        fn deinit(self: *MergeSortIterator) void {
+            // Release any buffered entries that were pre-fetched but not yielded.
+            if (self.overlay_current) |entry| entry.release();
+            if (self.wrapped_current) |entry| entry.release();
+            self.overlay_iter.deinit();
+            self.wrapped_iter.deinit();
+            self.allocator.destroy(self);
+        }
+    };
+
     const ReadOnlySnapshot = struct {
         wrapped: DbSnapshot,
         overlay: ?DbSnapshot,
