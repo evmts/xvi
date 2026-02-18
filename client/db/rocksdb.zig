@@ -112,74 +112,68 @@ pub const RocksDatabase = struct {
 
     /// Return a `Database` vtable interface backed by this RocksDatabase.
     pub fn database(self: *RocksDatabase) Database {
-        return .{
-            .ptr = @ptrCast(self),
-            .vtable = &vtable,
-        };
+        return Database.init(RocksDatabase, self, .{
+            .name = name_impl,
+            .get = get_impl,
+            .put = put_impl,
+            .delete = delete_impl,
+            .contains = contains_impl,
+            .iterator = iterator_impl,
+            .snapshot = snapshot_impl,
+            .flush = flush_impl,
+            .clear = clear_impl,
+            .compact = compact_impl,
+            .gather_metric = gather_metric_impl,
+        });
     }
 
     // -- VTable implementation (stub — all ops error) -------------------------
 
-    const vtable = Database.VTable{
-        .name = name_impl,
-        .get = get_impl,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_impl,
-        .iterator = iterator_impl,
-        .snapshot = snapshot_impl,
-        .flush = flush_impl,
-        .clear = clear_impl,
-        .compact = compact_impl,
-        .gather_metric = gather_metric_impl,
-    };
-
-    fn name_impl(ptr: *anyopaque) DbName {
-        const self: *RocksDatabase = @ptrCast(@alignCast(ptr));
+    fn name_impl(self: *RocksDatabase) DbName {
         return self.name;
     }
 
-    fn get_impl(_: *anyopaque, _: []const u8, _: ReadFlags) Error!?DbValue {
+    fn get_impl(_: *RocksDatabase, _: []const u8, _: ReadFlags) Error!?DbValue {
         // Stub: RocksDB backend not implemented yet.
         return error.StorageError;
     }
 
-    fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
+    fn put_impl(_: *RocksDatabase, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {
         // Stub: RocksDB backend not implemented yet.
         return error.StorageError;
     }
 
-    fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {
+    fn delete_impl(_: *RocksDatabase, _: []const u8, _: WriteFlags) Error!void {
         // Stub: RocksDB backend not implemented yet.
         return error.StorageError;
     }
 
-    fn contains_impl(_: *anyopaque, _: []const u8) Error!bool {
+    fn contains_impl(_: *RocksDatabase, _: []const u8) Error!bool {
         // Stub: RocksDB backend not implemented yet.
         return error.StorageError;
     }
 
-    fn iterator_impl(_: *anyopaque, _: bool) Error!adapter.DbIterator {
+    fn iterator_impl(_: *RocksDatabase, _: bool) Error!adapter.DbIterator {
         return error.StorageError;
     }
 
-    fn snapshot_impl(_: *anyopaque) Error!DbSnapshot {
+    fn snapshot_impl(_: *RocksDatabase) Error!DbSnapshot {
         return error.StorageError;
     }
 
-    fn flush_impl(_: *anyopaque, _: bool) Error!void {
+    fn flush_impl(_: *RocksDatabase, _: bool) Error!void {
         return error.StorageError;
     }
 
-    fn clear_impl(_: *anyopaque) Error!void {
+    fn clear_impl(_: *RocksDatabase) Error!void {
         return error.StorageError;
     }
 
-    fn compact_impl(_: *anyopaque) Error!void {
+    fn compact_impl(_: *RocksDatabase) Error!void {
         return error.StorageError;
     }
 
-    fn gather_metric_impl(_: *anyopaque) Error!DbMetric {
+    fn gather_metric_impl(_: *RocksDatabase) Error!DbMetric {
         return error.StorageError;
     }
 };
