@@ -506,22 +506,35 @@ pub const ReadOnlyDb = struct {
 
     /// Forward first_key to the wrapped database.
     ///
-    /// Sorted view operations are read-only, so they always delegate to
-    /// the wrapped database (bypassing any overlay). Mirrors Nethermind's
-    /// `ColumnDb.FirstKey` which delegates to `_reader`.
+    /// **Limitation:** This does NOT account for overlay entries. If the
+    /// overlay contains a key that is lexicographically smaller than the
+    /// wrapped database's first key, this method will still return the
+    /// wrapped key. This is acceptable because:
+    /// - Nethermind's `ReadOnlyDb` does not implement `ISortedKeyValueStore`
+    ///   at all (only `DbOnTheRocks` does).
+    /// - Sorted views are used for range scans over persistent storage (e.g.,
+    ///   trie node enumeration), not over temporary overlay state.
+    /// - Callers needing overlay-aware sorted iteration should use
+    ///   `iterator(true)` which provides proper merge-sort over both sources.
     fn first_key_impl(self: *ReadOnlyDb) Error!?DbValue {
         return self.wrapped.first_key();
     }
 
     /// Forward last_key to the wrapped database.
+    ///
+    /// **Limitation:** Does NOT account for overlay entries. See
+    /// `first_key_impl` for rationale.
     fn last_key_impl(self: *ReadOnlyDb) Error!?DbValue {
         return self.wrapped.last_key();
     }
 
     /// Forward get_view_between to the wrapped database.
     ///
-    /// Mirrors Nethermind's `ColumnDb.GetViewBetween()` which delegates to
-    /// `_mainDb.GetViewBetween()`.
+    /// **Limitation:** Does NOT account for overlay entries. The returned
+    /// view will only contain entries from the wrapped database within the
+    /// specified key range. Overlay entries in that range are excluded.
+    /// See `first_key_impl` for rationale. Use `iterator(true)` for
+    /// overlay-aware ordered iteration over the full key space.
     fn get_view_between_impl(self: *ReadOnlyDb, first_inclusive: []const u8, last_exclusive: []const u8) Error!SortedView {
         return self.wrapped.get_view_between(first_inclusive, last_exclusive);
     }
