@@ -34,6 +34,7 @@ const DbSnapshot = adapter.DbSnapshot;
 const DbValue = adapter.DbValue;
 const Error = adapter.Error;
 const ReadFlags = adapter.ReadFlags;
+const SortedView = adapter.SortedView;
 const WriteFlags = adapter.WriteFlags;
 const Bytes = primitives.Bytes;
 
@@ -223,6 +224,101 @@ pub const MemoryDatabase = struct {
         }
 
         fn deinit(self: *OrderedIterator) void {
+            self.allocator.free(self.entries);
+            self.allocator.destroy(self);
+        }
+    };
+
+    /// Sorted view over a range-filtered, sorted slice of `DbEntry` values.
+    ///
+    /// Mirrors Nethermind's `RocksdbSortedView` — provides cursor-style iteration
+    /// over entries in lexicographic key order within a range.
+    ///
+    /// The entries slice is owned by this struct and freed on `deinit`.
+    /// Entry key/value bytes are borrowed from the parent database's arena and
+    /// must remain valid for the lifetime of this view.
+    const MemorySortedView = struct {
+        /// Sorted, range-filtered entries (owned by this view).
+        entries: []DbEntry,
+        /// Current position. When `started` is false and `started_before` is
+        /// false, the first `move_next` call will return entries[0].
+        index: usize = 0,
+        /// Whether iteration has begun (first move_next or start_before called).
+        started: bool = false,
+        /// Whether `start_before` was called.
+        started_before: bool = false,
+        /// Allocator used to free `entries` and self.
+        allocator: std.mem.Allocator,
+
+        /// Seek to the position just before `value` in sorted order.
+        ///
+        /// Uses binary search to find the largest key ≤ `value`.
+        /// Can only be called once, before iteration starts.
+        /// Mirrors Nethermind's `RocksdbSortedView.StartBefore(value)` which
+        /// calls `iterator.SeekForPrev(value)`.
+        fn start_before(self: *MemorySortedView, value: []const u8) Error!bool {
+            if (self.started) return error.StorageError; // Already started
+            self.started = true;
+            self.started_before = true;
+
+            if (self.entries.len == 0) return false;
+
+            // Binary search: find the largest key ≤ value.
+            // We search for the first key > value, then step back.
+            var low: usize = 0;
+            var high: usize = self.entries.len;
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                if (Bytes.compare(self.entries[mid].key.bytes, value) <= 0) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            // `low` is now the index of the first key > value.
+            // The largest key ≤ value is at `low - 1`.
+            if (low == 0) {
+                // All keys are > value — no position before value.
+                self.index = 0;
+                return false;
+            }
+            self.index = low - 1;
+            return true;
+        }
+
+        /// Advance to the next entry. Returns null when exhausted.
+        ///
+        /// On first call (without `start_before`), returns the first entry.
+        /// After `start_before`, the first `move_next` advances past the
+        /// `start_before` position and returns the next entry.
+        ///
+        /// Mirrors Nethermind's `RocksdbSortedView.MoveNext()`.
+        fn move_next(self: *MemorySortedView) Error!?DbEntry {
+            if (!self.started) {
+                // First call without start_before — seek to first entry.
+                self.started = true;
+                if (self.entries.len == 0) return null;
+                self.index = 0;
+                return self.entries[0];
+            }
+
+            if (self.started_before) {
+                // First move_next after start_before: advance past the
+                // start_before position.
+                self.started_before = false;
+                self.index += 1;
+                if (self.index >= self.entries.len) return null;
+                return self.entries[self.index];
+            }
+
+            // Subsequent calls: advance to next entry.
+            self.index += 1;
+            if (self.index >= self.entries.len) return null;
+            return self.entries[self.index];
+        }
+
+        /// Release all resources held by this view.
+        fn deinit_impl(self: *MemorySortedView) void {
             self.allocator.free(self.entries);
             self.allocator.destroy(self);
         }
@@ -854,4 +950,115 @@ test "MemoryDatabase: multi_get via vtable interface" {
     try std.testing.expect(results[1] == null);
     try std.testing.expect(results[2] != null);
     try std.testing.expectEqualStrings("value3", results[2].?.bytes);
+}
+
+// -- MemorySortedView tests --------------------------------------------------
+
+test "MemorySortedView: iterate all entries" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 3);
+
+    entries[0] = .{ .key = DbValue.borrowed("aaa"), .value = DbValue.borrowed("111") };
+    entries[1] = .{ .key = DbValue.borrowed("bbb"), .value = DbValue.borrowed("222") };
+    entries[2] = .{ .key = DbValue.borrowed("ccc"), .value = DbValue.borrowed("333") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", first.key.bytes);
+    try std.testing.expectEqualStrings("111", first.value.bytes);
+
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", second.key.bytes);
+
+    const third = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", third.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemorySortedView: start_before seeks correctly" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 3);
+
+    entries[0] = .{ .key = DbValue.borrowed("aaa"), .value = DbValue.borrowed("111") };
+    entries[1] = .{ .key = DbValue.borrowed("bbb"), .value = DbValue.borrowed("222") };
+    entries[2] = .{ .key = DbValue.borrowed("ccc"), .value = DbValue.borrowed("333") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    // start_before "bbb" should find "bbb" (largest key <= "bbb")
+    const found = try view.start_before("bbb");
+    try std.testing.expect(found);
+
+    // move_next after start_before should advance past "bbb" to "ccc"
+    const entry = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", entry.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemorySortedView: deinit frees memory (leak check)" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 2);
+
+    entries[0] = .{ .key = DbValue.borrowed("a"), .value = DbValue.borrowed("1") };
+    entries[1] = .{ .key = DbValue.borrowed("b"), .value = DbValue.borrowed("2") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+
+    // If deinit doesn't free properly, testing allocator will report a leak
+    view.deinit();
+}
+
+test "MemorySortedView: empty entries returns null on move_next" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 0);
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemorySortedView: start_before with all keys greater returns false" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 2);
+
+    entries[0] = .{ .key = DbValue.borrowed("ddd"), .value = DbValue.borrowed("1") };
+    entries[1] = .{ .key = DbValue.borrowed("eee"), .value = DbValue.borrowed("2") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    // "aaa" is less than all entries — start_before should return false
+    const found = try view.start_before("aaa");
+    try std.testing.expect(!found);
+}
+
+test "MemorySortedView: move_next after exhaustion returns null" {
+    const alloc = std.testing.allocator;
+    const entries = try alloc.alloc(DbEntry, 1);
+    entries[0] = .{ .key = DbValue.borrowed("aaa"), .value = DbValue.borrowed("111") };
+
+    const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
+    view_ptr.* = .{ .entries = entries, .allocator = alloc };
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    defer view.deinit();
+
+    _ = try view.move_next(); // First entry
+    try std.testing.expect((try view.move_next()) == null); // Exhausted
+    try std.testing.expect((try view.move_next()) == null); // Still exhausted
 }
