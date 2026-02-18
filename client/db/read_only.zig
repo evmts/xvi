@@ -17,6 +17,30 @@
 /// This matches Nethermind's `ReadOnlyDb(wrappedDb, createInMemWriteStore)`
 /// constructor pattern and `ClearTempChanges()` method.
 ///
+/// ## Intentional Divergences from Nethermind
+///
+/// 1. **Ordered iteration**: Nethermind's `ReadOnlyDb.GetAll(ordered)` ignores
+///    the `ordered` parameter entirely, always returning unordered LINQ Union
+///    results. This implementation provides a proper `MergeSortIterator` that
+///    performs O(n+m) merge-sort when `ordered=true` is requested.
+///
+/// 2. **Content-based deduplication**: Nethermind's `.Union()` on
+///    `KeyValuePair<byte[], byte[]>` uses reference equality for `byte[]`,
+///    so duplicate keys from overlay and wrapped are not deduplicated. This
+///    implementation performs content-based key comparison via `Bytes.compare()`
+///    and gives overlay precedence, consistent with `get()` semantics.
+///
+/// 3. **Zero-allocation strict mode**: Nethermind always allocates a `MemDb`
+///    regardless of `createInMemWriteStore`. This implementation only allocates
+///    an overlay when `init_with_write_store` is called, making strict read-only
+///    mode truly zero-allocation.
+///
+/// 4. **Sorted view delegation**: Nethermind's `ReadOnlyDb` does not implement
+///    `ISortedKeyValueStore` at all. This implementation forwards `first_key`,
+///    `last_key`, and `get_view_between` to the wrapped database, which is
+///    correct for the wrapped-only data but does not account for overlay entries.
+///    See sorted view method doc comments for details on this limitation.
+///
 /// ## Usage (strict read-only)
 ///
 /// ```zig
