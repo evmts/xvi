@@ -1314,3 +1314,140 @@ test "MemoryDatabase: get_view_between on empty database" {
 
     try std.testing.expect((try view.move_next()) == null);
 }
+
+// -- Integration tests (Nethermind parity) ------------------------------------
+
+test "MemoryDatabase: sorted view iterates entries in order (Nethermind IteratorWorks parity)" {
+    // Reproduces Nethermind's DbOnTheRocksTests.IteratorWorks() test:
+    // - Insert 3 entries: [0,0,0], [1,1,1], [2,2,2]
+    // - Verify FirstKey == [0,0,0], LastKey == [2,2,2]
+    // - GetViewBetween([0], [9]) iterates all 3 entries in order
+    // - GetViewBetween([1], [2]) iterates only [1,1,1]
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const entry_count: u8 = 3;
+    var i: u8 = 0;
+    while (i < entry_count) : (i += 1) {
+        try db.put(&[_]u8{ i, i, i }, &[_]u8{ i, i, i });
+    }
+
+    const iface = db.database();
+
+    // Verify FirstKey == [0,0,0]
+    const first_key = (try iface.first_key()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0 }, first_key.bytes);
+
+    // Verify LastKey == [2,2,2]
+    const last_key = (try iface.last_key()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 2, 2, 2 }, last_key.bytes);
+
+    // GetViewBetween([0], [9]) should iterate all 3 entries in order
+    {
+        var view = try iface.get_view_between(&[_]u8{0}, &[_]u8{9});
+        defer view.deinit();
+
+        i = 0;
+        while (try view.move_next()) |entry| {
+            try std.testing.expectEqualSlices(u8, &[_]u8{ i, i, i }, entry.key.bytes);
+            try std.testing.expectEqualSlices(u8, &[_]u8{ i, i, i }, entry.value.bytes);
+            i += 1;
+        }
+        try std.testing.expectEqual(@as(u8, entry_count), i);
+    }
+
+    // GetViewBetween([1], [2]) should iterate only [1,1,1]
+    {
+        var view = try iface.get_view_between(&[_]u8{1}, &[_]u8{2});
+        defer view.deinit();
+
+        const entry = (try view.move_next()).?;
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 1, 1 }, entry.key.bytes);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 1, 1 }, entry.value.bytes);
+
+        try std.testing.expect((try view.move_next()) == null);
+    }
+}
+
+test "MemoryDatabase: sorted view with binary keys of various lengths" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put(&[_]u8{0x01}, "short_key");
+    try db.put(&[_]u8{ 0x01, 0x02 }, "medium_key");
+    try db.put(&[_]u8{ 0x01, 0x02, 0x03 }, "long_key");
+
+    const iface = db.database();
+
+    // Verify sorted order: shorter keys come first in lexicographic order
+    var view = try iface.get_view_between(&[_]u8{0x00}, &[_]u8{0xFF});
+    defer view.deinit();
+
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{0x01}, first.key.bytes);
+
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, second.key.bytes);
+
+    const third = (try view.move_next()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02, 0x03 }, third.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "MemoryDatabase: multiple sorted views from same database are independent" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("aaa", "1");
+    try db.put("bbb", "2");
+    try db.put("ccc", "3");
+
+    const iface = db.database();
+
+    var view1 = try iface.get_view_between("aaa", "zzz");
+    defer view1.deinit();
+
+    var view2 = try iface.get_view_between("bbb", "zzz");
+    defer view2.deinit();
+
+    // view1 starts at "aaa"
+    const v1_first = (try view1.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", v1_first.key.bytes);
+
+    // view2 starts at "bbb" (independent cursor)
+    const v2_first = (try view2.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", v2_first.key.bytes);
+
+    // view1 continues to "bbb"
+    const v1_second = (try view1.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", v1_second.key.bytes);
+
+    // view2 continues to "ccc"
+    const v2_second = (try view2.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", v2_second.key.bytes);
+}
+
+test "MemoryDatabase: sorted view start_before semantics" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put(&[_]u8{ 0, 0, 0 }, "zero");
+    try db.put(&[_]u8{ 1, 1, 1 }, "one");
+    try db.put(&[_]u8{ 2, 2, 2 }, "two");
+
+    const iface = db.database();
+
+    var view = try iface.get_view_between(&[_]u8{0}, &[_]u8{9});
+    defer view.deinit();
+
+    // start_before [1,1,1] should position at [1,1,1]
+    const found = try view.start_before(&[_]u8{ 1, 1, 1 });
+    try std.testing.expect(found);
+
+    // move_next should advance past [1,1,1] to [2,2,2]
+    const entry = (try view.move_next()).?;
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 2, 2, 2 }, entry.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
+}
