@@ -71,6 +71,7 @@ const DbSnapshot = adapter.DbSnapshot;
 const DbValue = adapter.DbValue;
 const Error = adapter.Error;
 const ReadFlags = adapter.ReadFlags;
+const SortedView = adapter.SortedView;
 const WriteFlags = adapter.WriteFlags;
 const MemoryDatabase = @import("memory.zig").MemoryDatabase;
 const Bytes = primitives.Bytes;
@@ -135,6 +136,11 @@ pub const ReadOnlyDb = struct {
     }
 
     /// Return a `Database` vtable interface backed by this ReadOnlyDb.
+    ///
+    /// Sorted view operations (first_key, last_key, get_view_between) are
+    /// forwarded to the wrapped database when it supports them. This mirrors
+    /// Nethermind's `ColumnDb : ISortedKeyValueStore` which delegates sorted
+    /// operations to the underlying RocksDB instance.
     pub fn database(self: *ReadOnlyDb) Database {
         return Database.init(ReadOnlyDb, self, .{
             .name = name_impl,
@@ -149,6 +155,9 @@ pub const ReadOnlyDb = struct {
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
             .multi_get = multi_get_impl,
+            .first_key = first_key_impl,
+            .last_key = last_key_impl,
+            .get_view_between = get_view_between_impl,
         });
     }
 
@@ -380,6 +389,28 @@ pub const ReadOnlyDb = struct {
 
     fn gather_metric_impl(self: *ReadOnlyDb) Error!DbMetric {
         return self.wrapped.gather_metric();
+    }
+
+    /// Forward first_key to the wrapped database.
+    ///
+    /// Sorted view operations are read-only, so they always delegate to
+    /// the wrapped database (bypassing any overlay). Mirrors Nethermind's
+    /// `ColumnDb.FirstKey` which delegates to `_reader`.
+    fn first_key_impl(self: *ReadOnlyDb) Error!?DbValue {
+        return self.wrapped.first_key();
+    }
+
+    /// Forward last_key to the wrapped database.
+    fn last_key_impl(self: *ReadOnlyDb) Error!?DbValue {
+        return self.wrapped.last_key();
+    }
+
+    /// Forward get_view_between to the wrapped database.
+    ///
+    /// Mirrors Nethermind's `ColumnDb.GetViewBetween()` which delegates to
+    /// `_mainDb.GetViewBetween()`.
+    fn get_view_between_impl(self: *ReadOnlyDb, first_inclusive: []const u8, last_exclusive: []const u8) Error!SortedView {
+        return self.wrapped.get_view_between(first_inclusive, last_exclusive);
     }
 
     /// Stack-allocatable ceiling for the overlay miss-index buffer.
@@ -1070,4 +1101,74 @@ test "ReadOnlyDb: multi_get after clear_temp_changes falls back to wrapped" {
     try std.testing.expectEqualStrings("wrapped_value", results[0].?.bytes);
     // "extra" was overlay-only — now gone.
     try std.testing.expect(results[1] == null);
+}
+
+// -- Sorted view forwarding tests --------------------------------------------
+
+test "ReadOnlyDb: supports_sorted_view forwards from wrapped" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    var ro = ReadOnlyDb.init(mem.database());
+    defer ro.deinit();
+
+    const iface = ro.database();
+    // MemoryDatabase supports sorted view, so ReadOnlyDb should too.
+    try std.testing.expect(iface.supports_sorted_view());
+}
+
+test "ReadOnlyDb: first_key forwards to wrapped database" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("ccc", "3");
+    try mem.put("aaa", "1");
+    try mem.put("bbb", "2");
+
+    var ro = ReadOnlyDb.init(mem.database());
+    defer ro.deinit();
+
+    const iface = ro.database();
+    const result = (try iface.first_key()).?;
+    try std.testing.expectEqualStrings("aaa", result.bytes);
+}
+
+test "ReadOnlyDb: last_key forwards to wrapped database" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("aaa", "1");
+    try mem.put("ccc", "3");
+    try mem.put("bbb", "2");
+
+    var ro = ReadOnlyDb.init(mem.database());
+    defer ro.deinit();
+
+    const iface = ro.database();
+    const result = (try iface.last_key()).?;
+    try std.testing.expectEqualStrings("ccc", result.bytes);
+}
+
+test "ReadOnlyDb: get_view_between forwards to wrapped database" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("aaa", "1");
+    try mem.put("bbb", "2");
+    try mem.put("ccc", "3");
+
+    var ro = ReadOnlyDb.init(mem.database());
+    defer ro.deinit();
+
+    const iface = ro.database();
+    var view = try iface.get_view_between("aaa", "ccc");
+    defer view.deinit();
+
+    const first = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", first.key.bytes);
+
+    const second = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", second.key.bytes);
+
+    try std.testing.expect((try view.move_next()) == null);
 }
