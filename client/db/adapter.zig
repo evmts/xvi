@@ -2607,3 +2607,20 @@ test "Database.get_view_between returns UnsupportedOperation when null" {
     const db = mock.database();
     try std.testing.expectError(error.UnsupportedOperation, db.get_view_between(&[_]u8{0}, &[_]u8{9}));
 }
+
+test "DbValue: release on borrowed value is safe no-op" {
+    const val = DbValue.borrowed("hello");
+    val.release(); // must not panic — release_fn is null
+    // Verify bytes remain accessible and uncorrupted after release
+    try std.testing.expectEqualStrings("hello", val.bytes);
+}
+
+test "DbEntry: release on borrowed entry is safe no-op" {
+    const entry = DbEntry{
+        .key = DbValue.borrowed("key"),
+        .value = DbValue.borrowed("value"),
+    };
+    entry.release(); // must not panic — both release_fn are null
+    try std.testing.expectEqualStrings("key", entry.key.bytes);
+    try std.testing.expectEqualStrings("value", entry.value.bytes);
+}
