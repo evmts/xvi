@@ -326,11 +326,17 @@ pub const MemoryDatabase = struct {
         }
 
         /// Release all resources held by this view.
-        fn deinit_impl(self: *MemorySortedView) void {
+        fn deinit(self: *MemorySortedView) void {
             self.allocator.free(self.entries);
             self.allocator.destroy(self);
         }
     };
+
+    /// Shared comparator for sorting `DbEntry` slices by key in lexicographic order.
+    /// Used by `make_iterator` (ordered) and `get_view_between_impl`.
+    fn db_entry_less_than(_: void, a: DbEntry, b: DbEntry) bool {
+        return Bytes.compare(a.key.bytes, b.key.bytes) < 0;
+    }
 
     fn make_iterator(self: *MemoryDatabase, ordered: bool) Error!DbIterator {
         if (ordered) {
@@ -346,12 +352,7 @@ pub const MemoryDatabase = struct {
             }
 
             const entries = try list.toOwnedSlice(self.backing_allocator);
-            const less_than = struct {
-                fn lt(_: void, a: DbEntry, b: DbEntry) bool {
-                    return Bytes.compare(a.key.bytes, b.key.bytes) < 0;
-                }
-            }.lt;
-            std.sort.heap(DbEntry, entries, {}, less_than);
+            std.sort.heap(DbEntry, entries, {}, db_entry_less_than);
 
             const ordered_iter = self.backing_allocator.create(OrderedIterator) catch return error.OutOfMemory;
             ordered_iter.* = .{
@@ -555,12 +556,8 @@ pub const MemoryDatabase = struct {
 
         // Sort by key in lexicographic order.
         const entries = list.toOwnedSlice(allocator) catch return error.OutOfMemory;
-        const less_than = struct {
-            fn lt(_: void, a: DbEntry, b: DbEntry) bool {
-                return Bytes.compare(a.key.bytes, b.key.bytes) < 0;
-            }
-        }.lt;
-        std.sort.heap(DbEntry, entries, {}, less_than);
+        errdefer allocator.free(entries);
+        std.sort.heap(DbEntry, entries, {}, db_entry_less_than);
 
         // Allocate the MemorySortedView on the heap.
         const view_ptr = allocator.create(MemorySortedView) catch return error.OutOfMemory;
@@ -576,7 +573,7 @@ pub const MemoryDatabase = struct {
             view_ptr,
             MemorySortedView.start_before,
             MemorySortedView.move_next,
-            MemorySortedView.deinit_impl,
+            MemorySortedView.deinit,
         );
     }
 };
@@ -1071,7 +1068,7 @@ test "MemorySortedView: iterate all entries" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     const first = (try view.move_next()).?;
@@ -1097,7 +1094,7 @@ test "MemorySortedView: start_before seeks correctly" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     // start_before "bbb" should find "bbb" (largest key <= "bbb")
@@ -1120,7 +1117,7 @@ test "MemorySortedView: deinit frees memory (leak check)" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
 
     // If deinit doesn't free properly, testing allocator will report a leak
     view.deinit();
@@ -1132,7 +1129,7 @@ test "MemorySortedView: empty entries returns null on move_next" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     try std.testing.expect((try view.move_next()) == null);
@@ -1147,7 +1144,7 @@ test "MemorySortedView: start_before with all keys greater returns false" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     // "aaa" is less than all entries — start_before should return false
@@ -1168,7 +1165,7 @@ test "MemorySortedView: start_before(false) then move_next falls back to first e
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     // start_before("aaa") — all keys > "aaa", so returns false
@@ -1196,7 +1193,7 @@ test "MemorySortedView: move_next after exhaustion returns null" {
 
     const view_ptr = try alloc.create(MemoryDatabase.MemorySortedView);
     view_ptr.* = .{ .entries = entries, .allocator = alloc };
-    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit_impl);
+    var view = SortedView.init(MemoryDatabase.MemorySortedView, view_ptr, MemoryDatabase.MemorySortedView.start_before, MemoryDatabase.MemorySortedView.move_next, MemoryDatabase.MemorySortedView.deinit);
     defer view.deinit();
 
     _ = try view.move_next(); // First entry
