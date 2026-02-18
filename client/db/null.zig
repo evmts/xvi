@@ -151,12 +151,8 @@ pub const NullDb = struct {
         return .{};
     }
 
-    // Declared `var` because `DbIterator.init` and `DbSnapshot.init` require
-    // `*T` (mutable pointer). Both types are zero-sized with no mutable fields,
-    // so no data race is possible despite module-level `var` scope. A future
-    // refactor of the adapter to accept `*const T` would allow `const` here.
-    var empty_iterator = EmptyIterator{};
-    var null_snapshot = NullSnapshot{};
+    const empty_iterator = EmptyIterator{};
+    const null_snapshot = NullSnapshot{};
 };
 
 // ---------------------------------------------------------------------------

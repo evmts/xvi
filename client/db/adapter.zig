@@ -215,7 +215,7 @@ pub const DbIterator = struct {
 
     pub fn init(
         comptime T: type,
-        ptr: *T,
+        ptr: *const T,
         comptime next_fn: *const fn (ptr: *T) Error!?DbEntry,
         comptime deinit_fn: *const fn (ptr: *T) void,
     ) DbIterator {
@@ -237,7 +237,7 @@ pub const DbIterator = struct {
         };
 
         return .{
-            .ptr = @ptrCast(ptr),
+            .ptr = @ptrCast(@constCast(ptr)),
             .vtable = &Wrapper.vtable,
         };
     }
@@ -276,7 +276,7 @@ pub const DbSnapshot = struct {
 
     pub fn init(
         comptime T: type,
-        ptr: *T,
+        ptr: *const T,
         comptime get_fn: *const fn (ptr: *T, key: []const u8, flags: ReadFlags) Error!?DbValue,
         comptime contains_fn: *const fn (ptr: *T, key: []const u8) Error!bool,
         comptime iterator_fn: ?*const fn (ptr: *T, ordered: bool) Error!DbIterator,
@@ -313,7 +313,7 @@ pub const DbSnapshot = struct {
         };
 
         return .{
-            .ptr = @ptrCast(ptr),
+            .ptr = @ptrCast(@constCast(ptr)),
             .vtable = &Wrapper.vtable,
         };
     }
