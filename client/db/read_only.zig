@@ -382,18 +382,84 @@ pub const ReadOnlyDb = struct {
         return self.wrapped.gather_metric();
     }
 
+    /// Stack-allocatable ceiling for the overlay miss-index buffer.
+    /// Batches up to this size avoid heap allocation; larger batches
+    /// fall back to the overlay allocator.
+    const multi_get_stack_limit = 64;
+
     fn multi_get_impl(self: *ReadOnlyDb, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
         if (self.overlay) |ov| {
-            // Overlay merge pattern: check overlay first, then wrapped.
-            // Mirrors Nethermind's ReadOnlyDb.this[byte[][] keys] which gets
-            // results from both wrapped and overlay, then merges with overlay
-            // values taking precedence.
+            // Overlay merge pattern: check overlay first, collect misses,
+            // then batch-fetch remaining keys from the wrapped database.
+            // This preserves native MultiGet benefits (e.g., RocksDB batched I/O)
+            // for keys not found in the overlay.
+
+            // Stack buffer for small batches; heap fallback for large ones.
+            var stack_indices: [multi_get_stack_limit]usize = undefined;
+            var stack_keys: [multi_get_stack_limit][]const u8 = undefined;
+            var stack_results: [multi_get_stack_limit]?DbValue = undefined;
+
+            var miss_indices: []usize = undefined;
+            var miss_keys: [][]const u8 = undefined;
+            var miss_results: []?DbValue = undefined;
+            var heap_allocated = false;
+
+            if (keys.len <= multi_get_stack_limit) {
+                miss_indices = stack_indices[0..keys.len];
+                miss_keys = stack_keys[0..keys.len];
+                miss_results = stack_results[0..keys.len];
+            } else if (self.overlay_allocator) |alloc| {
+                miss_indices = alloc.alloc(usize, keys.len) catch return error.OutOfMemory;
+                miss_keys = alloc.alloc([]const u8, keys.len) catch {
+                    alloc.free(miss_indices);
+                    return error.OutOfMemory;
+                };
+                miss_results = alloc.alloc(?DbValue, keys.len) catch {
+                    alloc.free(miss_keys);
+                    alloc.free(miss_indices);
+                    return error.OutOfMemory;
+                };
+                heap_allocated = true;
+            } else {
+                // No allocator and too many keys for stack — sequential fallback.
+                for (keys, 0..) |key, i| {
+                    if (ov.get_with_flags(key, flags)) |val| {
+                        results[i] = val;
+                    } else {
+                        results[i] = try self.wrapped.get_with_flags(key, flags);
+                    }
+                }
+                return;
+            }
+            defer if (heap_allocated) {
+                const alloc = self.overlay_allocator.?;
+                alloc.free(miss_results);
+                alloc.free(miss_keys);
+                alloc.free(miss_indices);
+            };
+
+            // Pass 1: check overlay, collect miss indices.
+            var miss_count: usize = 0;
             for (keys, 0..) |key, i| {
                 if (ov.get_with_flags(key, flags)) |val| {
                     results[i] = val;
                 } else {
-                    // Not in overlay — fall back to wrapped.
-                    results[i] = try self.wrapped.get_with_flags(key, flags);
+                    miss_indices[miss_count] = i;
+                    miss_keys[miss_count] = key;
+                    miss_count += 1;
+                }
+            }
+
+            // Pass 2: batch-fetch misses from wrapped database.
+            if (miss_count > 0) {
+                try self.wrapped.multi_get_with_flags(
+                    miss_keys[0..miss_count],
+                    miss_results[0..miss_count],
+                    flags,
+                );
+                // Scatter results back to original positions.
+                for (0..miss_count) |j| {
+                    results[miss_indices[j]] = miss_results[j];
                 }
             }
         } else {
