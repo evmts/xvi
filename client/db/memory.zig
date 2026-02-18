@@ -260,7 +260,7 @@ pub const MemoryDatabase = struct {
         /// Mirrors Nethermind's `RocksdbSortedView.StartBefore(value)` which
         /// calls `iterator.SeekForPrev(value)`.
         fn start_before(self: *MemorySortedView, value: []const u8) Error!bool {
-            if (self.started) return error.StorageError; // Already started
+            if (self.started) return error.InvalidState; // Already started
 
             if (self.entries.len == 0) return false;
 

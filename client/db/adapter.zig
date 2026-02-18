@@ -50,6 +50,13 @@ pub const Error = error{
     UnsupportedOperation,
     /// Allocation failure — propagated directly, never masked as StorageError.
     OutOfMemory,
+    /// The operation was called in an invalid state (API protocol violation).
+    ///
+    /// Mirrors C#'s `InvalidOperationException`. For example, calling
+    /// `SortedView.start_before()` after iteration has already started.
+    /// Distinct from `StorageError` (backend I/O failure) to let callers
+    /// distinguish misuse from storage faults.
+    InvalidState,
 };
 
 /// Standard database column/partition names, mirroring Nethermind's `DbNames`.
