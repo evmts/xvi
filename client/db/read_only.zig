@@ -996,15 +996,43 @@ test "ReadOnlyDb: iterator merges overlay and wrapped without duplicates" {
     try std.testing.expect(seen_c);
 }
 
-test "ReadOnlyDb: iterator ordered is unsupported with overlay" {
+test "ReadOnlyDb: iterator ordered merges overlay and wrapped in key order" {
+    // Setup: wrapped has {a, c}, overlay has {b, c_override}
+    // Expected ordered output: a(wrapped), b(overlay), c(overlay_value)
     var mem = MemoryDatabase.init(std.testing.allocator, .state);
     defer mem.deinit();
+    try mem.put("a", "base_a");
+    try mem.put("c", "base_c");
 
     var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
     defer ro.deinit();
-
     const iface = ro.database();
-    try std.testing.expectError(error.UnsupportedOperation, iface.iterator(true));
+    try iface.put("b", "overlay_b");
+    try iface.put("c", "overlay_c"); // overlay overrides wrapped
+
+    var it = try iface.iterator(true);
+    defer it.deinit();
+
+    // Entry 1: "a" from wrapped
+    const e1 = (try it.next()).?;
+    defer e1.release();
+    try std.testing.expectEqualStrings("a", e1.key.bytes);
+    try std.testing.expectEqualStrings("base_a", e1.value.bytes);
+
+    // Entry 2: "b" from overlay
+    const e2 = (try it.next()).?;
+    defer e2.release();
+    try std.testing.expectEqualStrings("b", e2.key.bytes);
+    try std.testing.expectEqualStrings("overlay_b", e2.value.bytes);
+
+    // Entry 3: "c" from overlay (precedence over wrapped)
+    const e3 = (try it.next()).?;
+    defer e3.release();
+    try std.testing.expectEqualStrings("c", e3.key.bytes);
+    try std.testing.expectEqualStrings("overlay_c", e3.value.bytes);
+
+    // Exhausted
+    try std.testing.expect((try it.next()) == null);
 }
 
 test "ReadOnlyDb: snapshot captures overlay and wrapped state" {
