@@ -541,7 +541,7 @@ pub const ReadOnlyDb = struct {
 
     /// Stack-allocatable ceiling for the overlay miss-index buffer.
     /// Batches up to this size avoid heap allocation; larger batches
-    /// fall back to the overlay allocator.
+    /// fall back to `write_store.allocator`.
     const multi_get_stack_limit = 64;
 
     fn multi_get_impl(self: *ReadOnlyDb, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
