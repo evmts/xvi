@@ -1,4 +1,4 @@
-/// Benchmarks for the Database Abstraction Layer (DB-001, DB-004).
+/// Benchmarks for the Database Abstraction Layer (DB-001, DB-004, DB-005).
 ///
 /// Measures throughput and latency for:
 ///   1. MemoryDatabase put/get (sequential and random access)
@@ -15,6 +15,12 @@
 ///  12. WriteBatch merge accumulate + commit
 ///  13. Merge vs put comparison (vtable dispatch parity)
 ///  14. Mixed merge workload (Ethereum state update simulation)
+///  15. Multi-get vs sequential get (DB-005: batch read API)
+///  16. Multi-get batch size scaling (1 to 500 keys)
+///  17. Multi-get hit/miss ratio (cache-friendly vs cold access)
+///  18. ReadOnlyDb multi-get overlay merge pattern
+///  19. Multi-get fallback vs native vtable dispatch
+///  20. Block processing with multi-get batch reads
 ///
 /// Run:
 ///   zig build bench-db                         # Debug mode
@@ -759,6 +765,327 @@ fn bench_merge_memory(n: usize) struct { elapsed_ns: u64, peak_bytes: usize } {
     return .{ .elapsed_ns = elapsed, .peak_bytes = total_allocated };
 }
 
+// ============================================================================
+// Multi-get batch read benchmarks (DB-005)
+// ============================================================================
+
+/// Benchmark: Multi-get vs sequential get — compare batch read API against
+/// N individual `get()` calls.
+/// Measures the amortised cost of a single multi_get dispatch versus
+/// N vtable dispatches for get.
+fn bench_multi_get_vs_sequential(n: usize, batch_size: usize) struct { sequential_ns: u64, multi_get_ns: u64 } {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    // Build a database with n keys.
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..n) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+    const iface = db.database();
+
+    // Pre-generate key slices for the batch.
+    var key_bufs: [512][32]u8 = undefined;
+    const actual_batch = @min(batch_size, 512);
+    var key_slices: [512][]const u8 = undefined;
+    for (0..actual_batch) |i| {
+        _ = make_key(&key_bufs[i], i % n);
+        key_slices[i] = &key_bufs[i];
+    }
+    const keys = key_slices[0..actual_batch];
+
+    // Sequential get path.
+    var seq_total: u64 = 0;
+    for (0..WARMUP_ITERS) |_| {
+        for (keys) |key| {
+            const val = iface.get(key) catch unreachable;
+            if (val) |v| v.release();
+        }
+    }
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (keys) |key| {
+            const val = iface.get(key) catch unreachable;
+            if (val) |v| v.release();
+        }
+        seq_total += timer.read();
+    }
+
+    // Multi-get path (caller-provided buffer, no allocations).
+    var results: [512]?DbValue = undefined;
+    var mg_total: u64 = 0;
+    for (0..WARMUP_ITERS) |_| {
+        iface.multi_get(keys, results[0..actual_batch]) catch unreachable;
+        for (results[0..actual_batch]) |r| {
+            if (r) |v| v.release();
+        }
+    }
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        iface.multi_get(keys, results[0..actual_batch]) catch unreachable;
+        for (results[0..actual_batch]) |r| {
+            if (r) |v| v.release();
+        }
+        mg_total += timer.read();
+    }
+
+    return .{
+        .sequential_ns = seq_total / BENCH_ITERS,
+        .multi_get_ns = mg_total / BENCH_ITERS,
+    };
+}
+
+/// Benchmark: Multi-get with varying batch sizes on MemoryDatabase.
+/// Measures per-key cost as batch size grows.
+fn bench_multi_get_batch_sizes(db_size: usize, batch_size: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..db_size) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+    const iface = db.database();
+
+    // Pre-generate key slices.
+    const actual_batch = @min(batch_size, 512);
+    var key_bufs: [512][32]u8 = undefined;
+    var key_slices: [512][]const u8 = undefined;
+    for (0..actual_batch) |i| {
+        _ = make_key(&key_bufs[i], i % db_size);
+        key_slices[i] = &key_bufs[i];
+    }
+    const keys = key_slices[0..actual_batch];
+    var results: [512]?DbValue = undefined;
+
+    // Warmup.
+    for (0..WARMUP_ITERS) |_| {
+        iface.multi_get(keys, results[0..actual_batch]) catch unreachable;
+        for (results[0..actual_batch]) |r| {
+            if (r) |v| v.release();
+        }
+    }
+
+    // Total ops = batch_size * (n/batch_size) iterations to fill n ops.
+    const iterations = @max(1, MEDIUM_N / actual_batch);
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..iterations) |_| {
+            iface.multi_get(keys, results[0..actual_batch]) catch unreachable;
+            for (results[0..actual_batch]) |r| {
+                if (r) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Multi-get with mix of found and missing keys.
+/// Simulates real-world access where some keys are absent.
+fn bench_multi_get_hit_miss(n: usize, hit_ratio: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    for (0..n) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+    const iface = db.database();
+
+    // Build batch: hit_ratio% hits, rest misses.
+    const batch: usize = 100;
+    var key_bufs: [100][32]u8 = undefined;
+    var key_slices: [100][]const u8 = undefined;
+    for (0..batch) |i| {
+        if (i < hit_ratio) {
+            // Key that exists.
+            _ = make_key(&key_bufs[i], i % n);
+        } else {
+            // Key that does NOT exist (offset far beyond populated range).
+            _ = make_key(&key_bufs[i], n + 1_000_000 + i);
+        }
+        key_slices[i] = &key_bufs[i];
+    }
+    const keys = key_slices[0..batch];
+    var results: [100]?DbValue = undefined;
+
+    // Warmup.
+    for (0..WARMUP_ITERS) |_| {
+        iface.multi_get(keys, &results) catch unreachable;
+        for (&results) |r| {
+            if (r) |v| v.release();
+        }
+    }
+
+    const iterations = @max(1, MEDIUM_N / batch);
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..iterations) |_| {
+            iface.multi_get(keys, &results) catch unreachable;
+            for (&results) |r| {
+                if (r) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: ReadOnlyDb multi_get with overlay — overlay keys take precedence.
+fn bench_readonly_multi_get_overlay(n: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    // Populate wrapped with n keys.
+    for (0..n) |i| {
+        db.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var ro = ReadOnlyDb.init_with_write_store(db.database(), std.heap.page_allocator) catch unreachable;
+        const iface = ro.database();
+
+        // Write 50% of keys to overlay with different values.
+        for (0..n / 2) |i| {
+            iface.put(make_key(&key_buf, i), make_value(&val_buf, n + i)) catch unreachable;
+        }
+
+        // Build batch that mixes overlay and wrapped keys.
+        const batch: usize = @min(100, n);
+        var key_bufs_local: [100][32]u8 = undefined;
+        var key_slices_local: [100][]const u8 = undefined;
+        for (0..batch) |i| {
+            _ = make_key(&key_bufs_local[i], i);
+            key_slices_local[i] = &key_bufs_local[i];
+        }
+        const keys = key_slices_local[0..batch];
+        var results_local: [100]?DbValue = undefined;
+
+        const iterations = @max(1, MEDIUM_N / batch);
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..iterations) |_| {
+            iface.multi_get(keys, results_local[0..batch]) catch unreachable;
+            for (results_local[0..batch]) |r| {
+                if (r) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+        ro.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Multi-get fallback path — uses a database WITHOUT multi_get vtable.
+/// Measures the sequential fallback cost in Database.multi_get_with_flags.
+fn bench_multi_get_fallback(n: usize, batch_size: usize) u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    // Use MergeableDatabase which does NOT implement multi_get.
+    var db = MergeableDatabase.init(std.heap.page_allocator, .state);
+    defer db.deinit();
+    const iface = db.database();
+
+    // Populate.
+    for (0..n) |i| {
+        iface.put(make_key(&key_buf, i), make_value(&val_buf, i)) catch unreachable;
+    }
+
+    const actual_batch = @min(batch_size, 512);
+    var key_bufs_fb: [512][32]u8 = undefined;
+    var key_slices_fb: [512][]const u8 = undefined;
+    for (0..actual_batch) |i| {
+        _ = make_key(&key_bufs_fb[i], i % n);
+        key_slices_fb[i] = &key_bufs_fb[i];
+    }
+    const keys = key_slices_fb[0..actual_batch];
+    var results_fb: [512]?DbValue = undefined;
+
+    // Warmup.
+    for (0..WARMUP_ITERS) |_| {
+        iface.multi_get(keys, results_fb[0..actual_batch]) catch unreachable;
+        for (results_fb[0..actual_batch]) |r| {
+            if (r) |v| v.release();
+        }
+    }
+
+    const iterations = @max(1, MEDIUM_N / actual_batch);
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..iterations) |_| {
+            iface.multi_get(keys, results_fb[0..actual_batch]) catch unreachable;
+            for (results_fb[0..actual_batch]) |r| {
+                if (r) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
+/// Benchmark: Block state operations using multi_get for batch reads.
+/// 200 txs × (1 multi_get of 2 accounts + 5 storage writes + 1 multi_get of 5 slots)
+/// Same work as bench_block_state_ops but batched reads via multi_get.
+fn bench_block_state_with_multi_get() u64 {
+    var key_buf: [32]u8 = undefined;
+    var val_buf: [32]u8 = undefined;
+
+    const txs_per_block: usize = 200;
+    const storage_writes_per_tx: usize = 5;
+
+    var total_ns: u64 = 0;
+    for (0..BENCH_ITERS) |_| {
+        var db = MemoryDatabase.init(std.heap.page_allocator, .state);
+        const iface = db.database();
+        var timer = std.time.Timer.start() catch unreachable;
+        for (0..txs_per_block) |tx| {
+            // Batch account reads (2 keys).
+            var acct_key_bufs: [2][32]u8 = undefined;
+            var acct_keys: [2][]const u8 = undefined;
+            var acct_results: [2]?DbValue = undefined;
+            for (0..2) |a| {
+                _ = make_key(&acct_key_bufs[a], tx * 100 + a);
+                acct_keys[a] = &acct_key_bufs[a];
+            }
+            iface.multi_get(&acct_keys, &acct_results) catch unreachable;
+            for (&acct_results) |r| {
+                if (r) |v| v.release();
+            }
+
+            // Storage writes (same as baseline).
+            for (0..storage_writes_per_tx) |s| {
+                iface.put(make_key(&key_buf, tx * 100 + 10 + s), make_value(&val_buf, tx * s)) catch unreachable;
+            }
+
+            // Batch storage reads (5 keys).
+            var slot_key_bufs: [5][32]u8 = undefined;
+            var slot_keys: [5][]const u8 = undefined;
+            var slot_results: [5]?DbValue = undefined;
+            for (0..5) |s| {
+                _ = make_key(&slot_key_bufs[s], tx * 100 + 10 + s);
+                slot_keys[s] = &slot_key_bufs[s];
+            }
+            iface.multi_get(&slot_keys, &slot_results) catch unreachable;
+            for (&slot_results) |r| {
+                if (r) |v| v.release();
+            }
+        }
+        total_ns += timer.read();
+        db.deinit();
+    }
+    return total_ns / BENCH_ITERS;
+}
+
 /// Benchmark: Simulated block state with merge ops.
 /// 200 txs × (2 account reads + 3 storage puts + 2 merge updates + 5 storage reads)
 /// = 2400 ops, with ~17% being merge operations (mirrors real-world state diffs).
@@ -1140,6 +1467,142 @@ pub fn main() !void {
         std.debug.print("  Merge overhead vs baseline:    {d:.1}%%\n", .{merge_overhead_pct});
     }
 
+    // ================================================================
+    // DB-005: Multi-Get Batch Read Benchmarks
+    // ================================================================
+    std.debug.print("=" ** 100 ++ "\n", .{});
+    std.debug.print("  DB-005: Multi-Get Batch Read Benchmarks (IDb indexer parity)\n", .{});
+    std.debug.print("=" ** 100 ++ "\n\n", .{});
+
+    // -- Multi-get vs sequential get --
+    std.debug.print("--- Multi-Get vs Sequential Get (10K keys in DB) ---\n", .{});
+    for ([_]struct { batch: usize, label: []const u8 }{
+        .{ .batch = 1, .label = "batch=1 (degenerate case)" },
+        .{ .batch = 10, .label = "batch=10" },
+        .{ .batch = 50, .label = "batch=50" },
+        .{ .batch = 100, .label = "batch=100" },
+        .{ .batch = 500, .label = "batch=500" },
+    }) |s| {
+        const r = bench_multi_get_vs_sequential(MEDIUM_N, s.batch);
+        const seq_per = if (s.batch > 0) r.sequential_ns / s.batch else 0;
+        const mg_per = if (s.batch > 0) r.multi_get_ns / s.batch else 0;
+        const overhead_pct = if (r.sequential_ns > 0)
+            (@as(f64, @floatFromInt(r.multi_get_ns)) / @as(f64, @floatFromInt(r.sequential_ns)) - 1.0) * 100.0
+        else
+            0.0;
+        std.debug.print("  {s:<55} seq/key={s}  mg/key={s}  delta={d:.1}%%\n", .{
+            s.label,
+            &format_ns(seq_per),
+            &format_ns(mg_per),
+            overhead_pct,
+        });
+    }
+    std.debug.print("\n", .{});
+
+    // -- Multi-get batch size scaling --
+    std.debug.print("--- Multi-Get Batch Size Scaling (10K keys in DB, 10K total lookups) ---\n", .{});
+    for ([_]struct { batch: usize, label: []const u8 }{
+        .{ .batch = 1, .label = "batch=1 (per-key dispatch)" },
+        .{ .batch = 10, .label = "batch=10" },
+        .{ .batch = 50, .label = "batch=50" },
+        .{ .batch = 100, .label = "batch=100" },
+        .{ .batch = 200, .label = "batch=200 (Ethereum tx-size batch)" },
+        .{ .batch = 500, .label = "batch=500" },
+    }) |s| {
+        const elapsed = bench_multi_get_batch_sizes(MEDIUM_N, s.batch);
+        const actual_batch = @min(s.batch, 512);
+        const iterations = @max(1, MEDIUM_N / actual_batch);
+        const total_ops = actual_batch * iterations;
+        print_result(result(s.label, total_ops, elapsed));
+    }
+    std.debug.print("\n", .{});
+
+    // -- Multi-get hit/miss ratio --
+    std.debug.print("--- Multi-Get Hit/Miss Ratio (10K keys in DB, batch=100) ---\n", .{});
+    for ([_]struct { hit: usize, label: []const u8 }{
+        .{ .hit = 100, .label = "100% hit (all found)" },
+        .{ .hit = 80, .label = "80% hit (typical)" },
+        .{ .hit = 50, .label = "50% hit (mixed)" },
+        .{ .hit = 20, .label = "20% hit (mostly miss)" },
+        .{ .hit = 0, .label = "0% hit (all miss)" },
+    }) |s| {
+        const elapsed = bench_multi_get_hit_miss(MEDIUM_N, s.hit);
+        const batch_count: usize = 100;
+        const iterations = @max(1, MEDIUM_N / batch_count);
+        print_result(result(s.label, batch_count * iterations, elapsed));
+    }
+    std.debug.print("\n", .{});
+
+    // -- ReadOnlyDb multi_get with overlay --
+    std.debug.print("--- ReadOnlyDb Multi-Get (overlay merge pattern) ---\n", .{});
+    for ([_]struct { n: usize, label: []const u8 }{
+        .{ .n = SMALL_N, .label = "overlay multi_get (1K keys in DB)" },
+        .{ .n = MEDIUM_N, .label = "overlay multi_get (10K keys in DB)" },
+    }) |s| {
+        const elapsed = bench_readonly_multi_get_overlay(s.n);
+        const batch_count: usize = @min(100, s.n);
+        const iterations = @max(1, MEDIUM_N / batch_count);
+        print_result(result(s.label, batch_count * iterations, elapsed));
+    }
+    std.debug.print("\n", .{});
+
+    // -- Multi-get fallback vs native --
+    std.debug.print("--- Multi-Get: Native vs Fallback (no vtable multi_get) ---\n", .{});
+    for ([_]struct { batch: usize, label: []const u8 }{
+        .{ .batch = 10, .label = "fallback batch=10" },
+        .{ .batch = 100, .label = "fallback batch=100" },
+        .{ .batch = 500, .label = "fallback batch=500" },
+    }) |s| {
+        const elapsed = bench_multi_get_fallback(MEDIUM_N, s.batch);
+        const actual_batch = @min(s.batch, 512);
+        const iterations = @max(1, MEDIUM_N / actual_batch);
+        print_result(result(s.label, actual_batch * iterations, elapsed));
+    }
+    std.debug.print("\n", .{});
+
+    // -- Block processing with multi_get --
+    std.debug.print("--- Block State Operations: Multi-Get vs Sequential (DB-005) ---\n", .{});
+    std.debug.print("  (200 txs/block, batch account reads + 5 writes + batch storage reads)\n", .{});
+    {
+        const baseline_elapsed_mg = bench_block_state_ops();
+        const multiget_elapsed = bench_block_state_with_multi_get();
+
+        const baseline_blocks_ps = if (baseline_elapsed_mg > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(baseline_elapsed_mg))
+        else
+            0.0;
+        const mg_blocks_ps = if (multiget_elapsed > 0)
+            1_000_000_000.0 / @as(f64, @floatFromInt(multiget_elapsed))
+        else
+            0.0;
+
+        const improvement_pct = if (baseline_elapsed_mg > 0)
+            (1.0 - @as(f64, @floatFromInt(multiget_elapsed)) / @as(f64, @floatFromInt(baseline_elapsed_mg))) * 100.0
+        else
+            0.0;
+
+        const ops_per_block: usize = 200 * (2 + 5 + 5);
+        const mg_ops_per_sec = mg_blocks_ps * @as(f64, @floatFromInt(ops_per_block));
+        const effective_mgas = mg_blocks_ps * 30.0;
+
+        std.debug.print("  Sequential block time:         {s}  ({d:.0} blocks/s)\n", .{ &format_ns(baseline_elapsed_mg), baseline_blocks_ps });
+        std.debug.print("  Multi-get block time:          {s}  ({d:.0} blocks/s)\n", .{ &format_ns(multiget_elapsed), mg_blocks_ps });
+        std.debug.print("  Improvement:                   {d:.1}%%\n", .{improvement_pct});
+        std.debug.print("  DB ops/sec (multi-get):        {d:.0} ({d:.2} M ops/s)\n", .{ mg_ops_per_sec, mg_ops_per_sec / 1e6 });
+        std.debug.print("  Effective MGas/s (DB only):     {d:.0} MGas/s\n", .{effective_mgas});
+        std.debug.print("  Nethermind target:              700 MGas/s\n", .{});
+
+        const comfortable = mg_blocks_ps >= 2300.0;
+        const meets_target = mg_blocks_ps >= 23.0;
+        if (comfortable) {
+            std.debug.print("  Status: PASS - multi_get adds negligible overhead\n", .{});
+        } else if (meets_target) {
+            std.debug.print("  Status: PASS - meets target but multi_get overhead notable\n", .{});
+        } else {
+            std.debug.print("  Status: FAIL - multi_get overhead exceeds budget!\n", .{});
+        }
+    }
+
     std.debug.print("\n" ++ "=" ** 100 ++ "\n", .{});
     std.debug.print("  Notes:\n", .{});
     std.debug.print("  - MemoryDatabase uses ArenaAllocator (all freed at tx end)\n", .{});
@@ -1148,6 +1611,8 @@ pub fn main() !void {
     std.debug.print("  - ReadOnlyDb overlay mode: writes buffered in separate MemoryDatabase\n", .{});
     std.debug.print("  - Merge vtable dispatch: nullable fn ptr check + same path as put (DB-004)\n", .{});
     std.debug.print("  - WriteBatch merge: arena-copies key+value, same allocation pattern as put\n", .{});
+    std.debug.print("  - Multi-get: caller-provided output buffer, zero allocations (DB-005)\n", .{});
+    std.debug.print("  - Multi-get fallback: sequential get() when vtable slot is null (DB-005)\n", .{});
     std.debug.print("  - For accurate numbers: zig build bench-db -Doptimize=ReleaseFast\n", .{});
     std.debug.print("=" ** 100 ++ "\n\n", .{});
 }
