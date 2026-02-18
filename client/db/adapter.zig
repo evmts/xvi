@@ -897,34 +897,71 @@ pub const WriteBatch = struct {
 // Tests
 // ---------------------------------------------------------------------------
 
-fn name_default(_: *anyopaque) DbName {
-    return .metadata;
-}
+/// No-op / stub implementations used as defaults in test vtables.
+const test_stubs = struct {
+    fn name_default(_: *anyopaque) DbName {
+        return .metadata;
+    }
+    fn get_null(_: *anyopaque, _: []const u8, _: ReadFlags) Error!?DbValue {
+        return null;
+    }
+    fn put_noop(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
+    fn delete_noop(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
+    fn contains_false(_: *anyopaque, _: []const u8) Error!bool {
+        return false;
+    }
+    fn iterator_unsupported(_: *anyopaque, _: bool) Error!DbIterator {
+        return error.UnsupportedOperation;
+    }
+    fn snapshot_unsupported(_: *anyopaque) Error!DbSnapshot {
+        return error.UnsupportedOperation;
+    }
+    fn flush_noop(_: *anyopaque, _: bool) Error!void {}
+    fn clear_noop(_: *anyopaque) Error!void {}
+    fn compact_noop(_: *anyopaque) Error!void {}
+    fn gather_metric_zero(_: *anyopaque) Error!DbMetric {
+        return .{};
+    }
+};
 
-fn get_null(_: *anyopaque, _: []const u8, _: ReadFlags) Error!?DbValue {
-    return null;
-}
-
-fn contains_false(_: *anyopaque, _: []const u8) Error!bool {
-    return false;
-}
-
-fn iterator_unsupported(_: *anyopaque, _: bool) Error!DbIterator {
-    return error.UnsupportedOperation;
-}
-
-fn snapshot_unsupported(_: *anyopaque) Error!DbSnapshot {
-    return error.UnsupportedOperation;
-}
-
-fn flush_noop(_: *anyopaque, _: bool) Error!void {}
-
-fn clear_noop(_: *anyopaque) Error!void {}
-
-fn compact_noop(_: *anyopaque) Error!void {}
-
-fn gather_metric_zero(_: *anyopaque) Error!DbMetric {
-    return .{};
+/// Build a `Database.VTable` with sensible no-op/stub defaults for tests.
+///
+/// Callers override only the fields they care about, eliminating boilerplate
+/// in test mocks. Example:
+///
+/// ```zig
+/// const vtable = test_vtable(.{ .put = my_put_impl, .merge = my_merge_impl });
+/// ```
+fn test_vtable(overrides: struct {
+    name: *const fn (*anyopaque) DbName = test_stubs.name_default,
+    get: *const fn (*anyopaque, []const u8, ReadFlags) Error!?DbValue = test_stubs.get_null,
+    put: *const fn (*anyopaque, []const u8, ?[]const u8, WriteFlags) Error!void = test_stubs.put_noop,
+    delete: *const fn (*anyopaque, []const u8, WriteFlags) Error!void = test_stubs.delete_noop,
+    contains: *const fn (*anyopaque, []const u8) Error!bool = test_stubs.contains_false,
+    iterator: *const fn (*anyopaque, bool) Error!DbIterator = test_stubs.iterator_unsupported,
+    snapshot: *const fn (*anyopaque) Error!DbSnapshot = test_stubs.snapshot_unsupported,
+    flush: *const fn (*anyopaque, bool) Error!void = test_stubs.flush_noop,
+    clear: *const fn (*anyopaque) Error!void = test_stubs.clear_noop,
+    compact: *const fn (*anyopaque) Error!void = test_stubs.compact_noop,
+    gather_metric: *const fn (*anyopaque) Error!DbMetric = test_stubs.gather_metric_zero,
+    write_batch: ?*const fn (*anyopaque, []const WriteBatchOp) Error!void = null,
+    merge: ?*const fn (*anyopaque, []const u8, []const u8, WriteFlags) Error!void = null,
+}) Database.VTable {
+    return .{
+        .name = overrides.name,
+        .get = overrides.get,
+        .put = overrides.put,
+        .delete = overrides.delete,
+        .contains = overrides.contains,
+        .iterator = overrides.iterator,
+        .snapshot = overrides.snapshot,
+        .flush = overrides.flush,
+        .clear = overrides.clear,
+        .compact = overrides.compact,
+        .gather_metric = overrides.gather_metric,
+        .write_batch = overrides.write_batch,
+        .merge = overrides.merge,
+    };
 }
 
 /// Minimal mock database for testing the vtable dispatch mechanism.
@@ -954,19 +991,12 @@ const MockDb = struct {
         return false;
     }
 
-    const vtable = Database.VTable{
-        .name = name_default,
+    const vtable = test_vtable(.{
         .get = get_impl,
         .put = put_impl,
         .delete = delete_impl,
         .contains = contains_impl,
-        .iterator = iterator_unsupported,
-        .snapshot = snapshot_unsupported,
-        .flush = flush_noop,
-        .clear = clear_noop,
-        .compact = compact_noop,
-        .gather_metric = gather_metric_zero,
-    };
+    });
 
     fn database(self: *MockDb) Database {
         return .{
@@ -1027,30 +1057,11 @@ test "Database supports_write_batch reports false when absent" {
 
 test "Database supports_write_batch reports true when present" {
     const BatchDb = struct {
-        const Self = @This();
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
         fn write_batch_impl(_: *anyopaque, _: []const WriteBatchOp) Error!void {}
 
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            .write_batch = write_batch_impl,
-        };
+        const vtable = test_vtable(.{ .write_batch = write_batch_impl });
 
-        fn database(self: *Self) Database {
+        fn database(self: *@This()) Database {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
     };
@@ -1167,19 +1178,7 @@ const TrackingDb = struct {
         };
     }
 
-    const vtable = Database.VTable{
-        .name = name_default,
-        .get = get_null,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_false,
-        .iterator = iterator_unsupported,
-        .snapshot = snapshot_unsupported,
-        .flush = flush_noop,
-        .clear = clear_noop,
-        .compact = compact_noop,
-        .gather_metric = gather_metric_zero,
-    };
+    const vtable = test_vtable(.{ .put = put_impl, .delete = delete_impl });
 
     fn database(self: *TrackingDb) Database {
         return .{
@@ -1314,19 +1313,7 @@ const FailingDb = struct {
         self.applied += 1;
     }
 
-    const vtable = Database.VTable{
-        .name = name_default,
-        .get = get_null,
-        .put = put_impl,
-        .delete = delete_impl,
-        .contains = contains_false,
-        .iterator = iterator_unsupported,
-        .snapshot = snapshot_unsupported,
-        .flush = flush_noop,
-        .clear = clear_noop,
-        .compact = compact_noop,
-        .gather_metric = gather_metric_zero,
-    };
+    const vtable = test_vtable(.{ .put = put_impl, .delete = delete_impl });
 
     fn database(self: *FailingDb) Database {
         return .{
@@ -1382,20 +1369,11 @@ const AtomicDb = struct {
         self.committed_count += ops.len;
     }
 
-    const vtable = Database.VTable{
-        .name = name_default,
-        .get = get_null,
+    const vtable = test_vtable(.{
         .put = put_impl,
         .delete = delete_impl,
-        .contains = contains_false,
         .write_batch = write_batch_impl,
-        .iterator = iterator_unsupported,
-        .snapshot = snapshot_unsupported,
-        .flush = flush_noop,
-        .clear = clear_noop,
-        .compact = compact_noop,
-        .gather_metric = gather_metric_zero,
-    };
+    });
 
     fn database(self: *AtomicDb) Database {
         return .{
@@ -1745,29 +1723,9 @@ test "Database supports_merge reports false when absent" {
 
 test "Database supports_merge reports true when present" {
     const MergeDb = struct {
-        const Self = @This();
-
         fn merge_impl(_: *anyopaque, _: []const u8, _: []const u8, _: WriteFlags) Error!void {}
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            .merge = merge_impl,
-        };
-
-        fn database(self: *Self) Database {
+        const vtable = test_vtable(.{ .merge = merge_impl });
+        fn database(self: *@This()) Database {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
     };
@@ -1792,45 +1750,31 @@ test "Database merge_with_flags returns UnsupportedOperation when absent" {
     try std.testing.expectError(error.UnsupportedOperation, db.merge_with_flags("key", "value", WriteFlags.disable_wal));
 }
 
+/// Reusable merge-tracking mock for merge vtable dispatch tests.
+/// Tracks the last key, value, flags, and total merge count.
+const MergeTracker = struct {
+    last_key: ?[]const u8 = null,
+    last_value: ?[]const u8 = null,
+    last_flags: ?WriteFlags = null,
+    merge_count: usize = 0,
+
+    fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+        const self: *MergeTracker = @ptrCast(@alignCast(ptr));
+        self.last_key = key;
+        self.last_value = value;
+        self.last_flags = flags;
+        self.merge_count += 1;
+    }
+
+    const vtable = test_vtable(.{ .merge = merge_impl });
+
+    fn database(self: *MergeTracker) Database {
+        return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+    }
+};
+
 test "Database merge delegates to vtable" {
-    const TrackingMergeDb = struct {
-        last_key: ?[]const u8 = null,
-        last_value: ?[]const u8 = null,
-        last_flags: ?WriteFlags = null,
-        merge_count: usize = 0,
-
-        fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
-            const self: *@This() = @ptrCast(@alignCast(ptr));
-            self.last_key = key;
-            self.last_value = value;
-            self.last_flags = flags;
-            self.merge_count += 1;
-        }
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            .merge = merge_impl,
-        };
-
-        fn database(self: *@This()) Database {
-            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
-        }
-    };
-
-    var tracker = TrackingMergeDb{};
+    var tracker = MergeTracker{};
     const db = tracker.database();
 
     try db.merge("mykey", "myvalue");
@@ -1842,38 +1786,7 @@ test "Database merge delegates to vtable" {
 }
 
 test "Database merge_with_flags forwards flags" {
-    const TrackingMergeDb2 = struct {
-        last_flags: ?WriteFlags = null,
-
-        fn merge_impl(ptr: *anyopaque, _: []const u8, _: []const u8, flags: WriteFlags) Error!void {
-            const self: *@This() = @ptrCast(@alignCast(ptr));
-            self.last_flags = flags;
-        }
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            .merge = merge_impl,
-        };
-
-        fn database(self: *@This()) Database {
-            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
-        }
-    };
-
-    var tracker = TrackingMergeDb2{};
+    var tracker = MergeTracker{};
     const db = tracker.database();
 
     try db.merge_with_flags("k", "v", WriteFlags.disable_wal);
@@ -1917,61 +1830,46 @@ test "WriteBatch merge accumulates operations" {
     try std.testing.expectEqualStrings("val2", batch.ops.items[1].merge.value);
 }
 
+/// Merge-tracking mock that owns copies of keys/values (for commit tests
+/// where the WriteBatch arena is freed after commit succeeds).
+const OwningMergeTracker = struct {
+    merge_count: usize = 0,
+    last_flags: ?WriteFlags = null,
+    alloc: std.mem.Allocator,
+    owned_keys: [8]?[]u8 = .{null} ** 8,
+    owned_values: [8]?[]u8 = .{null} ** 8,
+
+    fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, flags: WriteFlags) Error!void {
+        const self: *OwningMergeTracker = @ptrCast(@alignCast(ptr));
+        self.last_flags = flags;
+        if (self.merge_count < 8) {
+            self.owned_keys[self.merge_count] = self.alloc.dupe(u8, key) catch return error.OutOfMemory;
+            self.owned_values[self.merge_count] = self.alloc.dupe(u8, value) catch return error.OutOfMemory;
+        }
+        self.merge_count += 1;
+    }
+
+    // No write_batch — forces sequential fallback path in WriteBatch.commit.
+    const vtable = test_vtable(.{ .merge = merge_impl });
+
+    fn database(self: *OwningMergeTracker) Database {
+        return .{ .ptr = @ptrCast(self), .vtable = &vtable };
+    }
+
+    fn deinit(self: *OwningMergeTracker) void {
+        for (&self.owned_keys) |*k| {
+            if (k.*) |key| self.alloc.free(key);
+            k.* = null;
+        }
+        for (&self.owned_values) |*v| {
+            if (v.*) |val| self.alloc.free(val);
+            v.* = null;
+        }
+    }
+};
+
 test "WriteBatch commit applies merge ops via fallback path" {
-    // Create a database that supports merge for the fallback path.
-    // Note: the merge_impl must copy keys/values because after commit()
-    // succeeds, WriteBatch.clear() frees the arena that owns them.
-    const MergeFallbackDb = struct {
-        merge_count: usize = 0,
-        alloc: std.mem.Allocator,
-        owned_keys: [8]?[]u8 = .{null} ** 8,
-        owned_values: [8]?[]u8 = .{null} ** 8,
-
-        fn merge_impl(ptr: *anyopaque, key: []const u8, value: []const u8, _: WriteFlags) Error!void {
-            const self: *@This() = @ptrCast(@alignCast(ptr));
-            if (self.merge_count < 8) {
-                self.owned_keys[self.merge_count] = self.alloc.dupe(u8, key) catch return error.OutOfMemory;
-                self.owned_values[self.merge_count] = self.alloc.dupe(u8, value) catch return error.OutOfMemory;
-            }
-            self.merge_count += 1;
-        }
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            // No write_batch — forces fallback path
-            .merge = merge_impl,
-        };
-
-        fn database(self: *@This()) Database {
-            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
-        }
-
-        fn deinit(self: *@This()) void {
-            for (&self.owned_keys) |*k| {
-                if (k.*) |key| self.alloc.free(key);
-                k.* = null;
-            }
-            for (&self.owned_values) |*v| {
-                if (v.*) |val| self.alloc.free(val);
-                v.* = null;
-            }
-        }
-    };
-
-    var merge_db = MergeFallbackDb{ .alloc = std.testing.allocator };
+    var merge_db = OwningMergeTracker{ .alloc = std.testing.allocator };
     defer merge_db.deinit();
 
     var batch = WriteBatch.init(std.testing.allocator, merge_db.database());
@@ -2008,39 +1906,9 @@ test "WriteBatch commit with merge ops via atomic path" {
 }
 
 test "WriteBatch merge_with_flags forwards flags via fallback path" {
-    const MergeFlagsDb = struct {
-        last_flags: ?WriteFlags = null,
-
-        fn merge_impl(ptr: *anyopaque, _: []const u8, _: []const u8, flags: WriteFlags) Error!void {
-            const self: *@This() = @ptrCast(@alignCast(ptr));
-            self.last_flags = flags;
-        }
-
-        fn put_impl(_: *anyopaque, _: []const u8, _: ?[]const u8, _: WriteFlags) Error!void {}
-        fn delete_impl(_: *anyopaque, _: []const u8, _: WriteFlags) Error!void {}
-
-        const vtable = Database.VTable{
-            .name = name_default,
-            .get = get_null,
-            .put = put_impl,
-            .delete = delete_impl,
-            .contains = contains_false,
-            .iterator = iterator_unsupported,
-            .snapshot = snapshot_unsupported,
-            .flush = flush_noop,
-            .clear = clear_noop,
-            .compact = compact_noop,
-            .gather_metric = gather_metric_zero,
-            // No write_batch — forces fallback path
-            .merge = merge_impl,
-        };
-
-        fn database(self: *@This()) Database {
-            return .{ .ptr = @ptrCast(self), .vtable = &vtable };
-        }
-    };
-
-    var merge_db = MergeFlagsDb{};
+    // Reuses OwningMergeTracker which also tracks last_flags.
+    var merge_db = OwningMergeTracker{ .alloc = std.testing.allocator };
+    defer merge_db.deinit();
 
     var batch = WriteBatch.init(std.testing.allocator, merge_db.database());
     defer batch.deinit();
