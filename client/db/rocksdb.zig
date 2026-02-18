@@ -335,3 +335,14 @@ test "RocksDatabase: multi_get returns StorageError (unimplemented stub)" {
     var results: [2]?adapter.DbValue = undefined;
     try std.testing.expectError(error.StorageError, iface.multi_get(keys, &results));
 }
+
+// -- Sorted view tests (RocksDatabase stub does NOT implement sorted view) ----
+
+test "RocksDatabase: supports_sorted_view returns false (unimplemented stub)" {
+    const settings = DbSettings.init(.state, "/tmp/guillotine-state");
+    var db = RocksDatabase.init(settings);
+    defer db.deinit();
+
+    const iface = db.database();
+    try std.testing.expect(!iface.supports_sorted_view());
+}
