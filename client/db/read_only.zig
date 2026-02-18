@@ -148,6 +148,7 @@ pub const ReadOnlyDb = struct {
             .clear = clear_impl,
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
+            .multi_get = multi_get_impl,
         });
     }
 
@@ -379,6 +380,28 @@ pub const ReadOnlyDb = struct {
 
     fn gather_metric_impl(self: *ReadOnlyDb) Error!DbMetric {
         return self.wrapped.gather_metric();
+    }
+
+    fn multi_get_impl(self: *ReadOnlyDb, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
+        if (self.overlay) |ov| {
+            // Overlay merge pattern: check overlay first, then wrapped.
+            // Mirrors Nethermind's ReadOnlyDb.this[byte[][] keys] which gets
+            // results from both wrapped and overlay, then merges with overlay
+            // values taking precedence.
+            for (keys, 0..) |key, i| {
+                if (ov.get_with_flags(key, flags)) |val| {
+                    results[i] = val;
+                } else {
+                    // Not in overlay — fall back to wrapped.
+                    results[i] = try self.wrapped.get_with_flags(key, flags);
+                }
+            }
+        } else {
+            // No overlay — delegate entirely to wrapped.
+            // If wrapped supports multi_get, use it; otherwise sequential
+            // fallback via Database.multi_get_with_flags.
+            try self.wrapped.multi_get_with_flags(keys, results, flags);
+        }
     }
 };
 
@@ -872,4 +895,113 @@ test "ReadOnlyDb: deinit frees overlay memory (leak check)" {
 
     // If deinit doesn't free properly, testing allocator will report a leak
     ro.deinit();
+}
+
+// -- multi_get tests ---------------------------------------------------------
+
+test "ReadOnlyDb: multi_get delegates to wrapped (no overlay)" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("a", "val_a");
+    try mem.put("b", "val_b");
+
+    var ro = ReadOnlyDb.init(mem.database());
+    defer ro.deinit();
+
+    const iface = ro.database();
+    try std.testing.expect(iface.supports_multi_get());
+
+    const keys = &[_][]const u8{ "a", "b", "c" };
+    var results: [3]?adapter.DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("val_a", results[0].?.bytes);
+    try std.testing.expect(results[1] != null);
+    try std.testing.expectEqualStrings("val_b", results[1].?.bytes);
+    try std.testing.expect(results[2] == null);
+}
+
+test "ReadOnlyDb: multi_get overlay takes precedence over wrapped" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("key", "wrapped_value");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+
+    const iface = ro.database();
+    try iface.put("key", "overlay_value");
+
+    const keys = &[_][]const u8{"key"};
+    var results: [1]?adapter.DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("overlay_value", results[0].?.bytes);
+
+    // Wrapped database is untouched.
+    const wrapped_val = mem.get("key").?;
+    defer wrapped_val.release();
+    try std.testing.expectEqualStrings("wrapped_value", wrapped_val.bytes);
+}
+
+test "ReadOnlyDb: multi_get with mix of overlay and wrapped keys" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("wrapped_only", "from_wrapped");
+    try mem.put("both", "wrapped_both");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+
+    const iface = ro.database();
+    try iface.put("overlay_only", "from_overlay");
+    try iface.put("both", "overlay_both");
+
+    const keys = &[_][]const u8{ "wrapped_only", "overlay_only", "both", "missing" };
+    var results: [4]?adapter.DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    // Key in wrapped only.
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("from_wrapped", results[0].?.bytes);
+    // Key in overlay only.
+    try std.testing.expect(results[1] != null);
+    try std.testing.expectEqualStrings("from_overlay", results[1].?.bytes);
+    // Key in both — overlay wins.
+    try std.testing.expect(results[2] != null);
+    try std.testing.expectEqualStrings("overlay_both", results[2].?.bytes);
+    // Key in neither.
+    try std.testing.expect(results[3] == null);
+}
+
+test "ReadOnlyDb: multi_get after clear_temp_changes falls back to wrapped" {
+    var mem = MemoryDatabase.init(std.testing.allocator, .state);
+    defer mem.deinit();
+
+    try mem.put("key", "wrapped_value");
+
+    var ro = try ReadOnlyDb.init_with_write_store(mem.database(), std.testing.allocator);
+    defer ro.deinit();
+
+    const iface = ro.database();
+    try iface.put("key", "overlay_value");
+    try iface.put("extra", "extra_val");
+
+    // Clear overlay.
+    ro.clear_temp_changes();
+
+    const keys = &[_][]const u8{ "key", "extra" };
+    var results: [2]?adapter.DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    // Falls back to wrapped for "key".
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("wrapped_value", results[0].?.bytes);
+    // "extra" was overlay-only — now gone.
+    try std.testing.expect(results[1] == null);
 }
