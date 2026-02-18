@@ -116,6 +116,7 @@ pub const MemoryDatabase = struct {
             .clear = clear_impl,
             .compact = compact_impl,
             .gather_metric = gather_metric_impl,
+            .multi_get = multi_get_impl,
         });
     }
 
@@ -169,6 +170,17 @@ pub const MemoryDatabase = struct {
         _ = flags;
         self.writes_count += 1;
         _ = self.map.remove(key);
+    }
+
+    /// Retrieve multiple values in a single batch (sequential lookup).
+    ///
+    /// Mirrors Nethermind's `MemDb.this[byte[][] keys]` which does
+    /// `keys.Select(k => new KeyValuePair(k, _db.GetValueOrDefault(k))).ToArray()`.
+    /// Increments `reads_count` by `keys.len`.
+    pub fn multi_get(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) void {
+        for (keys, 0..) |key, i| {
+            results[i] = self.get_with_flags(key, flags);
+        }
     }
 
     /// Check whether `key` exists in the database.
@@ -359,6 +371,10 @@ pub const MemoryDatabase = struct {
             .total_reads = self.reads_count,
             .total_writes = self.writes_count,
         };
+    }
+
+    fn multi_get_impl(self: *MemoryDatabase, keys: []const []const u8, results: []?DbValue, flags: ReadFlags) Error!void {
+        self.multi_get(keys, results, flags);
     }
 };
 
@@ -771,4 +787,71 @@ test "MemoryDatabase: gather_metric reflects counters" {
     const metric = try db.database().gather_metric();
     try std.testing.expectEqual(@as(u64, 1), metric.total_reads);
     try std.testing.expectEqual(@as(u64, 1), metric.total_writes);
+}
+
+// -- multi_get tests ---------------------------------------------------------
+
+test "MemoryDatabase: multi_get returns found and missing keys" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("a", "val_a");
+    try db.put("c", "val_c");
+
+    const keys = &[_][]const u8{ "a", "b", "c" };
+    var results: [3]?DbValue = undefined;
+    db.multi_get(keys, &results, ReadFlags.none);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("val_a", results[0].?.bytes);
+    try std.testing.expect(results[1] == null);
+    try std.testing.expect(results[2] != null);
+    try std.testing.expectEqualStrings("val_c", results[2].?.bytes);
+}
+
+test "MemoryDatabase: multi_get with empty keys slice" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    const keys: []const []const u8 = &.{};
+    var results: [0]?DbValue = .{};
+    db.multi_get(keys, &results, ReadFlags.none);
+    // No crash, no errors — empty is a valid no-op.
+}
+
+test "MemoryDatabase: multi_get increments reads_count" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("x", "1");
+
+    try std.testing.expectEqual(@as(u64, 0), db.reads_count);
+
+    const keys = &[_][]const u8{ "x", "y", "z" };
+    var results: [3]?DbValue = undefined;
+    db.multi_get(keys, &results, ReadFlags.none);
+
+    // Each key lookup increments reads_count via get_with_flags.
+    try std.testing.expectEqual(@as(u64, 3), db.reads_count);
+}
+
+test "MemoryDatabase: multi_get via vtable interface" {
+    var db = MemoryDatabase.init(std.testing.allocator, .state);
+    defer db.deinit();
+
+    try db.put("key1", "value1");
+    try db.put("key3", "value3");
+
+    const iface = db.database();
+    try std.testing.expect(iface.supports_multi_get());
+
+    const keys = &[_][]const u8{ "key1", "key2", "key3" };
+    var results: [3]?DbValue = undefined;
+    try iface.multi_get(keys, &results);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqualStrings("value1", results[0].?.bytes);
+    try std.testing.expect(results[1] == null);
+    try std.testing.expect(results[2] != null);
+    try std.testing.expectEqualStrings("value3", results[2].?.bytes);
 }
