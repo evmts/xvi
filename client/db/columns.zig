@@ -1309,3 +1309,63 @@ test "ColumnsDb getColumnDb returns different Database per column" {
     try std.testing.expect(v2 != null);
     try std.testing.expectEqualStrings("blocks", v2.?.bytes);
 }
+
+// -- Sorted view parity tests (Nethermind ColumnDb : ISortedKeyValueStore) ---
+
+test "ColumnsDb: per-column sorted view support via Database interface" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+
+    try cdb.getColumnDb(.default).put("bbb", "2");
+    try cdb.getColumnDb(.default).put("aaa", "1");
+    try cdb.getColumnDb(.default).put("ccc", "3");
+
+    // ColumnsDb delegates to MemoryDatabase which supports sorted view.
+    try std.testing.expect(cdb.getColumnDb(.default).supports_sorted_view());
+
+    const first = (try cdb.getColumnDb(.default).first_key()).?;
+    try std.testing.expectEqualStrings("aaa", first.bytes);
+
+    const last = (try cdb.getColumnDb(.default).last_key()).?;
+    try std.testing.expectEqualStrings("ccc", last.bytes);
+
+    var view = try cdb.getColumnDb(.default).get_view_between("aaa", "zzz");
+    defer view.deinit();
+
+    const e1 = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", e1.key.bytes);
+    const e2 = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", e2.key.bytes);
+    const e3 = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("ccc", e3.key.bytes);
+    try std.testing.expect((try view.move_next()) == null);
+}
+
+test "ReadOnlyColumnsDb: sorted view forwards through ReadOnlyDb to underlying" {
+    var mcdb = MemColumnsDb(ReceiptsColumns).init(std.testing.allocator, .receipts);
+    defer mcdb.deinit();
+
+    var cdb = mcdb.columnsDb();
+    try cdb.getColumnDb(.default).put("bbb", "2");
+    try cdb.getColumnDb(.default).put("aaa", "1");
+
+    var ro = try ReadOnlyColumnsDb(ReceiptsColumns).init(std.testing.allocator, cdb.columns, false);
+    defer ro.deinit();
+
+    // ReadOnlyColumnsDb wraps ReadOnlyDb which now forwards sorted view ops.
+    try std.testing.expect(ro.getColumnDb(.default).supports_sorted_view());
+
+    const first = (try ro.getColumnDb(.default).first_key()).?;
+    try std.testing.expectEqualStrings("aaa", first.bytes);
+
+    var view = try ro.getColumnDb(.default).get_view_between("aaa", "zzz");
+    defer view.deinit();
+
+    const e1 = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("aaa", e1.key.bytes);
+    const e2 = (try view.move_next()).?;
+    try std.testing.expectEqualStrings("bbb", e2.key.bytes);
+    try std.testing.expect((try view.move_next()) == null);
+}
