@@ -9,7 +9,7 @@
 /// - `Database` — Type-erased vtable interface for any KV backend.
 /// - `WriteBatch` — Batched write operations with optional atomicity.
 /// - `MemoryDatabase` — In-memory backend (for tests and ephemeral state).
-/// - `NullDb` — Null object backend (reads return null, writes error).
+/// - `NullDb` — Null object backend (reads return null, writes silently discard).
 /// - `ReadOnlyDb` — Read-only wrapper with optional in-memory overlay.
 /// - `RocksDatabase` — RocksDB backend stub (not yet implemented).
 /// - `DbSettings` — RocksDB configuration settings (name/path + flags + merge operators).
