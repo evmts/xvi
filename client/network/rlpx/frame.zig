@@ -1,5 +1,5 @@
 const std = @import("std");
-const Rlp = @import("primitives").Rlp;
+const Rlp = @import("voltaire").Rlp;
 
 /// Size of the RLPx MAC (16 bytes).
 pub const MacSize: u16 = 16;

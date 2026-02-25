@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 
 /// JSON-RPC error code primitive (Voltaire Int32).
 pub const JsonRpcErrorCode = primitives.Int32.Int32;

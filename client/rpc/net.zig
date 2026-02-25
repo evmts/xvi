@@ -3,7 +3,7 @@
 //! Implements `net_version` per execution-apis `eth/client.yaml` and EIP-1474:
 //! result is a decimal string network ID (not QUANTITY hex).
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 const envelope = @import("envelope.zig");
 const errors = @import("error.zig");
 const Response = @import("response.zig").Response;

@@ -749,8 +749,8 @@ test "SingleRequestProcessor.init + handle routes eth_chainId" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -782,8 +782,8 @@ test "SingleRequestProcessor.handle routes web3_sha3" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -821,8 +821,8 @@ test "SingleRequestProcessor.handle returns method_not_found for unknown method 
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -854,8 +854,8 @@ test "SingleRequestProcessor.handle emits no response for unknown notification" 
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -884,8 +884,8 @@ test "BatchRequestExecutor.init + handle routes batch and omits notifications" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -924,8 +924,8 @@ test "BatchRequestExecutor.handle emits no response when batch is notifications 
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -960,8 +960,8 @@ test "BatchRequestExecutor.handle rejects oversized unauthenticated batch" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -999,8 +999,8 @@ test "BatchRequestExecutor.handle allows oversized authenticated batch" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -1038,8 +1038,8 @@ test "BatchRequestExecutor.handle includes per-entry invalid_request errors" {
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -1076,8 +1076,8 @@ test "BatchRequestExecutor.handle enforces max batch response body size for unau
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {
@@ -1118,8 +1118,8 @@ test "BatchRequestExecutor.handle ignores max batch response body size for authe
         }
     };
     const ProviderNet = struct {
-        pub fn getNetworkId(_: *const @This()) @import("primitives").NetworkId.NetworkId {
-            return @import("primitives").NetworkId.MAINNET;
+        pub fn getNetworkId(_: *const @This()) @import("voltaire").NetworkId.NetworkId {
+            return @import("voltaire").NetworkId.MAINNET;
         }
     };
     const ProviderWeb3 = struct {

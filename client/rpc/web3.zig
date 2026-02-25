@@ -9,7 +9,7 @@ const envelope = @import("envelope.zig");
 const errors = @import("error.zig");
 const scan = @import("scan.zig");
 const Response = @import("response.zig").Response;
-const Hash32 = @import("primitives").Hash.Hash;
+const Hash32 = @import("voltaire").Hash.Hash;
 
 /// Generic WEB3 API surface (comptime-injected provider).
 ///

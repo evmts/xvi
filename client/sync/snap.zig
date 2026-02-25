@@ -1,6 +1,6 @@
 /// snap/1 request containers for state snapshot synchronization.
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 const Hash = primitives.Hash;
 
 /// GetAccountRange (0x00) request parameters.

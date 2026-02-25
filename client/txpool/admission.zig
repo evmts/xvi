@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 
 const TxPool = @import("pool.zig").TxPool;
 const AcceptTxResult = @import("accept_result.zig").AcceptTxResult;

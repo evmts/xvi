@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 
 const Uint16 = primitives.Uint16;
 const Rlp = primitives.Rlp;

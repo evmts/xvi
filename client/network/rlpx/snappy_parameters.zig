@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("primitives");
+const primitives = @import("voltaire");
 const frame = @import("frame.zig");
 const Uint32 = primitives.Uint32;
 
