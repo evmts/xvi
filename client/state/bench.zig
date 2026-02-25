@@ -17,7 +17,8 @@
 /// for ~200 txs/block with nested CALL depths up to 1024, each requiring
 /// snapshot/restore. Journal overhead must be negligible compared to EVM execution.
 const std = @import("std");
-const journal_mod = @import("journal.zig");
+const voltaire = @import("voltaire");
+const journal_mod = voltaire.Journal;
 const Journal = journal_mod.Journal;
 const ChangeTag = journal_mod.ChangeTag;
 const Entry = journal_mod.Entry;

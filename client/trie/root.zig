@@ -6,8 +6,6 @@
 //! ## Modules
 //!
 //! - `hash` — Root hash computation via `patricialize()` algorithm
-//! - `node` — Trie node types (Leaf, Extension, Branch, Node union)
-//! - `trie` — High-level helpers (secureKey, putSecure) [not imported in phase-1]
 //!
 //! ## Architecture
 //!
@@ -31,13 +29,10 @@
 //! const root = try trie.trie_root(allocator, &keys, &values);
 //! ```
 
-/// Hashing and patricialize implementation details.
-pub const hash = @import("hash.zig");
-/// Minimal primitives surface (hash types, etc.).
-pub const node = @import("node.zig");
-// NOTE: Avoid importing `trie.zig` in phase-1 to prevent pulling in upstream
-// Voltaire trie internals that are not required for root hash computation.
-// pub const trie = @import("trie.zig");
+const voltaire = @import("voltaire");
+
+/// Hashing and patricialize implementation (from Voltaire).
+pub const hash = voltaire.TrieHash;
 
 // Re-export primary API
 /// Compute the Merkle Patricia Trie root hash for key-value pairs.
@@ -46,8 +41,6 @@ pub const trie_root = hash.trie_root;
 pub const secure_trie_root = hash.secure_trie_root;
 /// Root hash for an empty trie (keccak256(RLP(""))).
 pub const EMPTY_TRIE_ROOT = hash.EMPTY_TRIE_ROOT;
-/// 32-byte hash type used for root hashes (canonical primitives hash type).
-pub const Hash32 = @import("voltaire").Hash.Hash;
 
 test {
     // Ensure all sub-modules compile and their tests run.

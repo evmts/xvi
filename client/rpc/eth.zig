@@ -57,21 +57,6 @@ pub fn EthApi(comptime Provider: type) type {
                 },
             }
         }
-
-        /// Convenience wrapper that extracts request id from raw request bytes.
-        ///
-        /// Prefer using `handle_chain_id` with a pre-parsed id to avoid reparsing
-        /// in the hot request path.
-        pub fn handle_chain_id_from_request(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
-            const id_res = envelope.extract_request_id(request_bytes);
-            switch (id_res) {
-                .id => |rid| try self.handle_chain_id(writer, rid),
-                .err => |code| {
-                    // Per EIP-1474, when id cannot be determined, respond with id:null
-                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
-                },
-            }
-        }
     };
 }
 
@@ -89,17 +74,9 @@ test "EthApi.handleChainId: number id -> QUANTITY result" {
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req =
-        "{\n" ++
-        "  \"jsonrpc\": \"2.0\",\n" ++
-        "  \"id\": 7,\n" ++
-        "  \"method\": \"eth_chainId\",\n" ++
-        "  \"params\": []\n" ++
-        "}";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id_from_request(buf.writer(), req);
+    try api.handle_chain_id(buf.writer(), .{ .present = .{ .number = "7" } });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x1\"}",
         buf.items,
@@ -116,45 +93,13 @@ test "EthApi.handleChainId: string id preserved; QUANTITY encoding" {
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req =
-        "{\n" ++
-        "  \"jsonrpc\": \"2.0\",\n" ++
-        "  \"id\": \"abc-123\",\n" ++
-        "  \"method\": \"eth_chainId\",\n" ++
-        "  \"params\": []\n" ++
-        "}";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id_from_request(buf.writer(), req);
+    try api.handle_chain_id(buf.writer(), .{ .present = .{ .string = "abc-123" } });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":\"abc-123\",\"result\":\"0x1a\"}",
         buf.items,
     );
-}
-
-test "EthApi.handleChainId: invalid envelope -> EIP-1474 error with id:null" {
-    const Provider = struct {
-        pub fn getChainId(_: *const @This()) u64 {
-            return 1;
-        }
-    };
-    const Api = EthApi(Provider);
-    const provider = Provider{};
-    var api = Api{ .provider = &provider };
-
-    // Batch array at top level is not handled here
-    const bad = "[ { \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"eth_chainId\", \"params\": [] } ]";
-
-    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    try api.handle_chain_id_from_request(buf.writer(), bad);
-
-    const code = errors.code.invalid_request;
-    var expect_buf: [256]u8 = undefined;
-    var fba = std.io.fixedBufferStream(&expect_buf);
-    try Response.write_error(fba.writer(), .null, code, errors.default_message(code), null);
-    try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
 }
 
 test "EthApi.handleChainId: notification id missing emits no response" {
@@ -173,7 +118,7 @@ test "EthApi.handleChainId: notification id missing emits no response" {
     try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }
 
-test "EthApi.handleChainIdFromRequest: explicit id null emits response with id:null" {
+test "EthApi.handleChainId: explicit id null emits response with id:null" {
     const Provider = struct {
         pub fn getChainId(_: *const @This()) u64 {
             return 1;
@@ -183,31 +128,11 @@ test "EthApi.handleChainIdFromRequest: explicit id null emits response with id:n
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req = "{ \"jsonrpc\": \"2.0\", \"id\": null, \"method\": \"eth_chainId\", \"params\": [] }";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_chain_id_from_request(buf.writer(), req);
+    try api.handle_chain_id(buf.writer(), .{ .present = .null });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":\"0x1\"}",
         buf.items,
     );
-}
-
-test "EthApi.handleChainIdFromRequest: missing id notification emits no response" {
-    const Provider = struct {
-        pub fn getChainId(_: *const @This()) u64 {
-            return 1;
-        }
-    };
-    const Api = EthApi(Provider);
-    const provider = Provider{};
-    var api = Api{ .provider = &provider };
-
-    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"eth_chainId\", \"params\": [] }";
-
-    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    try api.handle_chain_id_from_request(buf.writer(), req);
-    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }

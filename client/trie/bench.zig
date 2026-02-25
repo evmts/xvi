@@ -14,7 +14,7 @@
 /// ~10 storage slots each = ~2000 state changes. The trie must compute state roots
 /// from these changes within the block processing budget.
 const std = @import("std");
-const hash_mod = @import("hash.zig");
+const hash_mod = @import("voltaire").TrieHash;
 const trie_root = hash_mod.trie_root;
 const Hash = @import("crypto").Hash;
 

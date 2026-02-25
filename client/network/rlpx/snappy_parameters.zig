@@ -20,7 +20,7 @@ const ProtocolMaxCompressedLength: usize = @as(usize, @intCast(frame.ProtocolMax
 
 /// Parses the Snappy length preamble and enforces the RLPx 16 MiB cap.
 /// The preamble is a little-endian base-128 varint as per Snappy framing.
-fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
+pub fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
     if (frame_data.len > ProtocolMaxCompressedLength) return error.CompressedLengthTooLarge;
     if (frame_data.len == 0) return error.MissingLengthHeader;
 
@@ -44,12 +44,6 @@ fn validate_uncompressed_length(frame_data: []const u8) SnappyGuardError!usize {
     }
 
     return error.MissingLengthHeader;
-}
-
-/// Fast pre-decode guard for RLPx handlers before Snappy decompression.
-/// Returns the parsed uncompressed length so callers can size buffers.
-pub fn guard_before_decompression(frame_data: []const u8) SnappyGuardError!usize {
-    return validate_uncompressed_length(frame_data);
 }
 
 test "snappy max length is 16 MiB" {
@@ -101,23 +95,23 @@ test "validate_uncompressed_length enforces compressed and uncompressed limits" 
     );
 }
 
-test "guard_before_decompression accepts valid snappy preamble" {
+test "validate_uncompressed_length accepts valid snappy preamble" {
     try std.testing.expectEqual(
         @as(usize, 1),
-        try guard_before_decompression(&[_]u8{0x01}),
+        try validate_uncompressed_length(&[_]u8{0x01}),
     );
 }
 
-test "guard_before_decompression fails fast on oversized payload metadata" {
+test "validate_uncompressed_length fails fast on oversized payload metadata" {
     try std.testing.expectError(
         error.UncompressedLengthTooLarge,
-        guard_before_decompression(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
+        validate_uncompressed_length(&[_]u8{ 0x81, 0x80, 0x80, 0x08 }),
     );
 }
 
-test "guard_before_decompression rejects continuation-only five-byte varint" {
+test "validate_uncompressed_length rejects continuation-only five-byte varint" {
     try std.testing.expectError(
         error.LengthVarintTooLong,
-        guard_before_decompression(&[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80 }),
+        validate_uncompressed_length(&[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80 }),
     );
 }

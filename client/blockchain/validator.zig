@@ -62,23 +62,12 @@ fn validate_pos_header_constants(header: *const BlockHeader.BlockHeader) Validat
     }
 }
 
-/// Returns true when `gas_limit` is within the allowed parent delta.
-///
-/// The valid range is strictly between `parent - delta` and `parent + delta`
-/// (exclusive on both ends), matching execution-specs `check_gas_limit`:
-///
-///   `parent_gas_limit - delta < gas_limit < parent_gas_limit + delta`
-///
-/// where `delta = parent_gas_limit // GAS_LIMIT_ADJUSTMENT_FACTOR`.
-inline fn gas_limit_within_delta(gas_limit: u64, parent_gas_limit: u64) bool {
-    const max_adjustment_delta = parent_gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
-    if (gas_limit >= parent_gas_limit + max_adjustment_delta) return false;
-    if (gas_limit <= parent_gas_limit - max_adjustment_delta) return false;
-    return true;
-}
-
 fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) bool {
-    if (!gas_limit_within_delta(gas_limit, parent_gas_limit)) return false;
+    var tmp_header = BlockHeader.init();
+    tmp_header.gas_limit = gas_limit;
+    var tmp_parent = BlockHeader.init();
+    tmp_parent.gas_limit = parent_gas_limit;
+    BlockHeader.validateGasLimitDelta(&tmp_header, &tmp_parent) catch return false;
     if (gas_limit < GAS_LIMIT_MINIMUM) return false;
     return true;
 }
@@ -135,7 +124,7 @@ fn validate_post_merge_header(
     if (header.gas_used > header.gas_limit) return ValidationError.InvalidGasUsed;
 
     // Enforce gas-limit delta rule explicitly before base-fee progression.
-    try validate_gas_limit_delta(header, parent_header);
+    BlockHeader.validateGasLimitDelta(header, parent_header) catch return ValidationError.InvalidGasLimit;
 
     const parent_base_fee = parent_header.base_fee_per_gas orelse return ValidationError.MissingBaseFee;
     const expected_base_fee = try calculate_base_fee_per_gas(
@@ -147,7 +136,7 @@ fn validate_post_merge_header(
     const header_base_fee = header.base_fee_per_gas orelse return ValidationError.MissingBaseFee;
     if (expected_base_fee != header_base_fee) return ValidationError.InvalidBaseFee;
 
-    try validate_timestamp_strictly_greater(header, parent_header);
+    BlockHeader.validateTimestampStrictlyGreater(header, parent_header) catch return ValidationError.InvalidTimestamp;
     if (header.number != parent_header.number + 1) return ValidationError.InvalidBlockNumber;
 
     try validate_pos_header_constants(header);
@@ -183,17 +172,6 @@ fn validate_blob_fields_for_hardfork(
     if (header.blob_gas_used != null or header.excess_blob_gas != null or header.parent_beacon_block_root != null) {
         return ValidationError.UnexpectedBlobFieldsPreCancun;
     }
-}
-
-/// Ensures `header.timestamp` is strictly greater than `parent.timestamp`.
-///
-/// Matches execution-specs invariant across PoW/PoS forks (e.g., London+):
-/// child blocks must be created after their parents.
-pub fn validate_timestamp_strictly_greater(
-    header: *const BlockHeader.BlockHeader,
-    parent: *const BlockHeader.BlockHeader,
-) ValidationError!void {
-    if (header.timestamp <= parent.timestamp) return ValidationError.InvalidTimestamp;
 }
 
 /// Decides whether `header` should be validated under post-merge (PoS) rules.
@@ -362,28 +340,28 @@ test "merge_header_validator - enforces PoS constants post-merge" {
     try std.testing.expectError(ValidationError.InvalidNonce, MergeValidator.validate(&header, ctx));
 }
 
-test "validate_timestamp_strictly_greater - accepts strictly greater" {
+test "validateTimestampStrictlyGreater - accepts strictly greater" {
     var parent = BlockHeader.init();
     parent.timestamp = 10;
     var header = BlockHeader.init();
     header.timestamp = 11;
-    try validate_timestamp_strictly_greater(&header, &parent);
+    try BlockHeader.validateTimestampStrictlyGreater(&header, &parent);
 }
 
-test "validate_timestamp_strictly_greater - rejects equal" {
+test "validateTimestampStrictlyGreater - rejects equal" {
     var parent = BlockHeader.init();
     parent.timestamp = 42;
     var header = BlockHeader.init();
     header.timestamp = 42;
-    try std.testing.expectError(ValidationError.InvalidTimestamp, validate_timestamp_strictly_greater(&header, &parent));
+    try std.testing.expectError(error.InvalidTimestamp, BlockHeader.validateTimestampStrictlyGreater(&header, &parent));
 }
 
-test "validate_timestamp_strictly_greater - rejects less" {
+test "validateTimestampStrictlyGreater - rejects less" {
     var parent = BlockHeader.init();
     parent.timestamp = 100;
     var header = BlockHeader.init();
     header.timestamp = 99;
-    try std.testing.expectError(ValidationError.InvalidTimestamp, validate_timestamp_strictly_greater(&header, &parent));
+    try std.testing.expectError(error.InvalidTimestamp, BlockHeader.validateTimestampStrictlyGreater(&header, &parent));
 }
 
 test "merge_header_validator - treats Shanghai+ as post-merge" {
@@ -793,22 +771,7 @@ test "merge validation boundaries cover gas limit and TTD edges" {
     try std.testing.expect(is_post_merge(&header, ctx));
 }
 
-/// Ensures the gas limit change from parent to header is within
-/// the allowed per-block delta of parent.gas_limit / 1024 (exclusive).
-///
-/// Per execution-specs `check_gas_limit`, the valid range is:
-///   `parent - delta < gas_limit < parent + delta`
-/// where `delta = parent.gas_limit // 1024`. Exact boundary values are
-/// rejected. This does not enforce the absolute minimum gas limit (5000).
-pub fn validate_gas_limit_delta(
-    header: *const BlockHeader.BlockHeader,
-    parent: *const BlockHeader.BlockHeader,
-) ValidationError!void {
-    if (!gas_limit_within_delta(header.gas_limit, parent.gas_limit))
-        return ValidationError.InvalidGasLimit;
-}
-
-test "validate_gas_limit_delta - rejects at exact boundary (exclusive bounds per spec)" {
+test "validateGasLimitDelta - rejects at exact boundary (exclusive bounds per spec)" {
     var parent = BlockHeader.init();
     parent.gas_limit = 1_000_000;
 
@@ -817,14 +780,14 @@ test "validate_gas_limit_delta - rejects at exact boundary (exclusive bounds per
 
     // Exact upper boundary is REJECTED (exclusive): gas_limit >= parent + delta -> invalid
     header.gas_limit = parent.gas_limit + delta;
-    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+    try std.testing.expectError(error.InvalidGasLimit, BlockHeader.validateGasLimitDelta(&header, &parent));
 
     // Exact lower boundary is REJECTED (exclusive): gas_limit <= parent - delta -> invalid
     header.gas_limit = parent.gas_limit - delta;
-    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+    try std.testing.expectError(error.InvalidGasLimit, BlockHeader.validateGasLimitDelta(&header, &parent));
 }
 
-test "validate_gas_limit_delta - accepts one inside exclusive bounds" {
+test "validateGasLimitDelta - accepts one inside exclusive bounds" {
     var parent = BlockHeader.init();
     parent.gas_limit = 1_000_000;
 
@@ -833,14 +796,14 @@ test "validate_gas_limit_delta - accepts one inside exclusive bounds" {
 
     // One less than upper boundary is accepted
     header.gas_limit = parent.gas_limit + delta - 1;
-    try validate_gas_limit_delta(&header, &parent);
+    try BlockHeader.validateGasLimitDelta(&header, &parent);
 
     // One more than lower boundary is accepted
     header.gas_limit = parent.gas_limit - delta + 1;
-    try validate_gas_limit_delta(&header, &parent);
+    try BlockHeader.validateGasLimitDelta(&header, &parent);
 }
 
-test "validate_gas_limit_delta - rejects above max delta" {
+test "validateGasLimitDelta - rejects above max delta" {
     var parent = BlockHeader.init();
     parent.gas_limit = 1_000_000;
 
@@ -848,10 +811,10 @@ test "validate_gas_limit_delta - rejects above max delta" {
     const delta = parent.gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
     header.gas_limit = parent.gas_limit + delta + 1;
 
-    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+    try std.testing.expectError(error.InvalidGasLimit, BlockHeader.validateGasLimitDelta(&header, &parent));
 }
 
-test "validate_gas_limit_delta - rejects below max delta" {
+test "validateGasLimitDelta - rejects below max delta" {
     var parent = BlockHeader.init();
     parent.gas_limit = 1_000_000;
 
@@ -859,5 +822,5 @@ test "validate_gas_limit_delta - rejects below max delta" {
     const delta = parent.gas_limit / GAS_LIMIT_ADJUSTMENT_FACTOR;
     header.gas_limit = parent.gas_limit - delta - 1;
 
-    try std.testing.expectError(ValidationError.InvalidGasLimit, validate_gas_limit_delta(&header, &parent));
+    try std.testing.expectError(error.InvalidGasLimit, BlockHeader.validateGasLimitDelta(&header, &parent));
 }

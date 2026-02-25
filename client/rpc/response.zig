@@ -94,7 +94,7 @@ pub const Response = struct {
         try writer.writeAll(",\"result\":");
     }
 
-    fn write_id(writer: anytype, id: envelope.Id) !void {
+    pub fn write_id(writer: anytype, id: envelope.Id) !void {
         switch (id) {
             .null => try writer.writeAll("null"),
             .number => |tok| try writer.writeAll(tok),
@@ -109,7 +109,7 @@ pub const Response = struct {
         }
     }
 
-    fn write_json_string(writer: anytype, s: []const u8) !void {
+    pub fn write_json_string(writer: anytype, s: []const u8) !void {
         try writer.writeAll("\"");
         var i: usize = 0;
         while (i < s.len) : (i += 1) {

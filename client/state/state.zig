@@ -7,7 +7,8 @@
 /// These snapshot indexes are used by the world state manager to
 /// restore state after failed calls/transactions.
 const std = @import("std");
-const journal = @import("journal.zig");
+const voltaire = @import("voltaire");
+const journal = voltaire.Journal;
 
 /// Composite snapshot for state + persistent + transient storage.
 pub const Snapshot = struct {

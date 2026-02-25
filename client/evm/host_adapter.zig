@@ -118,14 +118,10 @@ pub const HostAdapter = struct {
 
     fn get_storage(ptr: *anyopaque, address: Address, slot: u256) u256 {
         const self: *Self = @ptrCast(@alignCast(ptr));
-        return self.get_storage_checked(address, slot) catch |err| panic_state_error(
+        return self.state.getStorage(address, slot) catch |err| panic_state_error(
             "{s} failed for {any} slot {}: {any}",
             .{ "getStorage", address, slot, err },
         );
-    }
-
-    fn get_storage_checked(self: *Self, address: Address, slot: u256) !u256 {
-        return self.state.getStorage(address, slot);
     }
 
     fn set_storage(ptr: *anyopaque, address: Address, slot: u256, value: u256) void {
@@ -303,7 +299,7 @@ test "HostAdapter — storage read surfaces backend errors" {
     var adapter = HostAdapter.init(&state);
     const addr = make_address(0xAB);
 
-    const result = adapter.get_storage_checked(addr, 1);
+    const result = adapter.state.getStorage(addr, 1);
     try std.testing.expectError(error.RpcPending, result);
 }
 

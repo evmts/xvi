@@ -52,20 +52,6 @@ pub fn NetApi(comptime Provider: type) type {
                 },
             }
         }
-
-        /// Convenience wrapper that extracts request id from raw request bytes.
-        ///
-        /// Prefer using `handle_version` with a pre-parsed id to avoid reparsing
-        /// in the hot request path.
-        pub fn handle_version_from_request(self: *const Self, writer: anytype, request_bytes: []const u8) !void {
-            const id_res = envelope.extract_request_id(request_bytes);
-            switch (id_res) {
-                .id => |rid| try self.handle_version(writer, rid),
-                .err => |code| {
-                    try Response.write_error(writer, .null, code, errors.default_message(code), null);
-                },
-            }
-        }
     };
 }
 
@@ -83,17 +69,9 @@ test "NetApi.handleVersion: number id -> decimal string result" {
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req =
-        "{\n" ++
-        "  \"jsonrpc\": \"2.0\",\n" ++
-        "  \"id\": 7,\n" ++
-        "  \"method\": \"net_version\",\n" ++
-        "  \"params\": []\n" ++
-        "}";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_version_from_request(buf.writer(), req);
+    try api.handle_version(buf.writer(), .{ .present = .{ .number = "7" } });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"1\"}",
         buf.items,
@@ -110,45 +88,13 @@ test "NetApi.handleVersion: string id preserved" {
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req =
-        "{\n" ++
-        "  \"jsonrpc\": \"2.0\",\n" ++
-        "  \"id\": \"abc-123\",\n" ++
-        "  \"method\": \"net_version\",\n" ++
-        "  \"params\": []\n" ++
-        "}";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_version_from_request(buf.writer(), req);
+    try api.handle_version(buf.writer(), .{ .present = .{ .string = "abc-123" } });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":\"abc-123\",\"result\":\"11155111\"}",
         buf.items,
     );
-}
-
-test "NetApi.handleVersion: invalid envelope -> EIP-1474 error with id:null" {
-    const Provider = struct {
-        pub fn getNetworkId(_: *const @This()) NetworkId {
-            return primitives.NetworkId.MAINNET;
-        }
-    };
-    const Api = NetApi(Provider);
-    const provider = Provider{};
-    var api = Api{ .provider = &provider };
-
-    // Batch array at top level is not handled here.
-    const bad = "[ { \"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"net_version\", \"params\": [] } ]";
-
-    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    try api.handle_version_from_request(buf.writer(), bad);
-
-    const code = errors.code.invalid_request;
-    var expect_buf: [256]u8 = undefined;
-    var fba = std.io.fixedBufferStream(&expect_buf);
-    try Response.write_error(fba.writer(), .null, code, errors.default_message(code), null);
-    try std.testing.expectEqualStrings(fba.getWritten(), buf.items);
 }
 
 test "NetApi.handleVersion: notification id missing emits no response" {
@@ -167,7 +113,7 @@ test "NetApi.handleVersion: notification id missing emits no response" {
     try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }
 
-test "NetApi.handleVersionFromRequest: explicit id null emits response with id:null" {
+test "NetApi.handleVersion: explicit id null emits response with id:null" {
     const Provider = struct {
         pub fn getNetworkId(_: *const @This()) NetworkId {
             return primitives.NetworkId.MAINNET;
@@ -177,31 +123,11 @@ test "NetApi.handleVersionFromRequest: explicit id null emits response with id:n
     const provider = Provider{};
     var api = Api{ .provider = &provider };
 
-    const req = "{ \"jsonrpc\": \"2.0\", \"id\": null, \"method\": \"net_version\", \"params\": [] }";
-
     var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
-    try api.handle_version_from_request(buf.writer(), req);
+    try api.handle_version(buf.writer(), .{ .present = .null });
     try std.testing.expectEqualStrings(
         "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":\"1\"}",
         buf.items,
     );
-}
-
-test "NetApi.handleVersionFromRequest: missing id notification emits no response" {
-    const Provider = struct {
-        pub fn getNetworkId(_: *const @This()) NetworkId {
-            return primitives.NetworkId.MAINNET;
-        }
-    };
-    const Api = NetApi(Provider);
-    const provider = Provider{};
-    var api = Api{ .provider = &provider };
-
-    const req = "{ \"jsonrpc\": \"2.0\", \"method\": \"net_version\", \"params\": [] }";
-
-    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    try api.handle_version_from_request(buf.writer(), req);
-    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }

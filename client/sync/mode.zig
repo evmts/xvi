@@ -40,6 +40,60 @@ pub const SyncMode = struct {
 
     pub const all: u32 = waiting_for_block | disconnected | fast_blocks | fast_sync | state_nodes |
         full | db_load | fast_headers | fast_bodies | fast_receipts | snap_sync | beacon_headers | updating_pivot;
+
+    /// True when node is only waiting or disconnected (not actively syncing).
+    /// Mirrors Nethermind's `SyncModeExtensions.NotSyncing` semantics.
+    pub fn notSyncing(m: u32) bool {
+        return m == waiting_for_block or m == disconnected;
+    }
+
+    /// True if block bodies are not yet fully synchronized.
+    /// Mirrors Nethermind's `HaveNotSyncedBodiesYet` (mask membership).
+    pub fn haveNotSyncedBodiesYet(m: u32) bool {
+        const mask: u32 =
+            fast_headers |
+            fast_bodies |
+            fast_sync |
+            state_nodes |
+            snap_sync |
+            beacon_headers |
+            updating_pivot;
+        return (m & mask) != 0;
+    }
+
+    /// True if receipts are not yet fully synchronized.
+    /// Mirrors Nethermind's `HaveNotSyncedReceiptsYet` (mask membership).
+    pub fn haveNotSyncedReceiptsYet(m: u32) bool {
+        const mask: u32 =
+            fast_blocks |
+            fast_sync |
+            state_nodes |
+            snap_sync |
+            beacon_headers |
+            updating_pivot;
+        return (m & mask) != 0;
+    }
+
+    /// True if headers are not yet fully synchronized.
+    /// Mirrors Nethermind's `HaveNotSyncedHeadersYet` (mask membership).
+    pub fn haveNotSyncedHeadersYet(m: u32) bool {
+        const mask: u32 =
+            fast_headers |
+            beacon_headers |
+            updating_pivot;
+        return (m & mask) != 0;
+    }
+
+    /// True if state (tries/snap) is not yet fully synchronized.
+    /// Mirrors Nethermind's `HaveNotSyncedStateYet` (mask membership).
+    pub fn haveNotSyncedStateYet(m: u32) bool {
+        const mask: u32 =
+            fast_sync |
+            state_nodes |
+            snap_sync |
+            updating_pivot;
+        return (m & mask) != 0;
+    }
 };
 
 // Compile-time bit-layout parity guards (Nethermind SyncMode.cs).
@@ -114,107 +168,51 @@ test "SyncMode bit flags uniqueness and composition" {
     try std.testing.expect((SyncMode.all & SyncMode.updating_pivot) != 0);
 }
 
-/// Helper predicates for sync mode classification (Nethermind-compatible).
-/// True when node is only waiting or disconnected (not actively syncing).
-/// Mirrors Nethermind's `SyncModeExtensions.NotSyncing` semantics.
-pub fn not_syncing(mode: u32) bool {
-    // Mirrors: SyncModeExtensions.NotSyncing (exact value match).
-    return mode == SyncMode.waiting_for_block or mode == SyncMode.disconnected;
+test "SyncMode helper predicates: notSyncing" {
+    try std.testing.expect(SyncMode.notSyncing(SyncMode.waiting_for_block));
+    try std.testing.expect(SyncMode.notSyncing(SyncMode.disconnected));
+    try std.testing.expect(!SyncMode.notSyncing(SyncMode.fast_blocks));
+    try std.testing.expect(!SyncMode.notSyncing(SyncMode.full));
 }
 
-/// True if block bodies are not yet fully synchronized.
-/// Mirrors Nethermind's `HaveNotSyncedBodiesYet` (mask membership).
-pub fn have_not_synced_bodies_yet(mode: u32) bool {
-    const mask: u32 =
-        SyncMode.fast_headers |
-        SyncMode.fast_bodies |
-        SyncMode.fast_sync |
-        SyncMode.state_nodes |
-        SyncMode.snap_sync |
-        SyncMode.beacon_headers |
-        SyncMode.updating_pivot;
-    return (mode & mask) != 0;
+test "SyncMode helper predicates: haveNotSyncedBodiesYet" {
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.fast_headers));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.fast_bodies));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.fast_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.state_nodes));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.snap_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.beacon_headers));
+    try std.testing.expect(SyncMode.haveNotSyncedBodiesYet(SyncMode.updating_pivot));
+    try std.testing.expect(!SyncMode.haveNotSyncedBodiesYet(SyncMode.full));
+    try std.testing.expect(!SyncMode.haveNotSyncedBodiesYet(SyncMode.db_load));
+    try std.testing.expect(!SyncMode.haveNotSyncedBodiesYet(SyncMode.none));
 }
 
-/// True if receipts are not yet fully synchronized.
-/// Mirrors Nethermind's `HaveNotSyncedReceiptsYet` (mask membership).
-pub fn have_not_synced_receipts_yet(mode: u32) bool {
-    const mask: u32 =
-        SyncMode.fast_blocks |
-        SyncMode.fast_sync |
-        SyncMode.state_nodes |
-        SyncMode.snap_sync |
-        SyncMode.beacon_headers |
-        SyncMode.updating_pivot;
-    return (mode & mask) != 0;
+test "SyncMode helper predicates: haveNotSyncedReceiptsYet" {
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.fast_blocks));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.fast_receipts));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.fast_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.state_nodes));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.snap_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.beacon_headers));
+    try std.testing.expect(SyncMode.haveNotSyncedReceiptsYet(SyncMode.updating_pivot));
+    try std.testing.expect(!SyncMode.haveNotSyncedReceiptsYet(SyncMode.full));
+    try std.testing.expect(!SyncMode.haveNotSyncedReceiptsYet(SyncMode.none));
 }
 
-/// True if headers are not yet fully synchronized.
-/// Mirrors Nethermind's `HaveNotSyncedHeadersYet` (mask membership).
-pub fn have_not_synced_headers_yet(mode: u32) bool {
-    const mask: u32 =
-        SyncMode.fast_headers |
-        SyncMode.beacon_headers |
-        SyncMode.updating_pivot;
-    return (mode & mask) != 0;
+test "SyncMode helper predicates: haveNotSyncedHeadersYet" {
+    try std.testing.expect(SyncMode.haveNotSyncedHeadersYet(SyncMode.fast_headers));
+    try std.testing.expect(SyncMode.haveNotSyncedHeadersYet(SyncMode.beacon_headers));
+    try std.testing.expect(SyncMode.haveNotSyncedHeadersYet(SyncMode.updating_pivot));
+    try std.testing.expect(!SyncMode.haveNotSyncedHeadersYet(SyncMode.full));
+    try std.testing.expect(!SyncMode.haveNotSyncedHeadersYet(SyncMode.none));
 }
 
-/// True if state (tries/snap) is not yet fully synchronized.
-/// Mirrors Nethermind's `HaveNotSyncedStateYet` (mask membership).
-pub fn have_not_synced_state_yet(mode: u32) bool {
-    const mask: u32 =
-        SyncMode.fast_sync |
-        SyncMode.state_nodes |
-        SyncMode.snap_sync |
-        SyncMode.updating_pivot;
-    return (mode & mask) != 0;
-}
-
-test "SyncMode helper predicates: not_syncing" {
-    try std.testing.expect(not_syncing(SyncMode.waiting_for_block));
-    try std.testing.expect(not_syncing(SyncMode.disconnected));
-    try std.testing.expect(!not_syncing(SyncMode.fast_blocks));
-    try std.testing.expect(!not_syncing(SyncMode.full));
-}
-
-test "SyncMode helper predicates: have_not_synced_bodies_yet" {
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.fast_headers));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.fast_bodies));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.fast_sync));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.state_nodes));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.snap_sync));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.beacon_headers));
-    try std.testing.expect(have_not_synced_bodies_yet(SyncMode.updating_pivot));
-    try std.testing.expect(!have_not_synced_bodies_yet(SyncMode.full));
-    try std.testing.expect(!have_not_synced_bodies_yet(SyncMode.db_load));
-    try std.testing.expect(!have_not_synced_bodies_yet(SyncMode.none));
-}
-
-test "SyncMode helper predicates: have_not_synced_receipts_yet" {
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.fast_blocks));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.fast_receipts));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.fast_sync));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.state_nodes));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.snap_sync));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.beacon_headers));
-    try std.testing.expect(have_not_synced_receipts_yet(SyncMode.updating_pivot));
-    try std.testing.expect(!have_not_synced_receipts_yet(SyncMode.full));
-    try std.testing.expect(!have_not_synced_receipts_yet(SyncMode.none));
-}
-
-test "SyncMode helper predicates: have_not_synced_headers_yet" {
-    try std.testing.expect(have_not_synced_headers_yet(SyncMode.fast_headers));
-    try std.testing.expect(have_not_synced_headers_yet(SyncMode.beacon_headers));
-    try std.testing.expect(have_not_synced_headers_yet(SyncMode.updating_pivot));
-    try std.testing.expect(!have_not_synced_headers_yet(SyncMode.full));
-    try std.testing.expect(!have_not_synced_headers_yet(SyncMode.none));
-}
-
-test "SyncMode helper predicates: have_not_synced_state_yet" {
-    try std.testing.expect(have_not_synced_state_yet(SyncMode.fast_sync));
-    try std.testing.expect(have_not_synced_state_yet(SyncMode.state_nodes));
-    try std.testing.expect(have_not_synced_state_yet(SyncMode.snap_sync));
-    try std.testing.expect(have_not_synced_state_yet(SyncMode.updating_pivot));
-    try std.testing.expect(!have_not_synced_state_yet(SyncMode.full));
-    try std.testing.expect(!have_not_synced_state_yet(SyncMode.none));
+test "SyncMode helper predicates: haveNotSyncedStateYet" {
+    try std.testing.expect(SyncMode.haveNotSyncedStateYet(SyncMode.fast_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedStateYet(SyncMode.state_nodes));
+    try std.testing.expect(SyncMode.haveNotSyncedStateYet(SyncMode.snap_sync));
+    try std.testing.expect(SyncMode.haveNotSyncedStateYet(SyncMode.updating_pivot));
+    try std.testing.expect(!SyncMode.haveNotSyncedStateYet(SyncMode.full));
+    try std.testing.expect(!SyncMode.haveNotSyncedStateYet(SyncMode.none));
 }
